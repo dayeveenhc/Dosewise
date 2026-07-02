@@ -1,0 +1,25 @@
+# systemd unit for the Hermes orchestrator on the Hostinger VPS.
+# Install to /etc/systemd/system/hermes.service, then:
+#   sudo systemctl daemon-reload
+#   sudo systemctl enable --now hermes
+#
+# Adjust User and WorkingDirectory to match where you cloned the repo.
+[Unit]
+Description=Dosewise Hermes orchestrator
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=hermes
+WorkingDirectory=/opt/dosewise/services/hermes
+# uv is installed per-user; give systemd the full path (see: which uv).
+ExecStart=/home/hermes/.local/bin/uv run hermes-serve
+Restart=always
+RestartSec=3
+# Env comes from the repo-root .env (loaded by pydantic-settings). Ensure
+# HERMES_CHANNEL_MODE=webhook and VPS_URL are set there for the VPS.
+Environment=PYTHONUNBUFFERED=1
+
+[Install]
+WantedBy=multi-user.target

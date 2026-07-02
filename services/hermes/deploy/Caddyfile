@@ -1,0 +1,11 @@
+# Caddy reverse proxy — terminates TLS at your VPS domain and forwards to Hermes.
+# Caddy fetches and renews a Let's Encrypt cert automatically for a real domain.
+#
+# Install Caddy, drop this at /etc/caddy/Caddyfile (replace the domain), then:
+#   sudo systemctl reload caddy
+#
+# Point VPS_URL in .env at https://hermes.yourdomain.com so setWebhook uses it.
+
+hermes.yourdomain.com {
+    reverse_proxy 127.0.0.1:8000
+}
