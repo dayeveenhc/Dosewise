@@ -32,17 +32,26 @@ while true; do
   if [ "$local_rev" != "$remote_rev" ]; then
     echo "[watch-and-pull] new commit detected: $local_rev -> $remote_rev"
 
-    before_pyproject=$(git rev-parse HEAD:services/hermes/pyproject.toml 2>/dev/null || echo "")
     git pull --ff-only origin "$GIT_BRANCH"
-    after_pyproject=$(git rev-parse HEAD:services/hermes/pyproject.toml 2>/dev/null || echo "")
 
-    if [ "$before_pyproject" != "$after_pyproject" ]; then
-      echo "[watch-and-pull] pyproject.toml changed, running uv sync"
-      (cd services/hermes && uv sync)
+    # Sync deps (incl. dev, so the test gate can run) and gate the restart on a
+    # green offline test suite — a bad commit is pulled to disk but NOT activated
+    # (the running process keeps serving the previous code until tests pass).
+    echo "[watch-and-pull] syncing deps"
+    (cd services/hermes && uv sync --extra dev)
+
+    if [ "${RUN_TESTS:-1}" = "1" ]; then
+      echo "[watch-and-pull] running test gate before restart"
+      if (cd services/hermes && uv run pytest -q -m "not integration"); then
+        echo "[watch-and-pull] tests passed; restarting pm2 process: $PM2_APP_NAME"
+        pm2 restart "$PM2_APP_NAME"
+      else
+        echo "[watch-and-pull] TESTS FAILED for $remote_rev — NOT restarting; still serving previous code"
+      fi
+    else
+      echo "[watch-and-pull] RUN_TESTS=0; restarting pm2 process: $PM2_APP_NAME"
+      pm2 restart "$PM2_APP_NAME"
     fi
-
-    echo "[watch-and-pull] restarting pm2 process: $PM2_APP_NAME"
-    pm2 restart "$PM2_APP_NAME"
   fi
 
   sleep "$POLL_SECONDS"

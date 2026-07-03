@@ -6,9 +6,16 @@ testing uses long-polling instead (see the top-level `services/hermes/README.md`
 > ⚠️ **Supabase reachability.** The local Supabase you test against is *not*
 > reachable from the VPS. For the VPS you need a **hosted** Supabase project, and
 > the seed test users must exist there (the `seed.sql` inserts into `auth.users`,
-> which only works locally). Creating the test elder/caregiver on hosted Supabase
-> via the Admin API is a follow-up task — until then, run the VPS against a hosted
-> project whose users you've provisioned.
+> which only works locally). Apply the migrations to the hosted project, then
+> provision the seed users + data via the Admin API with:
+>
+> ```bash
+> # SUPABASE_URL + SUPABASE_SERVICE_ROLE_KEY point at the HOSTED project (in .env)
+> uv run --with httpx python supabase/scripts/provision_hosted.py
+> ```
+>
+> It mirrors `seed.sql` (same fixed UUIDs), so `DEV_DEFAULT_ELDER_ID` and every FK
+> line up. Idempotent — safe to re-run.
 
 ## 1. Prerequisites on the VPS
 

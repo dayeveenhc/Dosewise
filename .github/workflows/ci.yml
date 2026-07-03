@@ -1,0 +1,34 @@
+name: CI
+
+# Lint + the offline test suite for the Hermes service. Keeps `main` green so the
+# VPS git-sync poller only ever fast-forwards onto tested commits.
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+jobs:
+  hermes:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: services/hermes
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v5
+
+      - name: Set up Python 3.12
+        run: uv python install 3.12
+
+      - name: Install dependencies (incl. dev)
+        run: uv sync --extra dev
+
+      - name: Ruff lint
+        run: uv run ruff check .
+
+      - name: Pytest (offline suite)
+        # Integration tests need a live Supabase; excluded here.
+        run: uv run pytest -q -m "not integration"
