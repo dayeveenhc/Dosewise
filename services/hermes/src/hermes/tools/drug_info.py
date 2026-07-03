@@ -49,10 +49,16 @@ def _summarize(payload: dict) -> str:
     return "\n".join(parts)
 
 
-async def get_drug_info(ctx: ToolContext, drug_name: str) -> str:
+async def _fetch_label(ctx: ToolContext, drug_name: str) -> tuple[dict | None, str]:
+    """Return an OpenFDA label payload for ``drug_name`` and where it came from.
+
+    Cache-first: reads ``drug_cache`` (RLS lets any authenticated user read it),
+    falling back to a live OpenFDA fetch that is written through via the service
+    role. Returns ``(payload, source)`` where ``source`` is ``"cache"``,
+    ``"openfda"``, or ``""`` when nothing usable was found / reachable.
+    """
     key = drug_name.strip().lower()
 
-    # 1. Cache hit? (RLS allows any authenticated user to read drug_cache.)
     cached = await ctx.db().select(
         "drug_cache",
         columns="openfda_payload",
@@ -60,11 +66,8 @@ async def get_drug_info(ctx: ToolContext, drug_name: str) -> str:
         limit=1,
     )
     if cached:
-        summary = _summarize(cached[0]["openfda_payload"])
-        if summary:
-            return f"{summary}\n\n(Source: OpenFDA, cached.)"
+        return cached[0]["openfda_payload"], "cache"
 
-    # 2. Cache miss -> fetch OpenFDA.
     settings = get_settings()
     params = {
         "search": f"openfda.brand_name:{key}+openfda.generic_name:{key}",
@@ -74,18 +77,16 @@ async def get_drug_info(ctx: ToolContext, drug_name: str) -> str:
         params["api_key"] = settings.openfda_api_key
     async with httpx.AsyncClient(timeout=20.0) as http:
         resp = await http.get(_OPENFDA_URL, params=params)
-    if resp.status_code == 404:
-        return f"No authoritative OpenFDA label found for '{drug_name}'."
     if resp.status_code >= 300:
-        return f"Could not reach the drug database right now (HTTP {resp.status_code})."
+        return None, ""
 
     payload = resp.json()
-    summary = _summarize(payload)
-    if not summary:
-        return f"No usable OpenFDA label data found for '{drug_name}'."
+    if not (payload.get("results") or []):
+        return payload, "openfda"
 
-    # 3. Write-through cache via the service role (reference table has no INSERT
-    #    policy for authenticated users, so RLS would block a user write).
+    # Write-through cache via the service role (reference table has no INSERT
+    # policy for authenticated users, so RLS would block a user write). Best-effort:
+    # a duplicate key or transient error must not break the answer we already have.
     try:
         await ctx.supabase.service_client().insert(
             "drug_cache",
@@ -93,11 +94,34 @@ async def get_drug_info(ctx: ToolContext, drug_name: str) -> str:
             returning=False,
         )
     except Exception:
-        # Caching is best-effort; a duplicate key or transient error must not
-        # break the answer we already have.
         pass
+    return payload, "openfda"
 
-    return f"{summary}\n\n(Source: OpenFDA.)"
+
+async def interaction_text(ctx: ToolContext, drug_name: str) -> str:
+    """Grounded, free-text drug-interaction section from the OpenFDA label (or "")."""
+    payload, _ = await _fetch_label(ctx, drug_name)
+    results = (payload or {}).get("results") or []
+    if not results:
+        return ""
+    label = results[0]
+    parts: list[str] = []
+    for field in ("drug_interactions", "drug_and_or_laboratory_test_interactions"):
+        value = label.get(field)
+        if value:
+            parts.append(value[0] if isinstance(value, list) else str(value))
+    return "\n".join(parts)
+
+
+async def get_drug_info(ctx: ToolContext, drug_name: str) -> str:
+    payload, source = await _fetch_label(ctx, drug_name)
+    if not source:
+        return f"Could not find or reach authoritative drug data for '{drug_name}'."
+    summary = _summarize(payload or {})
+    if not summary:
+        return f"No usable OpenFDA label data found for '{drug_name}'."
+    suffix = "(Source: OpenFDA, cached.)" if source == "cache" else "(Source: OpenFDA.)"
+    return f"{summary}\n\n{suffix}"
 
 
 register(_SCHEMA, get_drug_info)

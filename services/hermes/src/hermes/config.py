@@ -30,12 +30,44 @@ class Settings(BaseSettings):
     supabase_service_role_key: str = ""
     supabase_jwt_secret: str = ""
 
+    # --- LLM provider selection ---
+    # Which brain Hermes uses: "anthropic" (Claude) or "gemini" (Google).
+    llm_provider: str = "anthropic"
+
     # --- Anthropic (agent brain) ---
     anthropic_api_key: str = ""
     anthropic_model: str = "claude-sonnet-5"
 
+    # --- Google Gemini (agent brain; used when LLM_PROVIDER=gemini) ---
+    gemini_api_key: str = ""
+    gemini_model: str = "gemini-2.5-flash"
+
     # --- OpenFDA (optional; works keyless at a lower rate limit) ---
     openfda_api_key: str = ""
+
+    # --- HuggingFace (voice: STT + TTS + language ID on Telegram) ---
+    huggingface_api_key: str = ""
+    # High-resource multilingual STT (zh/ta/ms/en/yue...), via the HF Inference API.
+    hf_stt_model: str = "openai/whisper-large-v3"
+    # Low-resource / dialect STT (Hokkien/Teochew -> 'nan'); tried best-effort, then
+    # Hermes falls back to Whisper autodetect if the MMS route fails.
+    hf_stt_lowresource_model: str = "facebook/mms-1b-all"
+    # TTS default/fallback model. Per-language MMS models (facebook/mms-tts-<iso3>)
+    # are chosen at reply time; this is the fallback when the language is unknown.
+    # Empty disables spoken replies (text still always sent).
+    hf_tts_model: str = "facebook/mms-tts-eng"
+    # fastText language-identification model (downloaded locally via huggingface_hub;
+    # NOT served by the HF Inference API). Empty disables input-language detection.
+    hf_lid_model: str = "facebook/fasttext-language-identification"
+
+    # --- MongoDB (dialect slang dictionary; optional) ---
+    # When set, Hermes loads dialect slang -> meaning here and folds it into the
+    # system prompt so it understands the elder's slang. Empty disables it.
+    mongodb_uri: str = ""
+    mongodb_db: str = "dosewise"
+    mongodb_slang_collection: str = "dialect_slang"
+    # Cap the number of slang terms injected into the prompt.
+    slang_cap: int = 40
 
     # --- Telegram (test channel) ---
     telegram_bot_token: str = ""
@@ -52,6 +84,16 @@ class Settings(BaseSettings):
     # --- Telegram test identity mapping ---
     # Elder A from supabase/seed/seed.sql
     dev_default_elder_id: str = "00000000-0000-0000-0000-00000000000a"
+
+    # --- Reminder scheduler (Telegram delivery; replaces Expo Push for the demo) ---
+    reminders_enabled: bool = True
+    reminder_poll_seconds: int = 60
+    # A critical dose this many minutes overdue (and not logged taken) alerts the
+    # linked caregiver.
+    missed_dose_minutes: int = 60
+    # medications.schedule.times are wall-clock; interpret them in this timezone
+    # when computing daily reminders (elders are in Singapore for the demo).
+    hermes_tz: str = "Asia/Singapore"
 
     @property
     def repo_root(self) -> Path:

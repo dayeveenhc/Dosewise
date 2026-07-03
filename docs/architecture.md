@@ -120,10 +120,12 @@ The constrained set of actions Hermes can take on the user's behalf (deferred to
 
 | Item | Status |
 | --- | --- |
-| Supabase backend — schema + RLS (consent model) + seed | **Built (this pass)** |
-| Frontend — Expo + React Native (elder + caregiver views) | Deferred |
-| Hermes orchestrator — Python 3.12 + FastAPI on VPS | Deferred |
-| Hermes agent — Claude Sonnet 5 tool-calling loop + tool belt | Deferred |
-| OpenFDA grounding + Postgres cache | Deferred |
-| Voice / dialect — HuggingFace STT/TTS (stretch) | Deferred |
-| Live human help / escalation routing | Deferred |
+| Supabase backend — schema + RLS (consent model) + seed | **Built** |
+| Hermes orchestrator — Python 3.12 + FastAPI on VPS | **Built** |
+| Hermes agent — Claude Sonnet 5 tool-calling loop + tool belt | **Built** |
+| OpenFDA grounding + Postgres cache | **Built** |
+| Telegram demo channel (polling + webhook) | **Built** |
+| Escalation logging (`request_human_help` → escalation log) | **Built** |
+| Voice — HuggingFace STT on Telegram voice notes (+ optional TTS reply) | **Built** |
+| Reminders scheduler + caregiver alerts (Telegram delivery) | **Built** |
+| Frontend — Expo + React Native (elder + caregiver views) | Deferred (awaiting Figma design) |

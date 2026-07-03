@@ -20,9 +20,19 @@ SEED_ELDERS: dict[str, str] = {
 @dataclass
 class SessionState:
     elder_id: str
-    registry: "SessionRegistry | None" = None
+    registry: SessionRegistry | None = None
     pending_proposal: dict | None = None
     messages: list[dict] = field(default_factory=list)
+    # Raw bytes of a just-received prescription photo, held until the elder confirms
+    # the scan so add_prescription can persist it to the pill-photos bucket.
+    pending_image: bytes | None = None
+    # The elder's preferred dialect, fetched once from profiles and cached here so
+    # the agent loop can tailor its language without a per-turn DB read.
+    dialect: str | None = None
+    dialect_loaded: bool = False
+    # The elder's dialect slang glossary (from MongoDB), fetched once and cached.
+    slang: list | None = None
+    slang_loaded: bool = False
 
 
 class SessionRegistry:
@@ -44,6 +54,11 @@ class SessionRegistry:
         state.elder_id = elder_id
         state.messages = []
         state.pending_proposal = None
+        state.pending_image = None
+        state.dialect = None
+        state.dialect_loaded = False
+        state.slang = None
+        state.slang_loaded = False
         self._profile_to_chat[elder_id] = chat_id
 
     def chat_for_profile(self, profile_id: str) -> int | None:

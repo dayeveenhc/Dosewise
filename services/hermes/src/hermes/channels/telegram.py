@@ -13,13 +13,15 @@ from __future__ import annotations
 import logging
 
 import httpx
-
 from anthropic import AsyncAnthropic
 
 from ..agent.loop import run_agent_turn
+from ..config import get_settings
 from ..db.supabase import Supabase
 from ..tools import ToolContext
+from .lang import DIALECT_ISO, detect_language, language_name, stt_plan, tts_model_for
 from .session import SEED_ELDERS, SessionRegistry
+from .voice import synthesize, transcribe
 
 log = logging.getLogger("hermes.telegram")
 
@@ -46,6 +48,18 @@ class TelegramClient:
 
     async def send_message(self, chat_id: int, text: str) -> None:
         await self._call("sendMessage", chat_id=chat_id, text=text)
+
+    async def send_audio(
+        self, chat_id: int, audio: bytes, *, filename: str = "reply.wav", mime: str = "audio/wav"
+    ) -> None:
+        # sendAudio (multipart) tolerates WAV/MP3 from MMS-TTS, unlike sendVoice
+        # which demands OGG/Opus. Text is always sent too, so this is additive.
+        resp = await self._http.post(
+            f"{self._base}/sendAudio",
+            data={"chat_id": str(chat_id)},
+            files={"audio": (filename, audio, mime)},
+        )
+        resp.raise_for_status()
 
     async def send_chat_action(self, chat_id: int, action: str = "typing") -> None:
         try:
@@ -102,22 +116,57 @@ async def handle_update(
             await telegram.send_message(chat_id, "Usage: /switch a  (or b)")
         return
 
-    # Photo (prescription scan)?
+    state = registry.get(chat_id)
+
+    # Photo (prescription scan)? Hold the bytes on the session so add_prescription
+    # can persist them to storage once the elder confirms the scan.
     image_bytes = None
     if message.get("photo"):
         largest = message["photo"][-1]
         try:
             image_bytes = await telegram.download_file(largest["file_id"])
+            state.pending_image = image_bytes
         except Exception:
             log.warning("failed to download telegram photo", exc_info=True)
         if not text:
             text = "Here is a photo of my prescription."
 
+    # Voice note? Route STT by the elder's dialect (Whisper for high-resource langs,
+    # MMS for Hokkien/Teochew), transcribe, and treat the transcript as the text.
+    voice = message.get("voice") or message.get("audio")
+    spoke = False  # the elder spoke -> speak the reply back too.
+    if voice and not text:
+        engine, hint = stt_plan(state.dialect)
+        try:
+            audio_bytes = await telegram.download_file(voice["file_id"])
+            transcript = await transcribe(
+                audio_bytes,
+                content_type=voice.get("mime_type") or "audio/ogg",
+                engine=engine,
+                language=hint,
+            )
+        except Exception:
+            log.warning("failed to download/transcribe telegram voice", exc_info=True)
+            transcript = None
+        if transcript:
+            text = transcript
+            spoke = True
+        elif image_bytes is None:
+            await telegram.send_message(
+                chat_id,
+                "I couldn't hear that clearly. Could you type it, or send it again?",
+            )
+            return
+
     if not text and image_bytes is None:
         return
 
+    # Detect the language the elder is using now (fastText); fall back to their
+    # stored dialect. This drives both the reply language and the TTS voice.
+    lang_iso = detect_language(text) or DIALECT_ISO.get((state.dialect or "").lower())
+    reply_language = language_name(lang_iso)
+
     await telegram.send_chat_action(chat_id)
-    state = registry.get(chat_id)
     ctx = ToolContext(
         supabase=supabase,
         elder_id=state.elder_id,
@@ -126,7 +175,8 @@ async def handle_update(
     )
     try:
         reply, _tools, state.messages = await run_agent_turn(
-            anthropic, ctx, text, image_bytes=image_bytes, history=state.messages
+            anthropic, ctx, text, image_bytes=image_bytes, history=state.messages,
+            reply_language=reply_language,
         )
     except Exception:
         log.exception("agent turn failed")
@@ -135,6 +185,16 @@ async def handle_update(
         )
         return
     await telegram.send_message(chat_id, reply or "…")
+    # If the elder spoke, speak the reply back too, in their language (best-effort;
+    # the text above always lands, so a TTS failure is silent). Accessible either way.
+    if spoke and reply:
+        try:
+            model = tts_model_for(lang_iso, get_settings().hf_tts_model)
+            audio = await synthesize(reply, model=model)
+            if audio:
+                await telegram.send_audio(chat_id, audio)
+        except Exception:
+            log.warning("failed to send voice reply", exc_info=True)
 
 
 async def poll_loop(

@@ -13,8 +13,20 @@ from hermes.tools.base import ToolContext
 ELDER_A = "00000000-0000-0000-0000-00000000000a"
 
 
-def test_all_eight_tools_registered():
-    assert len(tool_schemas()) == 8
+def test_all_tools_registered():
+    names = {t["name"] for t in tool_schemas()}
+    assert names == {
+        "list_medications",
+        "add_prescription",
+        "log_dose",
+        "get_drug_info",
+        "add_doctor_question",
+        "message_caregiver",
+        "show_instruction_video",
+        "request_human_help",
+        "check_refills",
+        "log_refill",
+    }
 
 
 def test_minted_jwt_acts_as_elder():

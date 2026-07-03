@@ -120,3 +120,23 @@ class Supabase:
                 "Content-Type": "application/json",
             },
         )
+
+    async def upload_object(
+        self, bucket: str, path: str, data: bytes, *, content_type: str, upsert: bool = True
+    ) -> str:
+        """Upload bytes to a Storage bucket via the service role (bypasses Storage
+        RLS, per migration 0003). Returns the object path. Used for prescription
+        photos into ``pill-photos`` after a confirmed scan."""
+        key = self._settings.supabase_service_role_key
+        headers = {
+            "apikey": key,
+            "Authorization": f"Bearer {key}",
+            "Content-Type": content_type,
+        }
+        if upsert:
+            headers["x-upsert"] = "true"
+        resp = await self._http.post(
+            f"/storage/v1/object/{bucket}/{path}", content=data, headers=headers
+        )
+        _raise_for_status(resp)
+        return path

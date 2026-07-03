@@ -14,10 +14,11 @@ from contextlib import asynccontextmanager
 from pathlib import Path
 
 import uvicorn
-from anthropic import AsyncAnthropic
 from fastapi import FastAPI
 
+from .agent import llm
 from .api.routes import router
+from .channels.scheduler import reminder_loop
 from .channels.session import SessionRegistry
 from .channels.telegram import TelegramClient, poll_loop
 from .config import get_settings
@@ -32,22 +33,49 @@ async def lifespan(app: FastAPI):
 
     from .db.supabase import Supabase  # local import to keep import graph flat
 
-    app.state.anthropic = AsyncAnthropic(api_key=settings.anthropic_api_key)
+    app.state.llm_client = llm.make_client(settings)
+    log.info(
+        "agent brain: %s (configured: %s)",
+        llm.effective_provider(settings),
+        llm.provider(settings),
+    )
+    if not llm.api_key_present(settings):
+        log.warning("%s is not set — agent turns will fail", llm.api_key_env_name(settings))
     app.state.supabase = Supabase()
     app.state.registry = SessionRegistry(settings.dev_default_elder_id)
+    # Persistent per-elder sessions for the HTTP /agent/turn contract, so a
+    # multi-step flow (propose -> confirm a prescription) and conversation history
+    # survive across requests just as they do on the Telegram/CLI channels.
+    app.state.http_sessions = {}
     app.state.telegram = (
         TelegramClient(settings.telegram_bot_token)
         if settings.telegram_bot_token
         else None
     )
     poller_task: asyncio.Task | None = None
+    reminder_task: asyncio.Task | None = None
+    lid_task: asyncio.Task | None = None
+
+    # Warm the local fastText language model in the background (best-effort) so the
+    # first voice/text turn isn't blocked on the one-time model download + load.
+    if settings.hf_lid_model:
+        async def _warm_lid() -> None:
+            try:
+                from .channels.lang import _load_lid
+
+                await asyncio.to_thread(_load_lid)
+                log.info("fastText language model warmed")
+            except Exception:
+                log.warning("fastText warmup failed; language detection disabled", exc_info=True)
+
+        lid_task = asyncio.create_task(_warm_lid())
 
     if app.state.telegram is not None:
         mode = settings.hermes_channel_mode.lower()
         if mode == "polling":
             poller_task = asyncio.create_task(
                 poll_loop(
-                    anthropic=app.state.anthropic,
+                    anthropic=app.state.llm_client,
                     supabase=app.state.supabase,
                     registry=app.state.registry,
                     telegram=app.state.telegram,
@@ -63,18 +91,33 @@ async def lifespan(app: FastAPI):
                     url, secret_token=settings.telegram_webhook_secret or None
                 )
                 log.info("telegram: webhook registered at %s", url)
+
+        # Reminder scheduler shares the live registry + Telegram client, so it
+        # runs in-process (only meaningful when Telegram delivery is available).
+        if settings.reminders_enabled:
+            reminder_task = asyncio.create_task(
+                reminder_loop(
+                    supabase=app.state.supabase,
+                    registry=app.state.registry,
+                    telegram=app.state.telegram,
+                )
+            )
     else:
         log.info("telegram: disabled (no TELEGRAM_BOT_TOKEN)")
 
     try:
         yield
     finally:
-        if poller_task is not None:
-            poller_task.cancel()
+        for task in (poller_task, reminder_task, lid_task):
+            if task is not None:
+                task.cancel()
         if app.state.telegram is not None:
             await app.state.telegram.aclose()
         await app.state.supabase.aclose()
-        await app.state.anthropic.close()
+        await llm.aclose(app.state.llm_client)
+        from .slang import aclose as slang_aclose
+
+        await slang_aclose()
 
 
 def create_app() -> FastAPI:
