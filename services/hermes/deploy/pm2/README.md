@@ -1,5 +1,11 @@
 # PM2 deployment (no Mutagen, no Docker)
 
+> **This is the canonical runtime for the Telegram demo.** Run `hermes` under PM2
+> in **polling** mode (`HERMES_CHANNEL_MODE=polling`) — no TLS, public URL, or
+> webhook needed. The systemd + Caddy path in `../README.md` is the alternative
+> for **webhook** mode; Docker Compose is a third option. Pick one — don't run two
+> process managers against port 8000 at once.
+
 **Default setup: edit directly on the VPS.** SSH in, run `tmux`, run `claude`
 (Claude Code) inside it, and edit `/opt/dosewise` in place — same filesystem
 Hermes reads from. `hermes-serve` self-restarts on save (`HERMES_RELOAD=1`, set
@@ -74,6 +80,17 @@ pm2 logs hermes    # server output — restarts, agent turns, tool calls
 pm2 monit          # live dashboard
 ```
 
+**Health smoke-check** (the server exposes `/health`):
+
+```bash
+curl -s http://127.0.0.1:8000/health    # -> {"status":"ok","service":"hermes"}
+```
+
+PM2 has no built-in HTTP health probe, so run that curl after `pm2 start`/`restart`
+(or wire it into a cron / uptime check). A non-`ok` response with `hermes` shown
+`online` in `pm2 status` means the process is up but the app failed to serve —
+check `pm2 logs hermes`.
+
 ## tmux note
 
 tmux is for keeping your **interactive SSH + Claude Code session** alive across
@@ -88,6 +105,50 @@ independent of tmux, your SSH connection, and VPS reboots (once you've run
 | `REPO_DIR` | `/opt/dosewise` | Repo location on the VPS |
 | `GIT_BRANCH` | `main` | Branch the watcher tracks |
 | `POLL_SECONDS` | `15` | How often it checks for new commits |
+| `RUN_TESTS` | `1` | Gate the auto-restart on a green offline test suite. A failed commit is pulled to disk but **not** activated (the running process keeps serving the previous code). Set `0` to restart unconditionally. |
+
+**Reminders** run in-process inside `hermes` (a background task started by the
+FastAPI lifespan when Telegram is enabled) — there is no separate PM2 app for them.
+It DMs elders about due doses and alerts caregivers on missed critical doses over
+Telegram. Tune with `REMINDERS_ENABLED`, `REMINDER_POLL_SECONDS`,
+`MISSED_DOSE_MINUTES` in `.env`.
+
+## Syncing `.env` to the VPS (secrets — out of band from git)
+
+`.env` is **git-ignored on purpose**, so `hermes-git-sync` (which pulls code) never
+carries your secrets like `MONGODB_URI`. Push them straight from your laptop to the
+VPS over SSH instead — they never touch git, GitHub, or an AI chat.
+
+**One-off push** (run on your laptop, from the repo root):
+```bash
+VPS_SSH=you@your-vps ./services/hermes/deploy/pm2/sync-env.sh
+```
+It `rsync`s `.env` to `/opt/dosewise/.env` (mode `600`) and `pm2 restart hermes` so
+the new values load. `rsync` prints only the filename, never the file body.
+
+**Auto-sync on every edit** (mirror the code flow, but for secrets) — run a PM2 app
+**on your laptop** that watches `.env` and pushes on change:
+```bash
+VPS_SSH=you@your-vps pm2 start services/hermes/deploy/pm2/ecosystem.laptop.config.js
+pm2 save
+```
+
+| Var | Default | Purpose |
+|---|---|---|
+| `VPS_SSH` | — (required) | SSH target, `user@host` |
+| `VPS_REPO_DIR` | `/opt/dosewise` | Repo path on the VPS |
+| `POLL_SECONDS` | `10` | Watcher check interval (laptop) |
+| `RESTART` | `1` | `pm2 restart hermes` after a push (`sync-env.sh`) |
+
+**Keeping secrets out of the AI chat / this repo:**
+- `.env` stays git-ignored; only `.env.example` (no values) is committed.
+- A repo deny rule (`.claude/settings.json`) blocks the assistant's file reader from
+  opening `.env`. Never ask it to `cat`/print `.env`, and never paste keys into chat.
+- The sync path is laptop → VPS over SSH only — the assistant never handles the file.
+- Rotate any key that has ever been pasted into a chat or a log; treat it as burned.
+
+> Editing directly on the VPS instead? Then `.env` already lives there — just edit
+> it in place (`nano /opt/dosewise/.env`) and `pm2 restart hermes`. No sync needed.
 
 ## Useful commands
 
