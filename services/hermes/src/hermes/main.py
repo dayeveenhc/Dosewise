@@ -11,6 +11,7 @@ from __future__ import annotations
 import asyncio
 import logging
 from contextlib import asynccontextmanager
+from pathlib import Path
 
 import uvicorn
 from anthropic import AsyncAnthropic
@@ -87,12 +88,19 @@ app = create_app()
 
 def serve() -> None:
     settings = get_settings()
-    uvicorn.run(
-        "hermes.main:app",
-        host=settings.hermes_host,
-        port=settings.hermes_port,
-        log_level="info",
-    )
+    kwargs: dict = {
+        "host": settings.hermes_host,
+        "port": settings.hermes_port,
+        "log_level": "info",
+    }
+    if settings.hermes_reload:
+        # Watch the src/ tree; on any file change uvicorn restarts the worker,
+        # which re-runs lifespan (and the Telegram poller). Pairs with a
+        # laptop->host file sync for a no-commit, no-restart dev loop.
+        src_dir = Path(__file__).resolve().parent.parent  # .../src/hermes -> .../src
+        kwargs["reload"] = True
+        kwargs["reload_dirs"] = [str(src_dir)]
+    uvicorn.run("hermes.main:app", **kwargs)
 
 
 if __name__ == "__main__":

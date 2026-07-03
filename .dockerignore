@@ -1,0 +1,10 @@
+# Keep the build context small. The image copies no code (bind-mount at runtime),
+# so this mainly speeds up `docker compose build`.
+.git
+**/.venv
+**/__pycache__
+**/*.pyc
+**/node_modules
+supabase/.branches
+supabase/.temp
+.DS_Store

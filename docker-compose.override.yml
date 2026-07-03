@@ -1,0 +1,11 @@
+# DEV auto-reload. `docker compose` auto-merges this file on top of
+# docker-compose.yml. It turns on uvicorn --reload so the container restarts the
+# server whenever the bind-mounted source changes — pair it with a laptop->host
+# file sync (mutagen / rsync-watch / editor auto-upload) for a no-commit loop.
+#
+# For a production run, skip this file:
+#   docker compose -f docker-compose.yml up -d
+services:
+  hermes:
+    environment:
+      HERMES_RELOAD: "1"

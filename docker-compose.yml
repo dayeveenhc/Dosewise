@@ -1,0 +1,28 @@
+# Runs Hermes in a container on the VPS, bind-mounting the repo so the container
+# executes the code checked out on the host. Update flow: sync code to the host
+# (git pull / rsync), then `docker compose restart hermes`.
+#
+#   docker compose up -d --build      # first run
+#   docker compose logs -f hermes     # watch it
+#   docker compose restart hermes     # after you sync new code
+#
+# .env (repo root) supplies all config/secrets. Start with HERMES_CHANNEL_MODE=
+# polling — it needs no inbound networking, so you can confirm the agent works
+# before wiring up TLS + the webhook.
+
+services:
+  hermes:
+    build:
+      context: .
+      dockerfile: services/hermes/Dockerfile
+    working_dir: /app/services/hermes
+    env_file: .env
+    volumes:
+      - .:/app                 # the repo -> container runs this code
+      - hermes-venv:/opt/venv  # persist the venv across restarts
+    ports:
+      - "127.0.0.1:8000:8000"  # only localhost; Caddy/nginx fronts it for webhook
+    restart: unless-stopped
+
+volumes:
+  hermes-venv:

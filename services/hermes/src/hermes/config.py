@@ -12,8 +12,9 @@ from pathlib import Path
 
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
-# services/hermes/src/hermes/config.py -> repo root is 4 parents up.
-_REPO_ROOT = Path(__file__).resolve().parents[3]
+# src/hermes/config.py -> repo root:
+#   parents[0]=hermes  [1]=src  [2]=services/hermes  [3]=services  [4]=repo root
+_REPO_ROOT = Path(__file__).resolve().parents[4]
 
 
 class Settings(BaseSettings):
@@ -45,6 +46,8 @@ class Settings(BaseSettings):
     hermes_host: str = "0.0.0.0"
     hermes_port: int = 8000
     hermes_channel_mode: str = "polling"  # polling | webhook
+    # Dev: hot-reload the server when the mounted source changes (uvicorn --reload).
+    hermes_reload: bool = False
 
     # --- Telegram test identity mapping ---
     # Elder A from supabase/seed/seed.sql
