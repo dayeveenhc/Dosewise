@@ -7,8 +7,9 @@ string is what lands back in the model's context, so keep it concise and factual
 
 from __future__ import annotations
 
+from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
-from typing import Any, Awaitable, Callable
+from typing import Any
 
 from ..db.supabase import Supabase
 

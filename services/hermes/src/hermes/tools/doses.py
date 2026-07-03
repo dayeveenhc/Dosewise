@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 
 from .base import ToolContext, register
 
@@ -40,7 +40,7 @@ async def log_dose(ctx: ToolContext, medication_name: str) -> str:
             "confirm the name, or list their medications first."
         )
     med = meds[0]
-    now = datetime.now(timezone.utc).isoformat()
+    now = datetime.now(UTC).isoformat()
 
     pending = await db.select(
         "doses",

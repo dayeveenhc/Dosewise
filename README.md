@@ -21,7 +21,7 @@ Dosewise is a university HCI & AI course competition build. Instead of asking fr
 | Orchestrator | Python 3.12 + FastAPI on a private VPS | Security boundary; holds all external keys; runs the agent loop and safety rails |
 | AI brain | Claude Sonnet 5 (`claude-sonnet-5`) via the `anthropic` Python SDK | Vision (prescription scans), tool-calling, adaptive thinking |
 | Drug knowledge | OpenFDA (cached in Postgres) | Grounded, authoritative drug facts |
-| Speech / dialect | HuggingFace Inference API (STT / translate / TTS) | Voice + dialect (stretch goal; demo is text-first) |
+| Speech | HuggingFace Inference API (STT / TTS) | Telegram voice notes: STT is wired; TTS reply-back is opt-in (set `HF_TTS_MODEL`) |
 | Push | Expo Push (driven by the VPS scheduler) | Reminders and caregiver alerts |
 
 ## Repository layout
@@ -33,35 +33,37 @@ Dosewise/
 ├── .env.example           # credential template (copy to .env; never commit .env)
 ├── docs/
 │   └── architecture.md    # full architecture reference
-├── supabase/              # Postgres schema + RLS + seed  (BUILT this pass)
+├── supabase/              # Postgres schema + RLS + seed  (BUILT)
 ├── apps/
-│   └── mobile/            # Expo + React Native frontend  (DEFERRED)
+│   └── mobile/            # Expo + React Native frontend  (DEFERRED — awaiting Figma design)
 │       └── README.md
 └── services/
-    └── hermes/            # Python + FastAPI orchestrator  (DEFERRED)
+    └── hermes/            # Python + FastAPI orchestrator + agent + tool belt  (BUILT)
         └── README.md
 ```
 
 ## Current status
 
-Only the **Supabase backend** is built so far: the Postgres **schema**, the **RLS** policies that encode the consent model, and the **seed** data. Everything else is scaffolding and deferred to later passes:
+The **Supabase backend** and the **Hermes orchestrator** (agent + full tool belt) are both built and work end-to-end. The **current demo interface is Telegram** — an elder chats with the bot and Hermes drives the agent loop, tools, and database live. The Expo + React Native frontend is the one remaining major piece, deferred until the Figma design lands.
 
 | Component | Status |
 | --- | --- |
 | Supabase backend (schema + RLS + seed) | **Built** |
-| `apps/mobile` — Expo + React Native frontend | Deferred (scaffold only) |
-| `services/hermes` — Python + FastAPI orchestrator | Deferred (scaffold only) |
-| Hermes agent on Claude Sonnet 5 + tool belt | Deferred |
-| OpenFDA grounding + Postgres cache | Deferred |
-| HuggingFace voice / dialect (stretch) | Deferred |
-| Live human help / escalation routing | Deferred |
+| `services/hermes` — Python + FastAPI orchestrator | **Built** |
+| Hermes agent on Claude Sonnet 5 + tool belt (10 tools) | **Built** |
+| OpenFDA grounding + Postgres cache | **Built** |
+| Telegram demo channel (elder chats with the bot) | **Built** |
+| Voice notes — HuggingFace STT (+ optional TTS) on Telegram | **Built** |
+| Reminders scheduler + caregiver alerts (Telegram delivery) | **Built** |
+| `apps/mobile` — Expo + React Native frontend | Deferred (awaiting Figma design) |
 
 ## Getting started
 
-1. **Apply the backend.** The only runnable component today is the Supabase backend. Follow [`supabase/README.md`](supabase/README.md) to apply the schema, RLS policies, and seed data.
-2. **Set up credentials.** Copy the credential template to a **git-ignored** `.env`:
+1. **Set up credentials.** Copy the credential template to a **git-ignored** `.env`:
    ```bash
    cp .env.example .env
    ```
    Fill in your values in `.env`. It is ignored by git (see `.gitignore`) and must never be committed. `.env.example` is the only env file that is tracked.
-3. **Read the architecture.** See [`docs/architecture.md`](docs/architecture.md) for the full hybrid architecture, the RLS-with-external-orchestrator model, the Hermes tool belt, and the build phasing.
+2. **Apply the database.** Follow [`supabase/README.md`](supabase/README.md) to apply the schema, RLS policies, and seed data.
+3. **Run Hermes.** Follow [`services/hermes/README.md`](services/hermes/README.md) to start the orchestrator and chat with the agent over the CLI or the Telegram bot (the current demo interface).
+4. **Read the architecture.** See [`docs/architecture.md`](docs/architecture.md) for the full hybrid architecture, the RLS-with-external-orchestrator model, the Hermes tool belt, and the build phasing.

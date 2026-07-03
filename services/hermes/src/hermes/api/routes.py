@@ -49,11 +49,16 @@ async def agent_turn(body: AgentTurnRequest, request: Request) -> AgentTurnRespo
         elder_id = body.elder_id or settings.dev_default_elder_id
 
     image_bytes = base64.b64decode(body.image_base64) if body.image_base64 else None
-    ctx = ToolContext(
-        supabase=app.supabase, elder_id=elder_id, session=SessionState(elder_id)
-    )
-    reply, tools_used, _ = await run_agent_turn(
-        app.anthropic, ctx, body.message, image_bytes=image_bytes
+    # Reuse (or create) this elder's persistent session so pending_proposal and the
+    # message history carry across requests — otherwise scan-propose-confirm can
+    # never complete over HTTP and every turn starts with no memory.
+    state = app.http_sessions.get(elder_id)
+    if state is None:
+        state = SessionState(elder_id)
+        app.http_sessions[elder_id] = state
+    ctx = ToolContext(supabase=app.supabase, elder_id=elder_id, session=state)
+    reply, tools_used, state.messages = await run_agent_turn(
+        app.llm_client, ctx, body.message, image_bytes=image_bytes, history=state.messages
     )
     return AgentTurnResponse(reply=reply, tools_used=tools_used)
 
@@ -75,7 +80,7 @@ async def telegram_webhook(
     update = await request.json()
     await handle_update(
         update,
-        anthropic=app.anthropic,
+        anthropic=app.llm_client,
         supabase=app.supabase,
         registry=app.registry,
         telegram=app.telegram,

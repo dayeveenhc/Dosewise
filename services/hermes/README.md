@@ -2,20 +2,40 @@
 
 **Hermes** is the AI orchestrator and **security boundary** of Dosewise: a
 **Python 3.12 + FastAPI** service that runs the **Claude Sonnet 5** tool-calling
-loop and the 8-tool belt, holding all external API keys. The client never talks to
+loop and the 10-tool belt, holding all external API keys. The client never talks to
 Claude, OpenFDA, or HuggingFace directly.
 
 It's testable **before any frontend exists** through two channels on one shared
 core:
 
 - **CLI harness** (`uv run hermes-chat`) — fast dev loop; prints tool calls inline.
-- **Telegram bot** — mobile chat + photo upload for the prescription-scan flow.
+- **Telegram bot** — the current demo interface: chat, photo upload for the
+  prescription-scan flow, and **voice notes** (transcribed via HuggingFace STT).
 
 ## Tool belt
 
 `list_medications` · `log_dose` · `get_drug_info` (OpenFDA, cached in `drug_cache`)
 · `add_doctor_question` · `message_caregiver` · `show_instruction_video` ·
-`request_human_help` · `add_prescription` (Claude vision → **propose → confirm**).
+`request_human_help` · `add_prescription` (Claude vision → **propose → confirm**) ·
+`check_refills` · `log_refill`.
+
+## Reminders, dialect & voice
+
+- **Daily dose reminders** — an in-process background task expands each active
+  medication's `schedule.times` (interpreted in `HERMES_TZ`) into today's due slots,
+  DMs the elder at each time, and alerts a linked caregiver when a *critical* dose is
+  overdue and not logged taken — suppressed during the caregiver's quiet hours (the
+  caregiver alert always pierces them). The full dose *calendar* is deferred with the
+  frontend. See `src/hermes/dosing.py` + `channels/scheduler.py`.
+- **Dialect & slang** — the elder's `profiles.dialect` is folded into the system
+  prompt, and a dialect **slang glossary from MongoDB** (`MONGODB_URI`, optional) lets
+  Hermes *understand* slang — never changing a grounded fact. See `src/hermes/slang.py`.
+- **Multilingual voice** — Telegram voice notes are transcribed with
+  **Whisper-large-v3** (high-resource) or **MMS** (`facebook/mms-1b-all`, for
+  Hokkien/Teochew, with a Whisper fallback); **fastText** detects the input language;
+  Hermes replies in that language as **text + audio** (per-language `facebook/mms-tts-*`
+  via Telegram `sendAudio`). All voice/slang features degrade to text when their keys
+  are unset. See `channels/lang.py` + `channels/voice.py`.
 
 ## Safety rails
 

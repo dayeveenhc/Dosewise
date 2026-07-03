@@ -1,4 +1,5 @@
-"""Importing this package registers all 8 tools into the registry."""
+"""Importing this package registers all 10 tools (across 8 modules —
+``medications`` and ``refills`` each register two) into the registry."""
 
 from . import (  # noqa: F401  (imported for registration side effects)
     caregiver,
@@ -7,6 +8,7 @@ from . import (  # noqa: F401  (imported for registration side effects)
     drug_info,
     escalation,
     medications,
+    refills,
     videos,
 )
 from .base import ToolContext, get_handler, tool_schemas
