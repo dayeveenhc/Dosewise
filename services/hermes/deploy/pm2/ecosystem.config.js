@@ -39,19 +39,20 @@ module.exports = {
       },
     },
 
-    // --- Optional: only needed if you edit on your LAPTOP and push to git ---
-    // {
-    //   name: "hermes-git-sync",
-    //   cwd: REPO_DIR,
-    //   script: `${REPO_DIR}/services/hermes/deploy/pm2/watch-and-pull.sh`,
-    //   interpreter: "bash",
-    //   autorestart: true,
-    //   env: {
-    //     REPO_DIR,
-    //     GIT_BRANCH: process.env.GIT_BRANCH || "main",
-    //     POLL_SECONDS: process.env.POLL_SECONDS || "15",
-    //     PM2_APP_NAME: "hermes",
-    //   },
-    // },
+    // Watches the git remote; pulls + restarts `hermes` when a new commit
+    // lands. Enables "edit on laptop -> git push -> VPS auto-updates".
+    {
+      name: "hermes-git-sync",
+      cwd: REPO_DIR,
+      script: `${REPO_DIR}/services/hermes/deploy/pm2/watch-and-pull.sh`,
+      interpreter: "bash",
+      autorestart: true,
+      env: {
+        REPO_DIR,
+        GIT_BRANCH: process.env.GIT_BRANCH || "main",
+        POLL_SECONDS: process.env.POLL_SECONDS || "15",
+        PM2_APP_NAME: "hermes",
+      },
+    },
   ],
 };
