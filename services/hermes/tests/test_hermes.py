@@ -18,6 +18,7 @@ def test_all_tools_registered():
     assert names == {
         "list_medications",
         "add_prescription",
+        "set_medication_reminder",
         "log_dose",
         "get_drug_info",
         "add_doctor_question",

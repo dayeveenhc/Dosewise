@@ -105,6 +105,38 @@ async def test_get_drug_info_cache_miss_fetches_and_writes_through(monkeypatch):
     assert any(t == "drug_cache" for t, _ in db.inserted)
 
 
+async def test_get_drug_info_query_keeps_plus_literal(monkeypatch):
+    """Regression: OpenFDA's '+' term-separator must reach the API literal, not
+    percent-encoded to %2B. Passing the query via httpx params= encodes '+' -> %2B,
+    which 500s and breaks every uncached grounding lookup."""
+    seen: dict[str, str] = {}
+
+    class _Resp:
+        status_code = 200
+
+        def json(self):
+            return {"results": [{"purpose": ["Lowers blood sugar."]}]}
+
+    class _Client:
+        def __init__(self, *a, **k):
+            pass
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *a):
+            return False
+
+        async def get(self, url, *a, **k):
+            seen["url"] = url
+            return _Resp()
+
+    monkeypatch.setattr(drug_info.httpx, "AsyncClient", _Client)
+    await get_handler("get_drug_info")(_ctx(FakeDB({"drug_cache": []})), drug_name="Metformin")
+    assert "openfda.brand_name:metformin+openfda.generic_name:metformin" in seen["url"]
+    assert "%2B" not in seen["url"]
+
+
 # --- message_caregiver ------------------------------------------------------
 async def test_message_caregiver_records_and_delivers():
     db = FakeDB({"care_links": [
@@ -250,3 +282,123 @@ async def test_add_prescription_saves_med_even_if_upload_fails():
     assert "Saved" in out
     med_rows = [r for t, r in db.inserted if t == "medications"]
     assert med_rows and "pill_photo_path" not in med_rows[0]  # graceful degrade
+
+
+async def test_photo_not_attached_to_later_unrelated_med():
+    """A photo proposed but never confirmed must not be saved onto a *different*
+    medication that is confirmed later without its own photo (privacy)."""
+    add = get_handler("add_prescription")
+    db = FakeDB({"medications": []})
+    supa = FakeSupabase(db=db)
+    session = SessionState(elder_id=ELDER_A)
+    session.pending_image = b"MEDX-PHOTO"
+    ctx = ToolContext(supabase=supa, elder_id=ELDER_A, session=session)
+
+    # Photo arrives, MedX proposed (image consumed onto the proposal) but never confirmed.
+    await add(ctx, name="MedX", confirmed=False, dosage="10mg")
+    assert session.pending_image is None  # consumed off the shared session slot
+
+    # Later, an unrelated, photoless med is proposed and confirmed.
+    await add(ctx, name="Aspirin", confirmed=False, dosage="100mg")
+    out = await add(ctx, name="Aspirin", confirmed=True, dosage="100mg")
+    assert "Saved" in out
+    assert supa.uploads == []  # MedX's photo was NOT uploaded for Aspirin
+    med_rows = [r for t, r in db.inserted if t == "medications"]
+    assert med_rows and "pill_photo_path" not in med_rows[0]
+
+
+async def test_add_prescription_carries_photo_on_repropose():
+    """Re-proposing the SAME drug (model refined a field) keeps the photo, so a
+    confirm after a correction still stores it."""
+    add = get_handler("add_prescription")
+    db = FakeDB({"medications": []})
+    supa = FakeSupabase(db=db)
+    session = SessionState(elder_id=ELDER_A)
+    session.pending_image = b"JPEGBYTES"
+    ctx = ToolContext(supabase=supa, elder_id=ELDER_A, session=session)
+
+    await add(ctx, name="Metformin", confirmed=False, dosage="500mg")  # propose
+    await add(ctx, name="Metformin", confirmed=False, dosage="850mg")  # re-propose, corrected
+    out = await add(ctx, name="Metformin", confirmed=True, dosage="850mg")  # confirm
+    assert "Saved" in out
+    assert supa.uploads and supa.uploads[0][0] == "pill-photos"
+    med_rows = [r for t, r in db.inserted if t == "medications"]
+    assert med_rows and med_rows[0]["pill_photo_path"].startswith(f"{ELDER_A}/")
+
+
+# --- set_medication_reminder ------------------------------------------------
+async def test_set_reminder_proposes_no_write_and_awaits_confirmation():
+    set_rem = get_handler("set_medication_reminder")
+    db = FakeDB({"medications": [{"id": "m1", "name": "Metformin", "archived": False,
+                                  "schedule": {"times": ["08:00"], "frequency": "daily"}}]})
+    ctx = _ctx(db)
+    out = await set_rem(ctx, name="Metformin", confirmed=False, times=["8:00", "20:00"])
+    assert "PROPOSED" in out and "08:00" in out and "20:00" in out
+    assert not db.updated  # nothing written on a proposal
+    assert ctx.session.awaiting_confirmation is True
+    assert ctx.session.pending_reminder == {"name": "Metformin", "times": ["08:00", "20:00"]}
+
+
+async def test_set_reminder_confirm_updates_schedule_times():
+    set_rem = get_handler("set_medication_reminder")
+    db = FakeDB({"medications": [{"id": "m1", "name": "Metformin", "archived": False,
+                                  "schedule": {"times": ["08:00"], "frequency": "daily"}}]})
+    ctx = _ctx(db)
+    await set_rem(ctx, name="Metformin", confirmed=False, times=["09:00", "21:00"])
+    out = await set_rem(ctx, name="Metformin", confirmed=True, times=["09:00", "21:00"])
+    assert "Saved" in out
+    assert db.updated and db.updated[0][0] == "medications"
+    patch, filters = db.updated[0][1], db.updated[0][2]
+    assert patch["schedule"]["times"] == ["09:00", "21:00"]
+    assert patch["schedule"]["frequency"] == "daily"  # existing frequency preserved
+    assert filters == {"id": "eq.m1"}
+    assert ctx.session.pending_reminder is None
+    assert ctx.session.awaiting_confirmation is False
+
+
+async def test_set_reminder_confirm_falls_back_to_proposed_times():
+    # A tap-to-confirm that doesn't resupply `times` must still save the times the
+    # user already confirmed (from the stashed proposal), not silently do nothing.
+    set_rem = get_handler("set_medication_reminder")
+    db = FakeDB({"medications": [{"id": "m1", "name": "Metformin", "archived": False,
+                                  "schedule": {"times": ["08:00"], "frequency": "daily"}}]})
+    ctx = _ctx(db)
+    await set_rem(ctx, name="Metformin", confirmed=False, times=["09:00", "21:00"])
+    out = await set_rem(ctx, name="Metformin", confirmed=True, times=None)
+    assert "Saved" in out
+    assert db.updated and db.updated[0][1]["schedule"]["times"] == ["09:00", "21:00"]
+    assert ctx.session.pending_reminder is None
+    assert ctx.session.awaiting_confirmation is False
+
+
+async def test_set_reminder_confirm_without_proposal_refuses():
+    set_rem = get_handler("set_medication_reminder")
+    db = FakeDB({"medications": [{"id": "m1", "name": "Metformin", "archived": False,
+                                  "schedule": {}}]})
+    ctx = _ctx(db)
+    out = await set_rem(ctx, name="Metformin", confirmed=True, times=["08:00"])
+    assert "Refused" in out
+    assert not db.updated
+
+
+async def test_set_reminder_unknown_medication():
+    set_rem = get_handler("set_medication_reminder")
+    db = FakeDB({"medications": []})
+    ctx = _ctx(db)
+    await set_rem(ctx, name="Nope", confirmed=False, times=["08:00"])
+    out = await set_rem(ctx, name="Nope", confirmed=True, times=["08:00"])
+    assert "No medication named" in out
+    assert not db.updated
+    assert ctx.session.awaiting_confirmation is False
+
+
+async def test_set_reminder_rejects_bad_time():
+    set_rem = get_handler("set_medication_reminder")
+    db = FakeDB({"medications": [{"id": "m1", "name": "Metformin", "archived": False,
+                                  "schedule": {}}]})
+    ctx = _ctx(db)
+    out = await set_rem(ctx, name="Metformin", confirmed=False, times=["25:00", "lunch"])
+    assert "aren't clear" in out
+    assert not db.updated
+    assert ctx.session.pending_reminder is None
+    assert ctx.session.awaiting_confirmation is False

@@ -1,4 +1,5 @@
-"""Medication tools: list_medications, add_prescription (scan -> propose -> confirm)."""
+"""Medication tools: list_medications, add_prescription (scan -> propose -> confirm),
+set_medication_reminder (propose -> confirm daily reminder times)."""
 
 from __future__ import annotations
 
@@ -96,7 +97,20 @@ async def add_prescription(
 
     if not confirmed:
         if ctx.session is not None:
+            # Tie any just-received photo to THIS proposal so it can only ever be
+            # saved against the medication it was proposed with — never a later,
+            # unrelated one. Consume it off the shared session slot; on a re-propose
+            # of the same drug (model refined a field), carry the photo forward.
+            image = ctx.session.pending_image
+            if image is None:
+                prev = ctx.session.pending_proposal
+                if prev and prev.get("name") == name:
+                    image = prev.get("image")
+            proposal["image"] = image
+            ctx.session.pending_image = None
             ctx.session.pending_proposal = proposal
+            # Signal the channel to offer a Yes/No tap-keyboard for the confirmation.
+            ctx.session.awaiting_confirmation = True
         readback = f"{name}" + (f" {dosage}" if dosage else "")
         if times:
             readback += f", taken at {', '.join(times)}"
@@ -129,8 +143,10 @@ async def add_prescription(
     }
 
     # Persist the scanned photo (if any) to the private pill-photos bucket now that
-    # the elder has confirmed. Best-effort: an upload failure must not lose the med.
-    image = getattr(ctx.session, "pending_image", None) if ctx.session else None
+    # the elder has confirmed. The image is read from the *matched proposal* (not a
+    # shared session slot), so it is guaranteed to belong to this exact medication.
+    # Best-effort: an upload failure must not lose the med.
+    image = pending.get("image")
     if image:
         try:
             path = f"{ctx.elder_id}/{uuid4().hex}.jpg"
@@ -145,6 +161,7 @@ async def add_prescription(
     if ctx.session is not None:
         ctx.session.pending_proposal = None
         ctx.session.pending_image = None
+        ctx.session.awaiting_confirmation = False
     return f"Saved {name} to the medication list and marked it confirmed."
 
 
@@ -184,5 +201,126 @@ async def _interaction_warning(ctx: ToolContext, new_name: str) -> str:
         return ""
 
 
+_REMINDER_SCHEMA = {
+    "name": "set_medication_reminder",
+    "description": (
+        "Set or change the daily reminder times for a medication the elder already "
+        "has on file. Use when they say things like 'remind me at 8am', 'change my "
+        "reminder to the evening', or 'add a night dose reminder'. This REPLACES the "
+        "medication's reminder times with the list you pass — it does NOT append. To "
+        "ADD a time to existing reminders, first call list_medications to see the "
+        "current times and pass the full combined list. SAFETY: the propose→confirm "
+        "rule applies — first call with confirmed=false to read the times back, and "
+        "only call again with confirmed=true after a clear yes. The daily reminder "
+        "scheduler picks up the new times automatically."
+    ),
+    "input_schema": {
+        "type": "object",
+        "properties": {
+            "name": {"type": "string", "description": "Medication name (already on file)."},
+            "times": {
+                "type": "array",
+                "items": {"type": "string"},
+                "description": "Daily reminder times as 24-hour HH:MM, e.g. ['08:00','20:00'].",
+            },
+            "confirmed": {
+                "type": "boolean",
+                "description": "false = propose only (no write); true = commit after "
+                "the user confirmed.",
+            },
+        },
+        "required": ["name", "confirmed"],
+    },
+}
+
+
+def _normalize_times(times: list[str] | None) -> tuple[list[str], list[str]]:
+    """Split ``times`` into (valid HH:MM, invalid). Accepts 'H:MM' too and
+    zero-pads to 'HH:MM'; anything out of 00:00–23:59 is invalid."""
+    valid: list[str] = []
+    invalid: list[str] = []
+    for raw in times or []:
+        item = str(raw).strip()
+        hh, sep, mm = item.partition(":")
+        if sep and hh.isdigit() and mm.isdigit() and len(mm) == 2:
+            h, m = int(hh), int(mm)
+            if 0 <= h <= 23 and 0 <= m <= 59:
+                valid.append(f"{h:02d}:{m:02d}")
+                continue
+        invalid.append(item)
+    return valid, invalid
+
+
+async def set_medication_reminder(
+    ctx: ToolContext,
+    name: str,
+    confirmed: bool,
+    times: list[str] | None = None,
+) -> str:
+    valid, invalid = _normalize_times(times)
+    if invalid:
+        return (
+            f"These times aren't clear: {', '.join(invalid)}. Ask the user for the "
+            "time(s) as a 24-hour clock like 08:00 or 20:00, and don't save yet."
+        )
+
+    if not confirmed:
+        if not valid:
+            return "Ask the user what time(s) they'd like the reminder, then propose it."
+        if ctx.session is not None:
+            ctx.session.pending_reminder = {"name": name, "times": valid}
+            ctx.session.awaiting_confirmation = True
+        return (
+            "PROPOSED (not yet saved). Read this back to the user and ask them to "
+            f"confirm before saving: remind them to take {name} at "
+            f"{', '.join(valid)} every day."
+        )
+
+    # confirmed=true: guard that a matching proposal exists in this session.
+    pending = getattr(ctx.session, "pending_reminder", None) if ctx.session else None
+    if pending is None or pending.get("name") != name:
+        return (
+            "Refused to save: no matching pending reminder was confirmed. Propose "
+            "the reminder first (confirmed=false) and get the user's explicit yes."
+        )
+
+    # Prefer freshly-supplied times; fall back to the times already read back and
+    # confirmed, so a tap-to-confirm that doesn't resupply them still saves.
+    valid = valid or list(pending.get("times") or [])
+    if not valid:
+        return "Ask the user what time(s) they'd like the reminder, then propose it."
+
+    meds = await ctx.db().select(
+        "medications",
+        columns="id,schedule",
+        filters={"name": f"ilike.{name}", "archived": "eq.false"},
+        limit=1,
+    )
+    if not meds:
+        if ctx.session is not None:
+            ctx.session.pending_reminder = None
+            ctx.session.awaiting_confirmation = False
+        return (
+            f"No medication named '{name}' is on file, so I can't set a reminder for "
+            "it. Ask the user to confirm the name or add the prescription first."
+        )
+
+    med = meds[0]
+    schedule = dict(med.get("schedule") or {})
+    schedule["times"] = valid
+    schedule.setdefault("frequency", "daily")
+    await ctx.db().update(
+        "medications",
+        {"schedule": schedule},
+        filters={"id": f"eq.{med['id']}"},
+        returning=False,
+    )
+    if ctx.session is not None:
+        ctx.session.pending_reminder = None
+        ctx.session.awaiting_confirmation = False
+    return f"Saved. I'll remind you to take {name} at {', '.join(valid)} every day."
+
+
 register(_LIST_SCHEMA, list_medications)
 register(_ADD_SCHEMA, add_prescription)
+register(_REMINDER_SCHEMA, set_medication_reminder)

@@ -99,10 +99,18 @@ async def _tick(
                 quiet_cache[elder_id] = await _elder_quiet_hours(svc, elder_id)
             chat_id = registry.chat_for_profile(elder_id)
             if chat_id is not None and not in_quiet_hours(local_time, quiet_cache[elder_id]):
+                med_id = slot["medication_id"]
                 await telegram.send_message(
                     chat_id,
-                    f"⏰ Reminder: it's time for your {name} ({slot['time']}). "
-                    "Tell me once you've taken it and I'll log it.",
+                    f"⏰ Time for your {name} ({slot['time']}).",
+                    reply_markup={
+                        "inline_keyboard": [
+                            [
+                                {"text": "✅ Taken", "callback_data": f"dose:taken:{med_id}"},
+                                {"text": "⏰ Later", "callback_data": f"dose:later:{med_id}"},
+                            ]
+                        ]
+                    },
                 )
                 reminded.add(key)
                 log.info("reminded elder %s about %s (%s)", elder_id, name, slot["time"])

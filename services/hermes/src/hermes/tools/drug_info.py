@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from urllib.parse import quote
+
 import httpx
 
 from ..config import get_settings
@@ -69,14 +71,17 @@ async def _fetch_label(ctx: ToolContext, drug_name: str) -> tuple[dict | None, s
         return cached[0]["openfda_payload"], "cache"
 
     settings = get_settings()
-    params = {
-        "search": f"openfda.brand_name:{key}+openfda.generic_name:{key}",
-        "limit": "1",
-    }
+    # OpenFDA uses '+' as the term separator inside a field query. Passing the query
+    # via httpx's params= dict percent-encodes that '+' to %2B, which OpenFDA rejects
+    # with a 500 — breaking every uncached lookup. So build the query into the URL and
+    # keep '+' literal; the user-derived key is URL-encoded (safe="") to avoid query
+    # injection.
+    q = quote(key, safe="")
+    url = f"{_OPENFDA_URL}?search=openfda.brand_name:{q}+openfda.generic_name:{q}&limit=1"
     if settings.openfda_api_key:
-        params["api_key"] = settings.openfda_api_key
+        url += f"&api_key={quote(settings.openfda_api_key, safe='')}"
     async with httpx.AsyncClient(timeout=20.0) as http:
-        resp = await http.get(_OPENFDA_URL, params=params)
+        resp = await http.get(url)
     if resp.status_code >= 300:
         return None, ""
 

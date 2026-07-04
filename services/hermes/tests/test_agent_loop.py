@@ -46,6 +46,26 @@ async def test_loop_dispatches_tool_then_replies():
     assert sum(1 for t, _ in db.inserted if t == "conversation_turns") == 2
 
 
+async def test_image_is_stripped_from_threaded_history():
+    """A prescription photo is analysed on its turn but must not stay in the history
+    threaded forward (it would re-send the base64 image on every later turn)."""
+    db = FakeDB({"profiles": [{"dialect": "en"}], "conversation_turns": []})
+    anthropic = FakeAnthropic([response("end_turn", [text_block("Got your photo.")])])
+    _reply, _tools, messages = await run_agent_turn(
+        anthropic, _ctx(db), "here is my prescription", image_bytes=b"JPEG",
+    )
+    # The returned history carries no image block...
+    for m in messages:
+        if isinstance(m["content"], list):
+            assert all(b.get("type") != "image" for b in m["content"])
+    # ...but the user turn still keeps its text (never emptied).
+    user_lists = [m["content"] for m in messages
+                  if m["role"] == "user" and isinstance(m["content"], list)]
+    assert user_lists and all(
+        any(b.get("type") == "text" for b in content) for content in user_lists
+    )
+
+
 async def test_loop_tailors_system_prompt_to_dialect():
     db = FakeDB({"profiles": [{"id": ELDER_A, "dialect": "hokkien"}],
                  "conversation_turns": []})

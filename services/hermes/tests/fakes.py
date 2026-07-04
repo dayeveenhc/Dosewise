@@ -6,6 +6,7 @@ semantics (eq / ilike / lte / gte) that tool logic exercises real branches.
 
 from __future__ import annotations
 
+import json
 from types import SimpleNamespace
 
 
@@ -75,12 +76,18 @@ class FakeSupabase:
 class FakeTelegram:
     def __init__(self):
         self.sent: list[tuple[int, str]] = []
+        self.markups: list[dict | None] = []
+        self.answered: list[str] = []
         self.audio_sent: list[tuple[int, bytes]] = []
         self.downloads: list[str] = []
         self.audio = b"fake-audio-bytes"
 
-    async def send_message(self, chat_id, text):
+    async def send_message(self, chat_id, text, reply_markup=None):
         self.sent.append((chat_id, text))
+        self.markups.append(reply_markup)
+
+    async def answer_callback_query(self, callback_query_id, text=None):
+        self.answered.append(callback_query_id)
 
     async def send_audio(self, chat_id, audio, *, filename="reply.wav", mime="audio/wav"):
         self.audio_sent.append((chat_id, audio))
@@ -151,6 +158,39 @@ class FakeGemini:
 
     def __init__(self, responses: list):
         self.aio = SimpleNamespace(models=_FakeGeminiModels(responses))
+
+
+# --- OpenAI response builders ------------------------------------------------
+def openai_tool_call(name: str, args: dict, call_id: str = "call_1"):
+    return SimpleNamespace(
+        id=call_id, type="function",
+        function=SimpleNamespace(name=name, arguments=json.dumps(args)),
+    )
+
+
+def openai_message(content: str | None = None, tool_calls: list | None = None):
+    return SimpleNamespace(content=content, tool_calls=tool_calls or [])
+
+
+def openai_response(message):
+    return SimpleNamespace(choices=[SimpleNamespace(message=message)])
+
+
+class _FakeOpenAICompletions:
+    def __init__(self, responses: list):
+        self._responses = list(responses)
+        self.calls: list[dict] = []
+
+    async def create(self, **kwargs):
+        self.calls.append(kwargs)
+        return self._responses.pop(0) if len(self._responses) > 1 else self._responses[0]
+
+
+class FakeOpenAI:
+    """Doubles ``AsyncOpenAI``: exposes ``.chat.completions.create``."""
+
+    def __init__(self, responses: list):
+        self.chat = SimpleNamespace(completions=_FakeOpenAICompletions(responses))
 
 
 # --- MongoDB (slang dictionary) doubles -------------------------------------

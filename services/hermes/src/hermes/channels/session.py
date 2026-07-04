@@ -33,6 +33,23 @@ class SessionState:
     # The elder's dialect slang glossary (from MongoDB), fetched once and cached.
     slang: list | None = None
     slang_loaded: bool = False
+    # Set True by a tool that just PROPOSED something needing a yes/no (e.g.
+    # add_prescription / set_medication_reminder with confirmed=false), cleared
+    # once it commits or is refused. The Telegram channel reads it to attach a
+    # Yes/No tap-keyboard so the elder can confirm without typing.
+    awaiting_confirmation: bool = False
+    # A pending set_medication_reminder proposal ({"name", "times"}), held until the
+    # elder confirms so the commit can only ever save the times it read back.
+    pending_reminder: dict | None = None
+    # Whether the elder wants spoken replies (from profiles.accessibility.tts),
+    # fetched once and cached. Default True — seniors with low digital literacy get
+    # voice by default; turned off only if their profile opts out.
+    voice_default: bool = True
+    voice_loaded: bool = False
+    # Recent conversation_turns folded into the system prompt for cross-restart
+    # continuity, loaded once per session (only when there's no live history yet).
+    memory_text: str | None = None
+    memory_loaded: bool = False
 
 
 class SessionRegistry:
@@ -59,6 +76,12 @@ class SessionRegistry:
         state.dialect_loaded = False
         state.slang = None
         state.slang_loaded = False
+        state.awaiting_confirmation = False
+        state.pending_reminder = None
+        state.voice_default = True
+        state.voice_loaded = False
+        state.memory_text = None
+        state.memory_loaded = False
         self._profile_to_chat[elder_id] = chat_id
 
     def chat_for_profile(self, profile_id: str) -> int | None:

@@ -18,7 +18,7 @@ from anthropic import AsyncAnthropic
 from ..agent.loop import run_agent_turn
 from ..config import get_settings
 from ..db.supabase import Supabase
-from ..tools import ToolContext
+from ..tools import ToolContext, get_handler
 from .lang import DIALECT_ISO, detect_language, language_name, stt_plan, tts_model_for
 from .session import SEED_ELDERS, SessionRegistry
 from .voice import synthesize, transcribe
@@ -26,10 +26,21 @@ from .voice import synthesize, transcribe
 log = logging.getLogger("hermes.telegram")
 
 _HELP = (
-    "I'm Hermes, your medication helper. Just talk to me — ask about your "
+    "Hi, I'm Dosewise — your medication helper. Just talk to me: ask about your "
     "medicines, tell me when you've taken one, or send a photo of a prescription.\n"
     "Commands: /whoami, /switch a|b (test identities)."
 )
+
+# Yes/No tap-keyboard attached when the agent is awaiting a confirmation, so an
+# elder can tap instead of typing. The callback comes back as ``confirm:yes|no``.
+_CONFIRM_KEYBOARD = {
+    "inline_keyboard": [
+        [
+            {"text": "✅ Yes", "callback_data": "confirm:yes"},
+            {"text": "✖️ No", "callback_data": "confirm:no"},
+        ]
+    ]
+}
 
 
 class TelegramClient:
@@ -46,8 +57,26 @@ class TelegramClient:
         resp.raise_for_status()
         return resp.json()
 
-    async def send_message(self, chat_id: int, text: str) -> None:
-        await self._call("sendMessage", chat_id=chat_id, text=text)
+    async def send_message(
+        self, chat_id: int, text: str, reply_markup: dict | None = None
+    ) -> None:
+        params: dict = {"chat_id": chat_id, "text": text}
+        if reply_markup is not None:  # Telegram rejects a null reply_markup.
+            params["reply_markup"] = reply_markup
+        await self._call("sendMessage", **params)
+
+    async def answer_callback_query(
+        self, callback_query_id: str, text: str | None = None
+    ) -> None:
+        """Acknowledge a tapped inline button so Telegram stops the client spinner.
+        Best-effort — a failure here must never block the actual reply."""
+        try:
+            params: dict = {"callback_query_id": callback_query_id}
+            if text:
+                params["text"] = text
+            await self._call("answerCallbackQuery", **params)
+        except Exception:
+            pass
 
     async def send_audio(
         self, chat_id: int, audio: bytes, *, filename: str = "reply.wav", mime: str = "audio/wav"
@@ -85,6 +114,115 @@ class TelegramClient:
         return resp.content
 
 
+async def _deliver_reply(
+    telegram: TelegramClient,
+    chat_id: int,
+    state,
+    reply: str,
+    *,
+    spoke: bool,
+    lang_iso: str | None,
+) -> None:
+    """Send the agent's reply out: text (with a Yes/No tap-keyboard when the agent
+    is awaiting a confirmation), then the same reply as audio in the elder's
+    language when they spoke or have voice-by-default on. Shared by the
+    typed-message and button-tap paths."""
+    markup = _CONFIRM_KEYBOARD if getattr(state, "awaiting_confirmation", False) else None
+    await telegram.send_message(chat_id, reply or "…", reply_markup=markup)
+    # Speak the reply when the elder spoke OR when voice is their default (low
+    # digital literacy). Text always lands first, so a TTS failure is silent.
+    if reply and (spoke or getattr(state, "voice_default", False)):
+        try:
+            model = tts_model_for(lang_iso, get_settings().hf_tts_model)
+            audio = await synthesize(reply, model=model)
+            if audio:
+                await telegram.send_audio(chat_id, audio)
+        except Exception:
+            log.warning("failed to send voice reply", exc_info=True)
+
+
+async def _handle_callback(
+    callback: dict,
+    *,
+    anthropic: AsyncAnthropic,
+    supabase: Supabase,
+    registry: SessionRegistry,
+    telegram: TelegramClient,
+) -> None:
+    """Handle a tapped inline button (Telegram ``callback_query``).
+
+    Two families of buttons:
+    * ``confirm:yes|no`` — a generic confirmation. We translate the tap into the
+      plain text the agent already understands ("yes"/"no") and re-enter the
+      normal turn, so the existing propose→confirm tool guards handle it unchanged.
+    * ``dose:taken|later:<med_id>`` — a daily-reminder response. "Taken" logs the
+      dose deterministically (no LLM turn); "Later" just acknowledges.
+    """
+    cq_id = callback.get("id")
+    message = callback.get("message") or {}
+    chat_id = (message.get("chat") or {}).get("id")
+    data = callback.get("data") or ""
+    if cq_id is not None:
+        await telegram.answer_callback_query(cq_id)
+    if chat_id is None:
+        return
+    state = registry.get(chat_id)
+
+    if data in ("confirm:yes", "confirm:no"):
+        answer = "yes" if data == "confirm:yes" else "no"
+        lang_iso = DIALECT_ISO.get((state.dialect or "").lower())
+        await telegram.send_chat_action(chat_id)
+        ctx = ToolContext(
+            supabase=supabase, elder_id=state.elder_id, session=state, telegram=telegram
+        )
+        try:
+            reply, _tools, state.messages = await run_agent_turn(
+                anthropic, ctx, answer, history=state.messages,
+                reply_language=language_name(lang_iso),
+            )
+        except Exception:
+            log.exception("agent turn failed (callback)")
+            await telegram.send_message(
+                chat_id, "Sorry, something went wrong. Let me get a person to help."
+            )
+            return
+        await _deliver_reply(telegram, chat_id, state, reply, spoke=False, lang_iso=lang_iso)
+        return
+
+    if data.startswith("dose:"):
+        _, _, rest = data.partition(":")
+        action, _, med_id = rest.partition(":")
+        if action == "later":
+            await telegram.send_message(
+                chat_id, "Okay, no rush. Tap ✅ Taken once you've taken it. 🕗"
+            )
+            return
+        if action == "taken" and med_id:
+            ctx = ToolContext(
+                supabase=supabase, elder_id=state.elder_id, session=state, telegram=telegram
+            )
+            try:
+                meds = await ctx.db().select(
+                    "medications", columns="name",
+                    filters={"id": f"eq.{med_id}"}, limit=1,
+                )
+                name = meds[0]["name"] if meds else None
+                if name:
+                    await get_handler("log_dose")(ctx, medication_name=name)
+                    await telegram.send_message(
+                        chat_id, f"✅ I've logged your {name} as taken. Well done."
+                    )
+                else:
+                    await telegram.send_message(chat_id, "✅ Logged as taken.")
+            except Exception:
+                log.exception("dose callback failed")
+                await telegram.send_message(
+                    chat_id, "I couldn't log that just now. Please tell me in a message."
+                )
+            return
+    # Unknown callback data — the spinner is already stopped; nothing else to do.
+
+
 async def handle_update(
     update: dict,
     *,
@@ -93,6 +231,14 @@ async def handle_update(
     registry: SessionRegistry,
     telegram: TelegramClient,
 ) -> None:
+    # A tapped inline button arrives as ``callback_query`` (no top-level message).
+    callback = update.get("callback_query")
+    if callback:
+        await _handle_callback(
+            callback, anthropic=anthropic, supabase=supabase,
+            registry=registry, telegram=telegram,
+        )
+        return
     message = update.get("message") or update.get("edited_message")
     if not message:
         return
@@ -118,16 +264,24 @@ async def handle_update(
 
     state = registry.get(chat_id)
 
-    # Photo (prescription scan)? Hold the bytes on the session so add_prescription
-    # can persist them to storage once the elder confirms the scan.
+    # Photo — or an image sent "as a file" (Telegram delivers it as a document with
+    # an image/* mime, common when preserving full resolution). Hold the bytes on the
+    # session so add_prescription can persist them once the elder confirms the scan.
     image_bytes = None
+    file_id = None
     if message.get("photo"):
-        largest = message["photo"][-1]
+        file_id = message["photo"][-1]["file_id"]
+    else:
+        doc = message.get("document")
+        if doc and str(doc.get("mime_type") or "").startswith("image/"):
+            file_id = doc["file_id"]
+    if file_id is not None:
         try:
-            image_bytes = await telegram.download_file(largest["file_id"])
+            image_bytes = await telegram.download_file(file_id)
             state.pending_image = image_bytes
         except Exception:
-            log.warning("failed to download telegram photo", exc_info=True)
+            log.warning("failed to download telegram image", exc_info=True)
+            state.pending_image = None  # never let a stale image linger
         if not text:
             text = "Here is a photo of my prescription."
 
@@ -184,17 +338,9 @@ async def handle_update(
             chat_id, "Sorry, something went wrong. Let me get a person to help."
         )
         return
-    await telegram.send_message(chat_id, reply or "…")
-    # If the elder spoke, speak the reply back too, in their language (best-effort;
-    # the text above always lands, so a TTS failure is silent). Accessible either way.
-    if spoke and reply:
-        try:
-            model = tts_model_for(lang_iso, get_settings().hf_tts_model)
-            audio = await synthesize(reply, model=model)
-            if audio:
-                await telegram.send_audio(chat_id, audio)
-        except Exception:
-            log.warning("failed to send voice reply", exc_info=True)
+    # Send the reply (with a Yes/No tap-keyboard if the agent is awaiting a
+    # confirmation) and, if the elder spoke, the same reply back as audio.
+    await _deliver_reply(telegram, chat_id, state, reply, spoke=spoke, lang_iso=lang_iso)
 
 
 async def poll_loop(

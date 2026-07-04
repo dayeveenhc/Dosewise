@@ -57,3 +57,138 @@ async def test_typed_message_replies_text_only(monkeypatch):
     )
     assert tg.sent and tg.sent[-1][1] == "Sure!"
     assert tg.audio_sent == []  # typed in -> no spoken reply
+
+
+def _capture_turn(monkeypatch):
+    """Stub run_agent_turn; return a dict that captures the image_bytes it received."""
+    captured: dict = {}
+
+    async def fake_run_agent_turn(
+        client, ctx, text, *, image_bytes=None, history=None, reply_language=None, **_
+    ):
+        captured["image_bytes"] = image_bytes
+        captured["text"] = text
+        return "Got it.", [], history or []
+
+    monkeypatch.setattr(telegram, "run_agent_turn", fake_run_agent_turn)
+    monkeypatch.setattr(telegram, "detect_language", lambda text: "eng")
+    return captured
+
+
+async def test_photo_message_sets_pending_image_and_passes_to_turn(monkeypatch):
+    captured = _capture_turn(monkeypatch)
+    registry = SessionRegistry(ELDER_A)
+    tg = FakeTelegram()
+    tg.audio = b"JPEGPHOTO"  # download_file returns this
+    # Telegram sends a size ladder; the handler must pick the largest (last).
+    update = {"message": {"chat": {"id": 111},
+                          "photo": [{"file_id": "small"}, {"file_id": "big"}]}}
+
+    await telegram.handle_update(
+        update, anthropic=FakeAnthropic([response("end_turn", [text_block("ok")])]),
+        supabase=FakeSupabase(), registry=registry, telegram=tg,
+    )
+    assert tg.downloads == ["big"]                      # largest photo downloaded
+    assert captured["image_bytes"] == b"JPEGPHOTO"      # threaded into the turn
+    assert registry.get(111).pending_image == b"JPEGPHOTO"  # held for confirm
+
+
+async def test_image_document_is_treated_like_a_photo(monkeypatch):
+    captured = _capture_turn(monkeypatch)
+    registry = SessionRegistry(ELDER_A)
+    tg = FakeTelegram()
+    tg.audio = b"PNGBYTES"
+    update = {"message": {"chat": {"id": 222},
+                          "document": {"file_id": "docfile", "mime_type": "image/png"}}}
+
+    await telegram.handle_update(
+        update, anthropic=FakeAnthropic([response("end_turn", [text_block("ok")])]),
+        supabase=FakeSupabase(), registry=registry, telegram=tg,
+    )
+    assert tg.downloads == ["docfile"]
+    assert captured["image_bytes"] == b"PNGBYTES"
+    assert registry.get(222).pending_image == b"PNGBYTES"
+
+
+async def test_non_image_document_is_ignored(monkeypatch):
+    captured = _capture_turn(monkeypatch)
+    registry = SessionRegistry(ELDER_A)
+    tg = FakeTelegram()
+    # A PDF with no caption: not an image, no text -> handler returns without a turn.
+    update = {"message": {"chat": {"id": 333},
+                          "document": {"file_id": "doc.pdf", "mime_type": "application/pdf"}}}
+
+    await telegram.handle_update(
+        update, anthropic=FakeAnthropic([response("end_turn", [text_block("ok")])]),
+        supabase=FakeSupabase(), registry=registry, telegram=tg,
+    )
+    assert tg.downloads == []          # nothing downloaded
+    assert captured == {}              # run_agent_turn never called
+
+
+# --- Inline tap-buttons ----------------------------------------------------
+async def test_reply_gets_yes_no_keyboard_when_awaiting_confirmation(monkeypatch):
+    async def fake_run_agent_turn(
+        client, ctx, text, *, image_bytes=None, history=None, reply_language=None, **_
+    ):
+        ctx.session.awaiting_confirmation = True  # a tool just proposed something
+        return "Save Metformin 500mg?", ["add_prescription"], history or []
+
+    monkeypatch.setattr(telegram, "run_agent_turn", fake_run_agent_turn)
+    monkeypatch.setattr(telegram, "detect_language", lambda text: "eng")
+    registry = SessionRegistry(ELDER_A)
+    tg = FakeTelegram()
+    update = {"message": {"chat": {"id": 111}, "text": "add metformin"}}
+
+    await telegram.handle_update(
+        update, anthropic=FakeAnthropic([response("end_turn", [text_block("x")])]),
+        supabase=FakeSupabase(), registry=registry, telegram=tg,
+    )
+    assert tg.sent[-1] == (111, "Save Metformin 500mg?")
+    assert tg.markups[-1] == telegram._CONFIRM_KEYBOARD  # Yes/No keyboard attached
+
+
+async def test_confirm_yes_callback_runs_turn_and_delivers_reply(monkeypatch):
+    seen: dict = {}
+
+    async def fake_run_agent_turn(
+        client, ctx, text, *, image_bytes=None, history=None, reply_language=None, **_
+    ):
+        seen["text"] = text
+        ctx.session.awaiting_confirmation = False  # committed -> keyboard drops off
+        return "Saved it.", ["add_prescription"], history or []
+
+    monkeypatch.setattr(telegram, "run_agent_turn", fake_run_agent_turn)
+    registry = SessionRegistry(ELDER_A)
+    tg = FakeTelegram()
+    update = {"callback_query": {"id": "cq1", "data": "confirm:yes",
+                                 "message": {"chat": {"id": 111}}}}
+
+    await telegram.handle_update(
+        update, anthropic=FakeAnthropic([response("end_turn", [text_block("x")])]),
+        supabase=FakeSupabase(), registry=registry, telegram=tg,
+    )
+    assert seen["text"] == "yes"            # tap translated to plain-text confirmation
+    assert tg.answered == ["cq1"]           # spinner stopped
+    assert tg.sent[-1] == (111, "Saved it.")
+    assert tg.markups[-1] is None           # no longer awaiting -> no keyboard
+
+
+async def test_dose_taken_callback_logs_the_dose():
+    med_id = "00000000-0000-0000-0000-0000000000d1"
+    db = FakeDB({
+        "medications": [{"id": med_id, "name": "Metformin", "archived": False}],
+        "doses": [],
+    })
+    registry = SessionRegistry(ELDER_A)
+    tg = FakeTelegram()
+    update = {"callback_query": {"id": "cq2", "data": f"dose:taken:{med_id}",
+                                 "message": {"chat": {"id": 111}}}}
+
+    await telegram.handle_update(
+        update, anthropic=FakeAnthropic([response("end_turn", [text_block("x")])]),
+        supabase=FakeSupabase(db=db), registry=registry, telegram=tg,
+    )
+    assert tg.answered == ["cq2"]
+    assert any(table == "doses" for table, _ in db.inserted)  # dose logged as taken
+    assert "taken" in tg.sent[-1][1].lower()

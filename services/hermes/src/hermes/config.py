@@ -31,16 +31,23 @@ class Settings(BaseSettings):
     supabase_jwt_secret: str = ""
 
     # --- LLM provider selection ---
-    # Which brain Hermes uses: "anthropic" (Claude) or "gemini" (Google).
-    llm_provider: str = "anthropic"
+    # Which brain Hermes uses: "openai" (default), "gemini", or "anthropic" (Claude).
+    # OpenAI is the configured brain; Anthropic is the automatic fallback when the
+    # configured provider's key is unset (see agent/llm.py effective_provider).
+    llm_provider: str = "openai"
 
-    # --- Anthropic (agent brain) ---
-    anthropic_api_key: str = ""
-    anthropic_model: str = "claude-sonnet-5"
+    # --- OpenAI (agent brain; the default) ---
+    openai_api_key: str = ""
+    openai_model: str = "gpt-4o"
 
-    # --- Google Gemini (agent brain; used when LLM_PROVIDER=gemini) ---
+    # --- Google Gemini (agent brain; alternative) ---
     gemini_api_key: str = ""
     gemini_model: str = "gemini-2.5-flash"
+
+    # --- Anthropic (agent brain; automatic fallback when the configured provider's
+    # key is unset) ---
+    anthropic_api_key: str = ""
+    anthropic_model: str = "claude-sonnet-5"
 
     # --- OpenFDA (optional; works keyless at a lower rate limit) ---
     openfda_api_key: str = ""

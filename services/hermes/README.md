@@ -1,9 +1,12 @@
 # services/hermes — Dosewise orchestrator
 
-**Hermes** is the AI orchestrator and **security boundary** of Dosewise: a
-**Python 3.12 + FastAPI** service that runs the **Claude Sonnet 5** tool-calling
-loop and the 10-tool belt, holding all external API keys. The client never talks to
-Claude, OpenFDA, or HuggingFace directly.
+**Hermes** is the AI orchestrator and **security boundary** of Dosewise (the
+assistant persona users talk to is **Dosewise**): a **Python 3.12 + FastAPI**
+service that runs an **OpenAI** tool-calling loop (`gpt-4o`, the configured brain;
+Gemini and Claude are both supported providers too, and Claude is the automatic
+fallback when the configured provider's key is unset) and the tool belt, holding
+all external API keys. The client never talks to the LLM, OpenFDA, or HuggingFace
+directly.
 
 It's testable **before any frontend exists** through two channels on one shared
 core:
@@ -12,12 +15,33 @@ core:
 - **Telegram bot** — the current demo interface: chat, photo upload for the
   prescription-scan flow, and **voice notes** (transcribed via HuggingFace STT).
 
+## What Dosewise can do for you
+
+For an elderly patient (or their caregiver), the assistant can:
+
+- **List your medicines** — what you take, when, and what each is for.
+- **Explain any drug in plain words** — grounded in OpenFDA, never invented.
+- **Read a prescription photo** — it reads the details back and saves only after
+  you confirm (tap **✅ Yes**).
+- **Log a dose** — tap **✅ Taken** when you've taken a pill.
+- **Track refills** — warns you (⚠️) before you run out.
+- **Daily dose reminders** — notifies you at each dose time with a tap-to-confirm
+  button, and alerts a linked caregiver if a *critical* dose is missed.
+- **Set your own reminder times** — tell it "remind me at 8am and 8pm" and it
+  will notify you to take that pill every day.
+- **Queue a question for your doctor**, message a **caregiver**, or **get a human**
+  when something's wrong.
+- **Show a how-to video** for an inhaler or eye-drops.
+- **Talk in your language & dialect**, by **voice or text** (multilingual STT/TTS
+  + slang understanding).
+
 ## Tool belt
 
 `list_medications` · `log_dose` · `get_drug_info` (OpenFDA, cached in `drug_cache`)
 · `add_doctor_question` · `message_caregiver` · `show_instruction_video` ·
-`request_human_help` · `add_prescription` (Claude vision → **propose → confirm**) ·
-`check_refills` · `log_refill`.
+`request_human_help` · `add_prescription` (vision → **propose → confirm**) ·
+`set_medication_reminder` (elder-set daily reminder times) · `check_refills` ·
+`log_refill`.
 
 ## Reminders, dialect & voice
 
@@ -58,7 +82,7 @@ for `drug_cache` writes.
 src/hermes/
 ├── config.py            # pydantic-settings (reads repo-root .env)
 ├── main.py              # FastAPI app + lifespan; `hermes-serve`
-├── agent/               # prompts.py + loop.py (the Claude tool-use loop)
+├── agent/               # prompts.py + soul.md + loop.py (the OpenAI/Gemini/Claude tool-use loop)
 ├── db/                  # auth.py (mint/verify JWT) + supabase.py (PostgREST)
 ├── tools/               # one file per tool + registry (base.py)
 ├── channels/            # session.py, cli.py, telegram.py
@@ -74,8 +98,10 @@ src/hermes/
    supabase db reset          # applies migrations + seed (Elder A/B, Caregiver C)
    supabase status            # copy API URL / anon / service_role / JWT secret
    ```
-2. **Fill `.env`** (repo root) with those Supabase values, plus `ANTHROPIC_API_KEY`
-   and `TELEGRAM_BOT_TOKEN`. Keep `HERMES_CHANNEL_MODE=polling`.
+2. **Fill `.env`** (repo root) with those Supabase values, plus `OPENAI_API_KEY`
+   (the default brain; or `GEMINI_API_KEY`/`ANTHROPIC_API_KEY` for the other
+   providers — Anthropic is also the automatic fallback) and `TELEGRAM_BOT_TOKEN`.
+   Keep `HERMES_CHANNEL_MODE=polling`.
 3. **Install + run:**
    ```bash
    cd services/hermes && uv sync

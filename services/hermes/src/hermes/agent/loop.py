@@ -1,20 +1,22 @@
 """The tool-calling loop — the heart of Hermes.
 
 ``run_agent_turn`` runs one user turn end to end: it calls the configured brain
-(Claude **or** Gemini) with the tool belt, dispatches any tool calls (acting as the
-elder, RLS-scoped), feeds the results back, and returns the final plain-language
-reply. The ``messages`` list (provider-native history) is threaded in and out so a
-channel can keep multi-turn context.
+(OpenAI, Gemini, **or** Claude) with the tool belt, dispatches any tool calls
+(acting as the elder, RLS-scoped), feeds the results back, and returns the final
+plain-language reply. The ``messages`` list (provider-native history) is threaded
+in and out so a channel can keep multi-turn context.
 
-The two providers share everything except the model call and the wire format for
-tool calls: dialect-tailored system prompt, tool dispatch, and persistence are
-common; ``_run_anthropic`` / ``_run_gemini`` handle the provider-specific parts.
+The three providers share everything except the model call and the wire format
+for tool calls: dialect-tailored system prompt, tool dispatch, and persistence are
+common; ``_run_anthropic`` / ``_run_gemini`` / ``_run_openai`` handle the
+provider-specific parts.
 """
 
 from __future__ import annotations
 
 import asyncio
 import base64
+import json
 import logging
 
 from ..config import get_settings
@@ -60,9 +62,18 @@ async def run_agent_turn(
     """Run one turn. Returns (reply_text, tools_used, updated_messages)."""
     dialect = await _elder_dialect(ctx)
     slang = await _elder_slang(ctx, dialect)
-    system = system_prompt_for(dialect, slang=slang, reply_language=reply_language)
+    await _elder_voice_pref(ctx)
+    recent_memory = await _recent_memory(ctx, history)
+    system = system_prompt_for(
+        dialect, slang=slang, reply_language=reply_language, recent_memory=recent_memory
+    )
 
-    if llm.effective_provider() == "gemini":
+    eff = llm.effective_provider()
+    if eff == "openai":
+        reply, tools_used, messages = await _run_openai(
+            client, ctx, system, user_text, image_bytes, image_media_type, history
+        )
+    elif eff == "gemini":
         reply, tools_used, messages = await _run_gemini(
             client, ctx, system, user_text, image_bytes, image_media_type, history
         )
@@ -88,6 +99,102 @@ async def _dispatch_tool(ctx: ToolContext, name: str, tool_input: dict) -> tuple
     except Exception as exc:  # surface tool failures to the model, don't crash
         log.exception("tool %s failed", name)
         return f"Tool error: {exc}", True
+
+
+# ---------------------------------------------------------------------------
+# OpenAI — chat.completions API with tool_calls / tool-role messages
+# ---------------------------------------------------------------------------
+def _to_openai_tools() -> list[dict]:
+    """The shared tool schemas already use the same JSON-schema shape OpenAI
+    expects for ``function.parameters`` — no per-field conversion needed
+    (unlike Gemini's typed ``Schema`` builder)."""
+    return [
+        {
+            "type": "function",
+            "function": {
+                "name": schema["name"],
+                "description": schema.get("description", ""),
+                "parameters": schema["input_schema"],
+            },
+        }
+        for schema in tool_schemas()
+    ]
+
+
+def _parse_tool_args(raw: str | None) -> dict:
+    try:
+        return json.loads(raw) if raw else {}
+    except json.JSONDecodeError:
+        log.warning("openai tool call had unparsable arguments: %r", raw)
+        return {}
+
+
+async def _run_openai(
+    client, ctx, system, user_text, image_bytes, image_media_type, history
+) -> tuple[str, list[str], list]:
+    settings = get_settings()
+    messages: list[dict] = list(history or [])
+
+    user_content: list[dict] = []
+    if image_bytes is not None:
+        data = base64.standard_b64encode(image_bytes).decode()
+        user_content.append(
+            {"type": "image_url", "image_url": {"url": f"data:{image_media_type};base64,{data}"}}
+        )
+    user_content.append({"type": "text", "text": user_text})
+    messages.append({"role": "user", "content": user_content})
+
+    tools = _to_openai_tools()
+    tools_used: list[str] = []
+    msg = None
+
+    for _ in range(_MAX_ITERATIONS):
+        response = await client.chat.completions.create(
+            model=settings.openai_model,
+            max_tokens=_MAX_TOKENS,
+            messages=[{"role": "system", "content": system}, *messages],
+            tools=tools,
+        )
+        msg = response.choices[0].message
+
+        if not msg.tool_calls:
+            break
+
+        tool_calls = list(msg.tool_calls)
+        messages.append(
+            {
+                "role": "assistant",
+                "content": msg.content,
+                "tool_calls": [
+                    {
+                        "id": tc.id,
+                        "type": "function",
+                        "function": {"name": tc.function.name, "arguments": tc.function.arguments},
+                    }
+                    for tc in tool_calls
+                ],
+            }
+        )
+
+        for tc in tool_calls:
+            tools_used.append(tc.function.name)
+        outs = await asyncio.gather(
+            *(
+                _dispatch_tool(ctx, tc.function.name, _parse_tool_args(tc.function.arguments))
+                for tc in tool_calls
+            )
+        )
+        for tc, (out, _is_error) in zip(tool_calls, outs, strict=True):
+            messages.append({"role": "tool", "tool_call_id": tc.id, "content": out})
+
+    reply = (msg.content or "").strip() if msg is not None else ""
+    if msg is not None and msg.tool_calls:
+        # Hit the iteration cap mid-loop; give a safe fallback.
+        reply = reply or "Let me get a person to help you with that."
+
+    messages.append({"role": "assistant", "content": reply})
+    _strip_images(messages)
+    return reply, tools_used, messages
 
 
 # ---------------------------------------------------------------------------
@@ -163,7 +270,31 @@ async def _run_anthropic(
         reply = reply or "Let me get a person to help you with that."
 
     messages.append({"role": "assistant", "content": reply})
+    # The photo was needed only for this turn's iterations; drop it from the history
+    # we thread forward so the (large) base64 image isn't re-sent on every later turn.
+    _strip_images(messages)
     return reply, tools_used, messages
+
+
+def _strip_images(messages: list) -> None:
+    """In place: remove image blocks from user turns in the threaded-forward history.
+
+    The elder's prescription photo is analysed on the turn it arrives; keeping it in
+    ``messages`` would re-transmit the base64 image to the model on every subsequent
+    turn. We never empty a content list (the API rejects that) — a photo always
+    arrives alongside a text block, so at least the text remains. Handles both
+    Anthropic's ``"image"`` blocks and OpenAI's ``"image_url"`` blocks.
+    """
+    for msg in messages:
+        content = msg.get("content") if isinstance(msg, dict) else None
+        if not isinstance(content, list):
+            continue
+        kept = [
+            b for b in content
+            if not (isinstance(b, dict) and b.get("type") in ("image", "image_url"))
+        ]
+        if kept and len(kept) != len(content):
+            msg["content"] = kept
 
 
 def _anthropic_text(response) -> str:
@@ -317,6 +448,71 @@ async def _elder_dialect(ctx: ToolContext) -> str | None:
         session.dialect = None
     session.dialect_loaded = True
     return session.dialect
+
+
+async def _elder_voice_pref(ctx: ToolContext) -> bool:
+    """Best-effort: whether the elder wants spoken replies (profiles.accessibility.tts),
+    fetched once and cached on the session. Defaults to True — seniors get voice by
+    default; only a profile that opts out (``tts: false``) turns it off."""
+    session = ctx.session
+    if session is None:
+        return True
+    if getattr(session, "voice_loaded", False):
+        return session.voice_default
+    pref = True
+    try:
+        rows = await ctx.db().select(
+            "profiles",
+            columns="accessibility",
+            filters={"id": f"eq.{ctx.elder_id}"},
+            limit=1,
+        )
+        access = (rows[0].get("accessibility") if rows else None) or {}
+        pref = bool(access.get("tts", True))
+    except Exception:
+        log.warning("failed to load elder voice preference", exc_info=True)
+        pref = True
+    session.voice_default = pref
+    session.voice_loaded = True
+    return pref
+
+
+async def _recent_memory(ctx: ToolContext, history: list | None) -> str | None:
+    """A compact recap of the elder's recent conversation_turns, folded into the
+    system prompt so the agent remembers past chats across process restarts.
+
+    Loaded once per session and only when there's no live in-process history yet
+    (a fresh process / new session) — otherwise the threaded ``messages`` already
+    carry the current conversation and we'd double-count it.
+    """
+    session = ctx.session
+    if session is None or history:
+        return None
+    if getattr(session, "memory_loaded", False):
+        return session.memory_text
+    text: str | None = None
+    try:
+        rows = await ctx.db().select(
+            "conversation_turns",
+            columns="speaker,transcript",
+            filters={"elder_id": f"eq.{ctx.elder_id}"},
+            order="created_at.desc",
+            limit=8,
+        )
+        lines: list[str] = []
+        for row in reversed(rows):  # DB gave newest-first; recap oldest-first.
+            transcript = (row.get("transcript") or "").strip()
+            if not transcript:
+                continue
+            who = "The patient said" if row.get("speaker") == "user" else "You replied"
+            lines.append(f"- {who}: {transcript}")
+        text = "\n".join(lines) or None
+    except Exception:
+        log.warning("failed to load recent memory", exc_info=True)
+        text = None
+    session.memory_text = text
+    session.memory_loaded = True
+    return text
 
 
 async def _elder_slang(ctx: ToolContext, dialect: str | None) -> list:
