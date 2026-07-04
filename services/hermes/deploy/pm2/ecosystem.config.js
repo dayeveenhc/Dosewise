@@ -54,5 +54,22 @@ module.exports = {
         PM2_APP_NAME: "hermes",
       },
     },
+
+    // Watches the local tree for changes and commits+pushes them. Enables
+    // "edit on VPS via tmux + Claude Code -> auto-push -> laptop `git pull`
+    // picks it up". Mutually exclusive with hermes-git-sync above — run one
+    // or the other, not both (see watch-and-push.sh header for why).
+    {
+      name: "hermes-git-sync-push",
+      cwd: REPO_DIR,
+      script: `${REPO_DIR}/services/hermes/deploy/pm2/watch-and-push.sh`,
+      interpreter: "bash",
+      autorestart: true,
+      env: {
+        REPO_DIR,
+        GIT_BRANCH: process.env.GIT_BRANCH || "main",
+        POLL_SECONDS: process.env.POLL_SECONDS || "15",
+      },
+    },
   ],
 };
