@@ -105,7 +105,8 @@ async def _openfda_get(query: str) -> dict | None:
             return resp.json()
         # 429 / 5xx / network error: back off briefly and retry once.
         if attempt == 0:
-            log.info("openfda transient failure (%s), retrying", getattr(resp, "status_code", "network"))
+            status = getattr(resp, "status_code", "network")
+            log.info("openfda transient failure (%s), retrying", status)
             await asyncio.sleep(0.5)
     return None
 

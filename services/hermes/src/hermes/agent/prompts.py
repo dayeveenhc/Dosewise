@@ -31,6 +31,7 @@ def system_prompt_for(
     slang: list | None = None,
     reply_language: str | None = None,
     recent_memory: str | None = None,
+    medical_profile: str | None = None,
 ) -> str:
     """The system prompt, tailored to the elder's dialect, slang, and input language.
 
@@ -42,6 +43,8 @@ def system_prompt_for(
     - ``reply_language``: the language the patient is using now — reply in it.
     - ``recent_memory``: a short recap of earlier turns, for continuity across
       restarts. Context only — it never overrides a grounded medication fact.
+    - ``medical_profile``: the patient's saved allergies / conditions / history.
+      Context to tailor caveats — never a source of drug facts, never a diagnosis.
     """
     prompt = SYSTEM_PROMPT
     if dialect and dialect.lower() != "en":
@@ -66,5 +69,12 @@ def system_prompt_for(
         prompt += (
             "\nRecent context (for continuity; never overrides grounded facts):\n"
             f"{recent_memory}\n"
+        )
+    if medical_profile:
+        prompt += (
+            "\nThe patient's saved medical profile (allergies, conditions, history). "
+            "Use it to tailor caveats and questions — but it is NOT a source of drug "
+            "facts and you must never use it to diagnose. Grounded OpenFDA facts still "
+            f"come only from the tools:\n{medical_profile}\n"
         )
     return prompt

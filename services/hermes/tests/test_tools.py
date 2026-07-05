@@ -174,10 +174,55 @@ async def test_get_drug_info_brand_falls_back_to_generic(monkeypatch):
     assert any("acetaminophen" in u for u in seen)
 
 
+# --- update_medical_profile -------------------------------------------------
+async def test_update_profile_proposes_without_write():
+    tool = get_handler("update_medical_profile")
+    db = FakeDB({"profiles": [{"id": ELDER_A, "accessibility": {}}]})
+    ctx = _ctx(db)
+    out = await tool(ctx, content="Allergic to penicillin.", confirmed=False)
+    assert "PROPOSED" in out and not db.updated
+    assert ctx.session.pending_profile == {"content": "Allergic to penicillin.", "replace": False}
+    assert ctx.session.awaiting_confirmation is True
+
+
+async def test_update_profile_confirm_appends():
+    tool = get_handler("update_medical_profile")
+    db = FakeDB({"profiles": [
+        {"id": ELDER_A, "accessibility": {"medical_profile": "Has diabetes."}}
+    ]})
+    ctx = _ctx(db)
+    await tool(ctx, content="Allergic to penicillin.", confirmed=False)
+    out = await tool(ctx, content="Allergic to penicillin.", confirmed=True)
+    assert "Saved" in out
+    patch = db.updated[0][1]
+    saved = patch["accessibility"]["medical_profile"]
+    assert "Has diabetes." in saved and "Allergic to penicillin." in saved
+    assert ctx.session.medical_profile == saved  # cache refreshed for next turn
+
+
+async def test_update_profile_replace_overwrites():
+    tool = get_handler("update_medical_profile")
+    db = FakeDB({"profiles": [{"id": ELDER_A, "accessibility": {"medical_profile": "Old."}}]})
+    ctx = _ctx(db)
+    await tool(ctx, content="Fresh summary.", confirmed=False, replace=True)
+    await tool(ctx, content="Fresh summary.", confirmed=True, replace=True)
+    saved = db.updated[0][1]["accessibility"]["medical_profile"]
+    assert saved == "Fresh summary."
+
+
+async def test_update_profile_confirm_without_proposal_refused():
+    tool = get_handler("update_medical_profile")
+    db = FakeDB({"profiles": [{"id": ELDER_A, "accessibility": {}}]})
+    out = await tool(_ctx(db), content="X", confirmed=True)
+    assert "Refused" in out and not db.updated
+
+
 # --- check_drug_interactions ------------------------------------------------
 async def test_check_interactions_pair_flags_when_mentioned(monkeypatch):
     async def _fake(ctx, name):
-        return "May interact with warfarin and increase bleeding risk." if name.lower() == "aspirin" else ""
+        if name.lower() == "aspirin":
+            return "May interact with warfarin and increase bleeding risk."
+        return ""
 
     monkeypatch.setattr(interactions, "interaction_text", _fake)
     out = await get_handler("check_drug_interactions")(
@@ -236,7 +281,8 @@ async def test_get_drug_info_unreachable_reports_transient(monkeypatch):
             raise drug_info.httpx.ConnectError("boom")
 
     monkeypatch.setattr(drug_info.httpx, "AsyncClient", _Client)
-    out = await get_handler("get_drug_info")(_ctx(FakeDB({"drug_cache": []})), drug_name="Metformin")
+    ctx = _ctx(FakeDB({"drug_cache": []}))
+    out = await get_handler("get_drug_info")(ctx, drug_name="Metformin")
     assert "again" in out.lower()
 
 

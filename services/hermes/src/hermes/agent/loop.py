@@ -64,8 +64,13 @@ async def run_agent_turn(
     slang = await _elder_slang(ctx, dialect)
     await _elder_voice_pref(ctx)
     recent_memory = await _recent_memory(ctx, history)
+    medical_profile = await _medical_profile(ctx)
     system = system_prompt_for(
-        dialect, slang=slang, reply_language=reply_language, recent_memory=recent_memory
+        dialect,
+        slang=slang,
+        reply_language=reply_language,
+        recent_memory=recent_memory,
+        medical_profile=medical_profile,
     )
 
     eff = llm.effective_provider()
@@ -512,6 +517,33 @@ async def _recent_memory(ctx: ToolContext, history: list | None) -> str | None:
         text = None
     session.memory_text = text
     session.memory_loaded = True
+    return text
+
+
+async def _medical_profile(ctx: ToolContext) -> str | None:
+    """The elder's saved medical profile (``profiles.accessibility.medical_profile``),
+    fetched once and cached on the session so drug answers can be tailored to their
+    allergies/conditions. Context only — never a source of grounded drug facts."""
+    session = ctx.session
+    if session is not None and getattr(session, "medical_profile_loaded", False):
+        return session.medical_profile
+    text: str | None = None
+    try:
+        rows = await ctx.db().select(
+            "profiles",
+            columns="accessibility",
+            filters={"id": f"eq.{ctx.elder_id}"},
+            limit=1,
+        )
+        access = (rows[0].get("accessibility") if rows else None) or {}
+        profile = access.get("medical_profile")
+        text = profile.strip() if isinstance(profile, str) and profile.strip() else None
+    except Exception:
+        log.warning("failed to load medical profile", exc_info=True)
+        text = None
+    if session is not None:
+        session.medical_profile = text
+        session.medical_profile_loaded = True
     return text
 
 

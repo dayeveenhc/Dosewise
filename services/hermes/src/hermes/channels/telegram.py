@@ -22,6 +22,7 @@ from ..db.supabase import Supabase
 from ..tools import ToolContext, get_handler
 from .format import strip_markdown
 from .lang import DIALECT_ISO, detect_language, language_name, stt_plan, tts_model_for
+from .pdf import extract_pdf_text
 from .session import SEED_ELDERS, SessionRegistry
 from .voice import synthesize, transcribe
 
@@ -327,6 +328,31 @@ async def handle_update(
             state.pending_image = None  # never let a stale image linger
         if not text:
             text = "Here is a photo of my prescription."
+
+    # PDF document (prescription list / medical history). Extract the text and hand
+    # it to the turn as context; the agent may offer to save key facts to the medical
+    # profile (update_medical_profile). Scanned/image PDFs extract nothing — ask for
+    # a photo instead so the vision path can read it.
+    doc = message.get("document")
+    if doc and str(doc.get("mime_type") or "") == "application/pdf":
+        try:
+            pdf_bytes = await telegram.download_file(doc["file_id"])
+            pdf_text = extract_pdf_text(pdf_bytes)
+        except Exception:
+            log.warning("failed to download/extract telegram PDF", exc_info=True)
+            pdf_text = ""
+        if pdf_text:
+            caption = text or "Here is my document."
+            text = (
+                f"{caption}\n\n[Attached PDF contents]\n{pdf_text}\n[End of PDF]"
+            )
+        else:
+            await telegram.send_message(
+                chat_id,
+                "I couldn't read that PDF (it may be a scan). Could you send a clear "
+                "photo of the page instead?",
+            )
+            return
 
     # Voice note? Route STT by the elder's dialect (Whisper for high-resource langs,
     # MMS for Hokkien/Teochew), transcribe, and treat the transcript as the text.

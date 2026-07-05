@@ -377,7 +377,10 @@ async def set_medication_reminder(
     if ctx.session is not None:
         ctx.session.pending_reminder = None
         ctx.session.awaiting_confirmation = False
-    return f"Saved. I'll remind you to take {name} at {', '.join(valid)} {_days_phrase(valid_days)}."
+    return (
+        f"Saved. I'll remind you to take {name} at "
+        f"{', '.join(valid)} {_days_phrase(valid_days)}."
+    )
 
 
 register(_LIST_SCHEMA, list_medications)

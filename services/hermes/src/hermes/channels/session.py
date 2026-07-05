@@ -50,6 +50,14 @@ class SessionState:
     # continuity, loaded once per session (only when there's no live history yet).
     memory_text: str | None = None
     memory_loaded: bool = False
+    # The elder's saved medical profile (allergies/conditions/history) from
+    # profiles.accessibility.medical_profile, fetched once and cached so drug answers
+    # can be tailored. Context only — never a source of grounded drug facts.
+    medical_profile: str | None = None
+    medical_profile_loaded: bool = False
+    # A pending update_medical_profile proposal ({"content", "replace"}), held until
+    # the elder confirms so a profile write only ever saves what was read back.
+    pending_profile: dict | None = None
 
 
 class SessionRegistry:
@@ -82,6 +90,9 @@ class SessionRegistry:
         state.voice_loaded = False
         state.memory_text = None
         state.memory_loaded = False
+        state.medical_profile = None
+        state.medical_profile_loaded = False
+        state.pending_profile = None
         self._profile_to_chat[elder_id] = chat_id
 
     def chat_for_profile(self, profile_id: str) -> int | None:

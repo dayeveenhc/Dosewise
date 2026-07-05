@@ -14,6 +14,8 @@ dependencies = [
     "pyjwt>=2.8",
     "fastapi>=0.111",
     "uvicorn[standard]>=0.30",
+    # Prescription/medical-history PDF text extraction (Telegram document uploads).
+    "pypdf>=4.2",
     # Optional at runtime (lazy-imported): dialect slang store + local language ID.
     # The service degrades gracefully if these are absent (slang off / STT autodetect).
     "motor>=3.4",

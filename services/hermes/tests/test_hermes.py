@@ -29,6 +29,7 @@ def test_all_tools_registered():
         "log_refill",
         "check_drug_interactions",
         "show_schedule",
+        "update_medical_profile",
     }
 
 

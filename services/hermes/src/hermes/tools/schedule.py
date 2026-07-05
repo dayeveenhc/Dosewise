@@ -48,7 +48,8 @@ def render_today(meds: list[dict], taken_by_med: dict[str, int], now: datetime, 
     zone = ZoneInfo(tz)
     local_now = now.astimezone(zone)
     local_today = local_now.date()
-    title = f"Today — {_DAY_TITLE[WEEKDAYS[local_today.weekday()]]}, {local_today.strftime('%d %b')}"
+    day_name = _DAY_TITLE[WEEKDAYS[local_today.weekday()]]
+    title = f"Today — {day_name}, {local_today.strftime('%d %b')}"
 
     rows: list[tuple[str, str]] = []  # (HH:MM, line) for sorting
     for med in meds:

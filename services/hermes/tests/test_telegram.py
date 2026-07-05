@@ -121,13 +121,14 @@ async def test_image_document_is_treated_like_a_photo(monkeypatch):
     assert registry.get(222).pending_image == b"PNGBYTES"
 
 
-async def test_non_image_document_is_ignored(monkeypatch):
+async def test_non_image_non_pdf_document_is_ignored(monkeypatch):
     captured = _capture_turn(monkeypatch)
     registry = SessionRegistry(ELDER_A)
     tg = FakeTelegram()
-    # A PDF with no caption: not an image, no text -> handler returns without a turn.
+    # A .docx (neither image/* nor application/pdf) and no caption -> ignored.
     update = {"message": {"chat": {"id": 333},
-                          "document": {"file_id": "doc.pdf", "mime_type": "application/pdf"}}}
+                          "document": {"file_id": "doc.docx",
+                                       "mime_type": "application/msword"}}}
 
     await telegram.handle_update(
         update, anthropic=FakeAnthropic([response("end_turn", [text_block("ok")])]),
@@ -135,6 +136,42 @@ async def test_non_image_document_is_ignored(monkeypatch):
     )
     assert tg.downloads == []          # nothing downloaded
     assert captured == {}              # run_agent_turn never called
+
+
+async def test_pdf_document_text_threaded_into_turn(monkeypatch):
+    captured = _capture_turn(monkeypatch)
+    monkeypatch.setattr(telegram, "extract_pdf_text", lambda data: "Metformin 500mg twice daily.")
+    registry = SessionRegistry(ELDER_A)
+    tg = FakeTelegram()
+    tg.audio = b"%PDF-bytes"
+    update = {"message": {"chat": {"id": 444}, "caption": "my meds list",
+                          "document": {"file_id": "rx.pdf", "mime_type": "application/pdf"}}}
+
+    await telegram.handle_update(
+        update, anthropic=FakeAnthropic([response("end_turn", [text_block("ok")])]),
+        supabase=FakeSupabase(), registry=registry, telegram=tg,
+    )
+    assert tg.downloads == ["rx.pdf"]
+    assert "my meds list" in captured["text"]
+    assert "Metformin 500mg twice daily." in captured["text"]
+
+
+async def test_unreadable_pdf_asks_for_photo_and_runs_no_turn(monkeypatch):
+    captured = _capture_turn(monkeypatch)
+    monkeypatch.setattr(telegram, "extract_pdf_text", lambda data: "")  # scanned/empty
+    registry = SessionRegistry(ELDER_A)
+    tg = FakeTelegram()
+    tg.audio = b"%PDF-scan"
+    update = {"message": {"chat": {"id": 555},
+                          "document": {"file_id": "scan.pdf", "mime_type": "application/pdf"}}}
+
+    await telegram.handle_update(
+        update, anthropic=FakeAnthropic([response("end_turn", [text_block("ok")])]),
+        supabase=FakeSupabase(), registry=registry, telegram=tg,
+    )
+    assert tg.downloads == ["scan.pdf"]
+    assert captured == {}                       # no turn ran
+    assert "photo" in tg.sent[-1][1].lower()    # asked for a photo instead
 
 
 # --- Inline tap-buttons ----------------------------------------------------
