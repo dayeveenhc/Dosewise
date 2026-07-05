@@ -19,6 +19,7 @@ from ..agent.loop import run_agent_turn
 from ..config import get_settings
 from ..db.supabase import Supabase
 from ..tools import ToolContext, get_handler
+from .format import strip_markdown
 from .lang import DIALECT_ISO, detect_language, language_name, stt_plan, tts_model_for
 from .session import SEED_ELDERS, SessionRegistry
 from .voice import synthesize, transcribe
@@ -127,6 +128,7 @@ async def _deliver_reply(
     is awaiting a confirmation), then the same reply as audio in the elder's
     language when they spoke or have voice-by-default on. Shared by the
     typed-message and button-tap paths."""
+    reply = strip_markdown(reply)
     markup = _CONFIRM_KEYBOARD if getattr(state, "awaiting_confirmation", False) else None
     await telegram.send_message(chat_id, reply or "…", reply_markup=markup)
     # Speak the reply when the elder spoke OR when voice is their default (low

@@ -15,6 +15,7 @@ from ..agent.loop import run_agent_turn
 from ..config import get_settings
 from ..db.supabase import Supabase
 from ..tools import ToolContext
+from .format import strip_markdown
 from .session import SEED_ELDERS, SessionRegistry
 
 _DIM = "\033[2m"
@@ -68,7 +69,7 @@ async def _repl() -> None:
             )
             if tools_used:
                 print(f"{_DIM}[tools: {', '.join(tools_used)}]{_RESET}")
-            print(f"hermes › {reply}\n")
+            print(f"hermes › {strip_markdown(reply)}\n")
     finally:
         await supabase.aclose()
         await llm.aclose(client)
