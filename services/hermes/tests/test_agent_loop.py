@@ -9,6 +9,7 @@ from fakes import (
     response,
     text_block,
     tool_use_block,
+    use_anthropic,
 )
 from hermes.agent.loop import run_agent_turn
 from hermes.channels.session import SessionState
@@ -24,7 +25,8 @@ def _ctx(db: FakeDB) -> ToolContext:
     )
 
 
-async def test_loop_dispatches_tool_then_replies():
+async def test_loop_dispatches_tool_then_replies(monkeypatch):
+    use_anthropic(monkeypatch)
     # profiles read (dialect lookup) + the medications the tool will list.
     db = FakeDB({
         "profiles": [{"dialect": "en"}],
@@ -46,9 +48,10 @@ async def test_loop_dispatches_tool_then_replies():
     assert sum(1 for t, _ in db.inserted if t == "conversation_turns") == 2
 
 
-async def test_image_is_stripped_from_threaded_history():
+async def test_image_is_stripped_from_threaded_history(monkeypatch):
     """A prescription photo is analysed on its turn but must not stay in the history
     threaded forward (it would re-send the base64 image on every later turn)."""
+    use_anthropic(monkeypatch)
     db = FakeDB({"profiles": [{"dialect": "en"}], "conversation_turns": []})
     anthropic = FakeAnthropic([response("end_turn", [text_block("Got your photo.")])])
     _reply, _tools, messages = await run_agent_turn(
@@ -66,7 +69,8 @@ async def test_image_is_stripped_from_threaded_history():
     )
 
 
-async def test_loop_tailors_system_prompt_to_dialect():
+async def test_loop_tailors_system_prompt_to_dialect(monkeypatch):
+    use_anthropic(monkeypatch)
     db = FakeDB({"profiles": [{"id": ELDER_A, "dialect": "hokkien"}],
                  "conversation_turns": []})
     anthropic = FakeAnthropic([response("end_turn", [text_block("ok")])])
@@ -80,6 +84,8 @@ async def test_loop_tailors_system_prompt_to_dialect():
 
 
 async def test_loop_injects_dialect_slang(monkeypatch):
+    use_anthropic(monkeypatch)
+
     async def fake_get_slang(dialect):
         return [("pang sai", "bowel movement")]
 
@@ -94,7 +100,8 @@ async def test_loop_injects_dialect_slang(monkeypatch):
     assert "pang sai = bowel movement" in system_text
 
 
-async def test_loop_iteration_cap_falls_back_to_human():
+async def test_loop_iteration_cap_falls_back_to_human(monkeypatch):
+    use_anthropic(monkeypatch)
     db = FakeDB({"profiles": [{"dialect": "en"}], "medications": [],
                  "conversation_turns": []})
     # Always returns tool_use -> never terminates -> hits the cap.
@@ -106,7 +113,8 @@ async def test_loop_iteration_cap_falls_back_to_human():
     assert len(tools_used) >= 8  # one dispatch per capped iteration
 
 
-async def test_loop_surfaces_unknown_tool_as_error():
+async def test_loop_surfaces_unknown_tool_as_error(monkeypatch):
+    use_anthropic(monkeypatch)
     db = FakeDB({"profiles": [{"dialect": "en"}], "conversation_turns": []})
     anthropic = FakeAnthropic([
         response("tool_use", [tool_use_block("no_such_tool", {})]),

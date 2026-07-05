@@ -100,6 +100,21 @@ class FakeTelegram:
         return self.audio
 
 
+def use_anthropic(monkeypatch) -> None:
+    """Pin the effective LLM provider to Anthropic for a test.
+
+    ``hermes.config.Settings`` reads the real repo-root ``.env`` (pydantic-settings
+    ``env_file=``), so tests using ``FakeAnthropic`` must not rely on whatever the
+    *deployed* .env happens to contain (e.g. it may set LLM_PROVIDER=openai with a
+    working key, which would route these tests into the OpenAI/Gemini code path
+    instead). Mirrors the ``_use_gemini``/``_use_openai`` helpers in the
+    provider-specific test files.
+    """
+    from hermes.config import get_settings
+
+    monkeypatch.setattr(get_settings(), "llm_provider", "anthropic", raising=False)
+
+
 # --- Anthropic response builders -------------------------------------------
 def text_block(text: str):
     return SimpleNamespace(type="text", text=text)

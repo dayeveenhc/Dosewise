@@ -3,13 +3,23 @@
 from __future__ import annotations
 
 import hermes.channels.telegram as telegram
-from fakes import FakeAnthropic, FakeDB, FakeSupabase, FakeTelegram, response, text_block
+from fakes import (
+    FakeAnthropic,
+    FakeDB,
+    FakeSupabase,
+    FakeTelegram,
+    response,
+    text_block,
+    use_anthropic,
+)
 from hermes.channels.session import SessionRegistry
 
 ELDER_A = "00000000-0000-0000-0000-00000000000a"
 
 
 async def test_voice_note_replies_with_text_and_audio_in_detected_language(monkeypatch):
+    use_anthropic(monkeypatch)
+
     async def fake_transcribe(audio, *, content_type="audio/ogg", engine="whisper", language=None):
         return "apa khabar"
 
@@ -44,6 +54,7 @@ async def test_voice_note_replies_with_text_and_audio_in_detected_language(monke
 
 
 async def test_typed_message_replies_text_only(monkeypatch):
+    use_anthropic(monkeypatch)
     monkeypatch.setattr(telegram, "detect_language", lambda text: "eng")
     db = FakeDB({"profiles": [{"id": ELDER_A, "dialect": "en"}], "conversation_turns": []})
     registry = SessionRegistry(ELDER_A)
