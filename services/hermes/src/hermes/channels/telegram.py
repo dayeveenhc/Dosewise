@@ -11,6 +11,7 @@ Both funnel every message through the same ``run_agent_turn`` core.
 from __future__ import annotations
 
 import logging
+from zoneinfo import ZoneInfo
 
 import httpx
 from anthropic import AsyncAnthropic
@@ -29,7 +30,7 @@ log = logging.getLogger("hermes.telegram")
 _HELP = (
     "Hi, I'm Dosewise — your medication helper. Just talk to me: ask about your "
     "medicines, tell me when you've taken one, or send a photo of a prescription.\n"
-    "Commands: /whoami, /switch a|b (test identities)."
+    "Commands: /schedule (today's plan), /whoami, /switch a|b (test identities)."
 )
 
 # Yes/No tap-keyboard attached when the agent is awaiting a confirmation, so an
@@ -143,6 +144,37 @@ async def _deliver_reply(
             log.warning("failed to send voice reply", exc_info=True)
 
 
+async def _send_schedule(
+    chat_id: int, state, supabase: Supabase, telegram: TelegramClient, view: str
+) -> None:
+    """Render the medication timeline and, for the day view, attach ✅ Taken buttons
+    for each medicine due today (reusing the existing dose:taken callback)."""
+    from datetime import UTC, datetime
+
+    from ..dosing import scheduled_today
+    from ..tools import ToolContext, get_handler
+
+    ctx = ToolContext(supabase=supabase, elder_id=state.elder_id, session=state, telegram=telegram)
+    text = await get_handler("show_schedule")(ctx, view=view)
+
+    reply_markup = None
+    if view != "week":
+        settings = get_settings()
+        local_today = datetime.now(UTC).astimezone(ZoneInfo(settings.hermes_tz)).date()
+        meds = await ctx.db().select(
+            "medications", columns="id,name,schedule", filters={"archived": "eq.false"}
+        )
+        buttons = [
+            [{"text": f"✅ Took {m['name']}", "callback_data": f"dose:taken:{m['id']}"}]
+            for m in meds
+            if scheduled_today(m.get("schedule") or {}, local_today)
+        ][:8]  # keep the keyboard manageable
+        if buttons:
+            reply_markup = {"inline_keyboard": buttons}
+            text += "\n\nTap ✅ when you've taken one. To change a time, just tell me."
+    await telegram.send_message(chat_id, strip_markdown(text), reply_markup=reply_markup)
+
+
 async def _handle_callback(
     callback: dict,
     *,
@@ -254,6 +286,15 @@ async def handle_update(
     if text.startswith("/whoami"):
         state = registry.get(chat_id)
         await telegram.send_message(chat_id, f"Acting as elder: {state.elder_id}")
+        return
+    if text.startswith("/schedule") or text.startswith("/today"):
+        state = registry.get(chat_id)
+        view = "week" if "week" in text.lower() else "today"
+        try:
+            await _send_schedule(chat_id, state, supabase, telegram, view)
+        except Exception:
+            log.exception("failed to render schedule")
+            await telegram.send_message(chat_id, "I couldn't load your schedule just now.")
         return
     if text.startswith("/switch"):
         code = text.split(maxsplit=1)[1].strip().lower() if " " in text else ""
