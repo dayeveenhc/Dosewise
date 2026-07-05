@@ -42,6 +42,23 @@ def test_due_reminders_skips_malformed_times():
     assert {d["time"] for d in due} == {"20:00"}
 
 
+def test_due_reminders_weekly_only_on_matching_weekday():
+    # 2026-07-02 is a Thursday.
+    now = datetime(2026, 7, 2, 20, 5, tzinfo=UTC)
+    thu_med = {"id": "m1", "elder_id": ELDER_A, "name": "Metho", "priority": "standard",
+               "schedule": {"times": ["08:00"], "days": ["thu"], "frequency": "weekly"}}
+    mon_med = {"id": "m2", "elder_id": ELDER_A, "name": "Other", "priority": "standard",
+               "schedule": {"times": ["08:00"], "days": ["mon"], "frequency": "weekly"}}
+    due = due_reminders([thu_med, mon_med], now=now, tz="UTC")
+    assert {d["medication_id"] for d in due} == {"m1"}
+
+
+def test_due_reminders_daily_unchanged_without_days():
+    now = datetime(2026, 7, 2, 20, 5, tzinfo=UTC)
+    due = due_reminders([_med(["08:00"])], now=now, tz="UTC")
+    assert len(due) == 1
+
+
 def test_in_quiet_hours_wraparound():
     quiet = {"start": "22:00", "end": "07:00"}
     assert in_quiet_hours(time(23, 0), quiet) is True

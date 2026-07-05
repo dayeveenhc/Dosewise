@@ -439,7 +439,38 @@ async def test_set_reminder_proposes_no_write_and_awaits_confirmation():
     assert "PROPOSED" in out and "08:00" in out and "20:00" in out
     assert not db.updated  # nothing written on a proposal
     assert ctx.session.awaiting_confirmation is True
-    assert ctx.session.pending_reminder == {"name": "Metformin", "times": ["08:00", "20:00"]}
+    assert ctx.session.pending_reminder == {
+        "name": "Metformin", "times": ["08:00", "20:00"], "days": []
+    }
+
+
+async def test_set_reminder_weekly_saves_days_and_frequency():
+    set_rem = get_handler("set_medication_reminder")
+    db = FakeDB({"medications": [{"id": "m1", "name": "Methotrexate", "archived": False,
+                                  "schedule": {"times": ["08:00"], "frequency": "daily"}}]})
+    ctx = _ctx(db)
+    out = await set_rem(ctx, name="Methotrexate", confirmed=False, times=["09:00"],
+                        days=["Monday", "thu"])
+    assert "Monday and Thursday" in out
+    out = await set_rem(ctx, name="Methotrexate", confirmed=True, times=["09:00"],
+                        days=["Monday", "thu"])
+    assert "Saved" in out
+    patch = db.updated[0][1]
+    assert patch["schedule"]["days"] == ["mon", "thu"]
+    assert patch["schedule"]["frequency"] == "weekly"
+
+
+async def test_set_reminder_daily_clears_previous_weekly_days():
+    set_rem = get_handler("set_medication_reminder")
+    db = FakeDB({"medications": [{"id": "m1", "name": "Metformin", "archived": False,
+                                  "schedule": {"times": ["08:00"], "days": ["mon"],
+                                               "frequency": "weekly"}}]})
+    ctx = _ctx(db)
+    await set_rem(ctx, name="Metformin", confirmed=False, times=["09:00"])
+    await set_rem(ctx, name="Metformin", confirmed=True, times=["09:00"])
+    patch = db.updated[0][1]
+    assert "days" not in patch["schedule"]
+    assert patch["schedule"]["frequency"] == "daily"
 
 
 async def test_set_reminder_confirm_updates_schedule_times():

@@ -11,8 +11,11 @@ These functions are pure so they can be unit-tested without a clock or a DB.
 
 from __future__ import annotations
 
-from datetime import UTC, datetime, time
+from datetime import UTC, date, datetime, time
 from zoneinfo import ZoneInfo
+
+# Weekday tokens (Monday=0, matching date.weekday()) used by weekly schedules.
+WEEKDAYS = ("mon", "tue", "wed", "thu", "fri", "sat", "sun")
 
 
 def _parse_hhmm(value: str | None) -> time | None:
@@ -21,6 +24,20 @@ def _parse_hhmm(value: str | None) -> time | None:
         return time(int(hh), int(mm))
     except (ValueError, AttributeError):
         return None
+
+
+def scheduled_today(schedule: dict, local_today: date) -> bool:
+    """Whether a medication's schedule fires on ``local_today``.
+
+    Backward compatible: a schedule with no ``days`` (or ``frequency`` != weekly)
+    fires every day, exactly as before. A weekly schedule fires only when today's
+    weekday token is listed in ``schedule.days`` (e.g. ``["mon", "thu"]``).
+    """
+    days = schedule.get("days")
+    if not days:
+        return True
+    tokens = {str(d).strip().lower()[:3] for d in days}
+    return WEEKDAYS[local_today.weekday()] in tokens
 
 
 def due_reminders(meds: list[dict], *, now: datetime, tz: str) -> list[dict]:
@@ -37,6 +54,8 @@ def due_reminders(meds: list[dict], *, now: datetime, tz: str) -> list[dict]:
     out: list[dict] = []
     for med in meds:
         schedule = med.get("schedule") or {}
+        if not scheduled_today(schedule, local_today):
+            continue
         for hhmm in schedule.get("times") or []:
             t = _parse_hhmm(hhmm)
             if t is None:

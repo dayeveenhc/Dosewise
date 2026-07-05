@@ -7,6 +7,7 @@ import logging
 from datetime import UTC, datetime
 from uuid import uuid4
 
+from ..dosing import WEEKDAYS
 from .base import ToolContext, register
 from .drug_info import interaction_text
 
@@ -33,11 +34,14 @@ async def list_medications(ctx: ToolContext) -> str:
         return "No medications on file for this patient."
     lines = []
     for m in rows:
-        times = (m.get("schedule") or {}).get("times") or []
+        schedule = m.get("schedule") or {}
+        times = schedule.get("times") or []
         when = ", ".join(times) if times else "as directed"
+        days = schedule.get("days") or []
+        cadence = f" {_days_phrase(days)}" if days else ""
         lines.append(
             f"- {m['name']} ({m.get('dosage') or 'dose n/a'}) — "
-            f"{m.get('purpose') or 'purpose n/a'}; take at {when}. "
+            f"{m.get('purpose') or 'purpose n/a'}; take at {when}{cadence}. "
             f"{m.get('instructions') or ''}".strip()
         )
     return "\n".join(lines)
@@ -204,15 +208,16 @@ async def _interaction_warning(ctx: ToolContext, new_name: str) -> str:
 _REMINDER_SCHEMA = {
     "name": "set_medication_reminder",
     "description": (
-        "Set or change the daily reminder times for a medication the elder already "
-        "has on file. Use when they say things like 'remind me at 8am', 'change my "
-        "reminder to the evening', or 'add a night dose reminder'. This REPLACES the "
-        "medication's reminder times with the list you pass — it does NOT append. To "
-        "ADD a time to existing reminders, first call list_medications to see the "
-        "current times and pass the full combined list. SAFETY: the propose→confirm "
-        "rule applies — first call with confirmed=false to read the times back, and "
-        "only call again with confirmed=true after a clear yes. The daily reminder "
-        "scheduler picks up the new times automatically."
+        "Set or change the reminder times for a medication the elder already has on "
+        "file. Use when they say things like 'remind me at 8am', 'change my reminder "
+        "to the evening', 'add a night dose reminder', or 'remind me every Monday and "
+        "Thursday'. This REPLACES the medication's reminder times (and days) with what "
+        "you pass — it does NOT append. To ADD a time, first call list_medications and "
+        "pass the full combined list. Pass `days` for a weekly schedule (e.g. a pill "
+        "taken only on certain weekdays); omit `days` for an every-day reminder. "
+        "SAFETY: the propose→confirm rule applies — first call with confirmed=false to "
+        "read the times back, and only call again with confirmed=true after a clear "
+        "yes. The reminder scheduler picks up the new times/days automatically."
     ),
     "input_schema": {
         "type": "object",
@@ -221,7 +226,13 @@ _REMINDER_SCHEMA = {
             "times": {
                 "type": "array",
                 "items": {"type": "string"},
-                "description": "Daily reminder times as 24-hour HH:MM, e.g. ['08:00','20:00'].",
+                "description": "Reminder times as 24-hour HH:MM, e.g. ['08:00','20:00'].",
+            },
+            "days": {
+                "type": "array",
+                "items": {"type": "string"},
+                "description": "Weekdays for a weekly reminder, as mon/tue/wed/thu/fri/"
+                "sat/sun, e.g. ['mon','thu']. Omit for an every-day reminder.",
             },
             "confirmed": {
                 "type": "boolean",
@@ -232,6 +243,24 @@ _REMINDER_SCHEMA = {
         "required": ["name", "confirmed"],
     },
 }
+
+
+def _normalize_days(days: list[str] | None) -> tuple[list[str], list[str]]:
+    """Split ``days`` into (valid weekday tokens in mon..sun order, invalid).
+
+    Accepts full or abbreviated names, any case ('Monday', 'mon', 'MON'). An empty
+    or all-invalid input yields ``([], invalid)`` — the caller treats [] as
+    'every day' (a daily schedule), preserving today's behaviour."""
+    valid: set[str] = set()
+    invalid: list[str] = []
+    for raw in days or []:
+        token = str(raw).strip().lower()[:3]
+        if token in WEEKDAYS:
+            valid.add(token)
+        else:
+            invalid.append(str(raw).strip())
+    ordered = [d for d in WEEKDAYS if d in valid]
+    return ordered, invalid
 
 
 def _normalize_times(times: list[str] | None) -> tuple[list[str], list[str]]:
@@ -251,11 +280,28 @@ def _normalize_times(times: list[str] | None) -> tuple[list[str], list[str]]:
     return valid, invalid
 
 
+_DAY_NAMES = {
+    "mon": "Monday", "tue": "Tuesday", "wed": "Wednesday", "thu": "Thursday",
+    "fri": "Friday", "sat": "Saturday", "sun": "Sunday",
+}
+
+
+def _days_phrase(days: list[str]) -> str:
+    """Plain-language 'every day' vs 'on Monday and Thursday' for read-backs."""
+    if not days:
+        return "every day"
+    names = [_DAY_NAMES[d] for d in days]
+    if len(names) == 1:
+        return f"every {names[0]}"
+    return "on " + ", ".join(names[:-1]) + f" and {names[-1]}"
+
+
 async def set_medication_reminder(
     ctx: ToolContext,
     name: str,
     confirmed: bool,
     times: list[str] | None = None,
+    days: list[str] | None = None,
 ) -> str:
     valid, invalid = _normalize_times(times)
     if invalid:
@@ -263,17 +309,23 @@ async def set_medication_reminder(
             f"These times aren't clear: {', '.join(invalid)}. Ask the user for the "
             "time(s) as a 24-hour clock like 08:00 or 20:00, and don't save yet."
         )
+    valid_days, invalid_days = _normalize_days(days)
+    if invalid_days:
+        return (
+            f"These days aren't clear: {', '.join(invalid_days)}. Ask the user for "
+            "weekdays like Monday or Thursday, and don't save yet."
+        )
 
     if not confirmed:
         if not valid:
             return "Ask the user what time(s) they'd like the reminder, then propose it."
         if ctx.session is not None:
-            ctx.session.pending_reminder = {"name": name, "times": valid}
+            ctx.session.pending_reminder = {"name": name, "times": valid, "days": valid_days}
             ctx.session.awaiting_confirmation = True
         return (
             "PROPOSED (not yet saved). Read this back to the user and ask them to "
             f"confirm before saving: remind them to take {name} at "
-            f"{', '.join(valid)} every day."
+            f"{', '.join(valid)} {_days_phrase(valid_days)}."
         )
 
     # confirmed=true: guard that a matching proposal exists in this session.
@@ -284,9 +336,10 @@ async def set_medication_reminder(
             "the reminder first (confirmed=false) and get the user's explicit yes."
         )
 
-    # Prefer freshly-supplied times; fall back to the times already read back and
+    # Prefer freshly-supplied values; fall back to the ones already read back and
     # confirmed, so a tap-to-confirm that doesn't resupply them still saves.
     valid = valid or list(pending.get("times") or [])
+    valid_days = valid_days or list(pending.get("days") or [])
     if not valid:
         return "Ask the user what time(s) they'd like the reminder, then propose it."
 
@@ -308,7 +361,13 @@ async def set_medication_reminder(
     med = meds[0]
     schedule = dict(med.get("schedule") or {})
     schedule["times"] = valid
-    schedule.setdefault("frequency", "daily")
+    if valid_days:
+        schedule["days"] = valid_days
+        schedule["frequency"] = "weekly"
+    else:
+        # A plain daily reminder — drop any previous weekly restriction.
+        schedule.pop("days", None)
+        schedule["frequency"] = "daily"
     await ctx.db().update(
         "medications",
         {"schedule": schedule},
@@ -318,7 +377,7 @@ async def set_medication_reminder(
     if ctx.session is not None:
         ctx.session.pending_reminder = None
         ctx.session.awaiting_confirmation = False
-    return f"Saved. I'll remind you to take {name} at {', '.join(valid)} every day."
+    return f"Saved. I'll remind you to take {name} at {', '.join(valid)} {_days_phrase(valid_days)}."
 
 
 register(_LIST_SCHEMA, list_medications)
