@@ -34,11 +34,17 @@ async def lifespan(app: FastAPI):
     from .db.supabase import Supabase  # local import to keep import graph flat
 
     app.state.llm_client = llm.make_client(settings)
-    log.info(
-        "agent brain: %s (configured: %s)",
-        llm.effective_provider(settings),
-        llm.provider(settings),
-    )
+    configured = llm.provider(settings)
+    effective = llm.effective_provider(settings)
+    log.info("agent brain: %s (configured: %s)", effective, configured)
+    if effective != configured:
+        # A silent provider fallback (e.g. OPENAI_API_KEY empty -> Anthropic) can
+        # masquerade as "OpenFDA is down" in replies. Make it impossible to miss.
+        log.warning(
+            "LLM BRAIN FALLBACK: configured=%s but running on %s because %s is not "
+            "set. Add the key and restart to use the intended brain.",
+            configured, effective, llm._KEY_ENV_NAME.get(configured, "the API key"),
+        )
     if not llm.api_key_present(settings):
         log.warning("%s is not set — agent turns will fail", llm.api_key_env_name(settings))
     app.state.supabase = Supabase()

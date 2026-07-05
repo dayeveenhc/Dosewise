@@ -133,8 +133,66 @@ async def test_get_drug_info_query_keeps_plus_literal(monkeypatch):
 
     monkeypatch.setattr(drug_info.httpx, "AsyncClient", _Client)
     await get_handler("get_drug_info")(_ctx(FakeDB({"drug_cache": []})), drug_name="Metformin")
-    assert "openfda.brand_name:metformin+openfda.generic_name:metformin" in seen["url"]
+    assert "openfda.brand_name:metformin+OR+openfda.generic_name:metformin" in seen["url"]
     assert "%2B" not in seen["url"]
+
+
+async def test_get_drug_info_brand_falls_back_to_generic(monkeypatch):
+    """A brand OpenFDA doesn't index (e.g. Panadol) should retry via the generic
+    alias rather than bare-refusing."""
+    seen: list[str] = []
+
+    class _Resp:
+        def __init__(self, results):
+            self.status_code = 200
+            self._results = results
+
+        def json(self):
+            return {"results": self._results}
+
+    class _Client:
+        def __init__(self, *a, **k):
+            pass
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *a):
+            return False
+
+        async def get(self, url, *a, **k):
+            seen.append(url)
+            # First (brand OR generic) query misses; the generic-alias query hits.
+            if "acetaminophen" in url:
+                return _Resp([{"purpose": ["Pain reliever / fever reducer."]}])
+            return _Resp([])
+
+    monkeypatch.setattr(drug_info.httpx, "AsyncClient", _Client)
+    out = await get_handler("get_drug_info")(_ctx(FakeDB({"drug_cache": []})), drug_name="Panadol")
+    assert "Pain reliever" in out
+    assert any("acetaminophen" in u for u in seen)
+
+
+async def test_get_drug_info_unreachable_reports_transient(monkeypatch):
+    """When OpenFDA is unreachable (network error), the reply must say 'try again',
+    not 'no such drug' — and must not invent facts."""
+
+    class _Client:
+        def __init__(self, *a, **k):
+            pass
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *a):
+            return False
+
+        async def get(self, url, *a, **k):
+            raise drug_info.httpx.ConnectError("boom")
+
+    monkeypatch.setattr(drug_info.httpx, "AsyncClient", _Client)
+    out = await get_handler("get_drug_info")(_ctx(FakeDB({"drug_cache": []})), drug_name="Metformin")
+    assert "again" in out.lower()
 
 
 # --- message_caregiver ------------------------------------------------------
