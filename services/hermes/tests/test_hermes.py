@@ -27,6 +27,7 @@ def test_all_tools_registered():
         "request_human_help",
         "check_refills",
         "log_refill",
+        "check_drug_interactions",
     }
 
 

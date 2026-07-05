@@ -7,6 +7,7 @@ Covers every registered tool's key branches: happy path, empty/not-found, and
 from __future__ import annotations
 
 import hermes.tools.drug_info as drug_info
+import hermes.tools.interactions as interactions
 from fakes import FakeDB, FakeSupabase, FakeTelegram
 from hermes.channels.session import SessionRegistry, SessionState
 from hermes.tools import get_handler
@@ -171,6 +172,50 @@ async def test_get_drug_info_brand_falls_back_to_generic(monkeypatch):
     out = await get_handler("get_drug_info")(_ctx(FakeDB({"drug_cache": []})), drug_name="Panadol")
     assert "Pain reliever" in out
     assert any("acetaminophen" in u for u in seen)
+
+
+# --- check_drug_interactions ------------------------------------------------
+async def test_check_interactions_pair_flags_when_mentioned(monkeypatch):
+    async def _fake(ctx, name):
+        return "May interact with warfarin and increase bleeding risk." if name.lower() == "aspirin" else ""
+
+    monkeypatch.setattr(interactions, "interaction_text", _fake)
+    out = await get_handler("check_drug_interactions")(
+        _ctx(FakeDB({})), drug_a="Aspirin", drug_b="Warfarin"
+    )
+    assert "⚠" in out and "OpenFDA" in out
+
+
+async def test_check_interactions_pair_no_mention(monkeypatch):
+    async def _fake(ctx, name):
+        return "Take with food."
+
+    monkeypatch.setattr(interactions, "interaction_text", _fake)
+    out = await get_handler("check_drug_interactions")(
+        _ctx(FakeDB({})), drug_a="Vitamin C", drug_b="Metformin"
+    )
+    assert "don't specifically mention" in out
+
+
+async def test_check_interactions_against_current_meds(monkeypatch):
+    async def _fake(ctx, name):
+        return "Concomitant use with metformin may require monitoring."
+
+    monkeypatch.setattr(interactions, "interaction_text", _fake)
+    db = FakeDB({"medications": [{"name": "Metformin", "archived": False}]})
+    out = await get_handler("check_drug_interactions")(_ctx(db), drug_a="Cimetidine")
+    assert "Metformin" in out and "⚠" in out
+
+
+async def test_check_interactions_no_data_offers_doctor(monkeypatch):
+    async def _fake(ctx, name):
+        return ""
+
+    monkeypatch.setattr(interactions, "interaction_text", _fake)
+    out = await get_handler("check_drug_interactions")(
+        _ctx(FakeDB({})), drug_a="Mystery", drug_b="Other"
+    )
+    assert "add_doctor_question" in out
 
 
 async def test_get_drug_info_unreachable_reports_transient(monkeypatch):
