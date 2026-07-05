@@ -3,7 +3,8 @@ export type Screen = "dashboard" | "patient" | "timeline" | "notifications" | "a
 export type AppMode = "onboarding" | "caregiver" | "elderly";
 
 export interface Medication {
-  id: number;
+  id: string;             // doses.id — this specific scheduled instance
+  medicationId: string;   // medications.id — the underlying drug record
   name: string;
   dose: string;
   time: string;
@@ -22,7 +23,7 @@ export interface Contact {
 }
 
 export interface Patient {
-  id: number;
+  id: string;
   name: string;
   nickname: string;
   age: number;
@@ -49,7 +50,7 @@ export interface Notification {
 }
 
 export interface Message {
-  id: number;
+  id: string;
   author: string;
   role: string;
   body: string;

@@ -8,11 +8,11 @@ interface PatientScreenProps {
   patient: Patient;
   onEditProfile: () => void;
   onAddPrescription: () => void;
-  onDeleteMedication: (id: number) => void;
+  onDeleteMedication: (medicationId: string) => void;
 }
 
 interface GroupedMedication {
-  ids: number[];
+  medicationId: string;
   name: string;
   dose: string;
   purpose: string;
@@ -24,16 +24,15 @@ interface GroupedMedication {
 function groupMedications(medications: Medication[]): GroupedMedication[] {
   const groups = new Map<string, GroupedMedication>();
   for (const m of medications) {
-    const existing = groups.get(m.name);
+    const existing = groups.get(m.medicationId);
     if (existing) {
-      existing.ids.push(m.id);
       existing.times.push(m.time);
       if (m.refillDaysLeft && (!existing.refillDaysLeft || m.refillDaysLeft < existing.refillDaysLeft)) {
         existing.refillDaysLeft = m.refillDaysLeft;
       }
     } else {
-      groups.set(m.name, {
-        ids: [m.id],
+      groups.set(m.medicationId, {
+        medicationId: m.medicationId,
         name: m.name,
         dose: m.dose,
         purpose: m.purpose,
@@ -120,7 +119,7 @@ export function PatientScreen({ patient, onEditProfile, onAddPrescription, onDel
                 )}
               </div>
               <button
-                onClick={() => m.ids.forEach(onDeleteMedication)}
+                onClick={() => onDeleteMedication(m.medicationId)}
                 className="w-7 h-7 rounded-full bg-red-50 border border-red-200 flex items-center justify-center shrink-0 hover:bg-red-100 transition-colors"
                 title="Remove medication"
               >

@@ -87,6 +87,10 @@ class Settings(BaseSettings):
     hermes_channel_mode: str = "polling"  # polling | webhook
     # Dev: hot-reload the server when the mounted source changes (uvicorn --reload).
     hermes_reload: bool = False
+    # Comma-separated allowed origins for the browser-facing /agent/turn API
+    # (the web client). "*" (default) is fine for local dev; set explicit
+    # origins in production.
+    cors_allow_origins: str = "*"
 
     # --- Telegram test identity mapping ---
     # Elder A from supabase/seed/seed.sql

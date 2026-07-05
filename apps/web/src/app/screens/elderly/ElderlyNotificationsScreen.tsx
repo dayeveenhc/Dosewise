@@ -1,7 +1,15 @@
+import { useEffect, useState } from "react";
 import { MessageSquare, User } from "lucide-react";
 import type { Message } from "../../types";
+import { fetchCaregiverMessages } from "../../data/api";
 
-export function ElderlyNotificationsScreen({ careMessages }: { careMessages: Message[] }) {
+export function ElderlyNotificationsScreen({ elderId }: { elderId: string }) {
+  const [careMessages, setCareMessages] = useState<Message[]>([]);
+
+  useEffect(() => {
+    fetchCaregiverMessages(elderId, elderId).then(setCareMessages).catch(console.error);
+  }, [elderId]);
+
   return (
     <div className="flex flex-col flex-1 overflow-hidden">
       <div className="flex-1 overflow-y-auto scrollbar-none px-4 pb-28 pt-3 space-y-3">

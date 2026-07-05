@@ -1,7 +1,7 @@
 export type ElderlyTab = "home" | "prescriptions" | "ai" | "notifications" | "settings";
 
 export interface DoctorQ {
-  id: number;
+  id: string;
   question: string;
   addedAt: string;
   answered: boolean;

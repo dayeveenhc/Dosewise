@@ -6,7 +6,7 @@ import { MED_PLAIN, MED_PHOTOS, MED_SIMPLE, MED_SHAPES, EYEDROP_STEPS } from "..
 
 export function ElderlyPrescriptionScreen({ patient, onOpenAI }: { patient: Patient; onOpenAI: (msg?: string) => void }) {
   const { colourBlind } = useAccessibility();
-  const [helpOpen, setHelpOpen] = useState<number | null>(null);
+  const [helpOpen, setHelpOpen] = useState<string | null>(null);
 
   return (
     <div className="flex-1 overflow-y-auto scrollbar-none">

@@ -51,4 +51,4 @@ enable_confirmations = false
 # `supabase db reset` applies files in supabase/migrations then runs this seed.
 [db.seed]
 enabled = true
-sql_paths = ["./seed/seed.sql"]
+sql_paths = ["./seed/seed.sql", "./seed/mockup_demo_seed.sql"]

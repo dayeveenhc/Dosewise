@@ -1,43 +1,61 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { Droplets, Home, Pill, Brain, Bell, Settings } from "lucide-react";
-import type { Patient, MedStatus, Message } from "../../types";
+import type { Patient } from "../../types";
 import type { ElderlyTab, DoctorQ } from "./types";
+import {
+  fetchDoctorQuestions, addDoctorQuestion, markDoctorQuestionAnswered, deleteDoctorQuestion, logDose,
+} from "../../data/api";
 import { ElderlyHomeScreen } from "./ElderlyHomeScreen";
 import { ElderlyPrescriptionScreen } from "./ElderlyPrescriptionScreen";
 import { ElderlyAIScreen } from "./ElderlyAIScreen";
 import { ElderlyNotificationsScreen } from "./ElderlyNotificationsScreen";
 import { ElderlySettingsScreen } from "./ElderlySettingsScreen";
+import { supabase } from "../../lib/supabase";
+
+function toDoctorQ(row: { id: string; question: string; status: string; created_at: string; source: string }): DoctorQ {
+  const label = row.source === "agent" ? "Added by Mei" : "Added by you";
+  return {
+    id: row.id,
+    question: row.question,
+    addedAt: `${label} · ${new Date(row.created_at).toLocaleDateString("en-SG", { day: "numeric", month: "short" })}`,
+    answered: row.status === "answered",
+  };
+}
 
 export function ElderlyApp({ patient, onUpdatePatient, onBack }: {
   patient: Patient;
-  onUpdatePatient: (p: Patient) => void;
+  onUpdatePatient: () => void;
   onBack: () => void;
 }) {
   const [tab, setTab] = useState<ElderlyTab>("home");
   const [pendingAIMessage, setPendingAIMessage] = useState<string | undefined>();
+  const [doctorQuestions, setDoctorQuestions] = useState<DoctorQ[]>([]);
+  const [elderJwt, setElderJwt] = useState<string | undefined>();
+
+  const reloadDoctorQuestions = () => {
+    fetchDoctorQuestions(patient.id).then(rows => setDoctorQuestions(rows.map(toDoctorQ))).catch(console.error);
+  };
+
+  useEffect(() => {
+    reloadDoctorQuestions();
+    supabase.auth.getSession().then(({ data }) => setElderJwt(data.session?.access_token));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [patient.id]);
 
   const openAI = (msg?: string) => {
     setPendingAIMessage(msg);
     setTab("ai");
   };
-  const [doctorQuestions, setDoctorQuestions] = useState<DoctorQ[]>([
-    { id: 1, question: "Can I take Celecoxib and Metformin at the same time?",           addedAt: "Added by Mei · Today",     answered: false },
-    { id: 2, question: "Is it normal to feel a little dizzy after taking Amlodipine?",  addedAt: "Added by Mei · Yesterday", answered: false },
-  ]);
 
-  const handleLogDose = (medId: number) => {
-    const t = new Date().toLocaleTimeString("en-SG", { hour: "2-digit", minute: "2-digit" });
-    onUpdatePatient({ ...patient, medications: patient.medications.map(m => m.id === medId ? { ...m, status: "taken" as MedStatus, takenAt: t } : m) });
+  const handleLogDose = async (medicationId: string) => {
+    await logDose(medicationId, patient.id);
+    onUpdatePatient();
   };
 
-  const handleAddDoctorQ = (q: string) => {
-    setDoctorQuestions(prev => [{ id: Date.now(), question: q, addedAt: `Added by Mei · ${new Date().toLocaleTimeString("en-SG", { hour: "2-digit", minute: "2-digit" })}`, answered: false }, ...prev]);
+  const handleAddDoctorQ = async (q: string) => {
+    await addDoctorQuestion(patient.id, q, "elder");
+    reloadDoctorQuestions();
   };
-
-  const CARE_MSGS: Message[] = [
-    { id: 1, author: "Tan Wei Ming", role: "Son",      body: "Hi Ah Ma, remember your Celecoxib after lunch today. Dr. Priya called — blood test is next Tuesday at 10am.", time: "10:30 AM",  isMe: false },
-    { id: 2, author: "Tan Shu Fen",  role: "Daughter", body: "Ma, I refilled your Atorvastatin — it's in the cabinet above the stove 💙",                                   time: "Yesterday", isMe: false },
-  ];
 
   const unasked = doctorQuestions.filter(q => !q.answered).length;
 
@@ -83,16 +101,16 @@ export function ElderlyApp({ patient, onUpdatePatient, onBack }: {
         {tab === "ai"            && (
           <ElderlyAIScreen
             patient={patient}
-            onLogDose={handleLogDose}
-            onNavigate={setTab}
+            elderJwt={elderJwt}
+            onDataChanged={() => { onUpdatePatient(); reloadDoctorQuestions(); }}
             doctorQuestions={doctorQuestions}
             onAddDoctorQ={handleAddDoctorQ}
-            onMarkAnswered={(id: number) => setDoctorQuestions(p => p.map(q => q.id === id ? { ...q, answered: true } : q))}
-            onDeleteQuestion={(id: number) => setDoctorQuestions(p => p.filter(q => q.id !== id))}
+            onMarkAnswered={async (id: string) => { await markDoctorQuestionAnswered(id); reloadDoctorQuestions(); }}
+            onDeleteQuestion={async (id: string) => { await deleteDoctorQuestion(id); reloadDoctorQuestions(); }}
             autoMessage={pendingAIMessage}
           />
         )}
-        {tab === "notifications" && <ElderlyNotificationsScreen careMessages={CARE_MSGS} />}
+        {tab === "notifications" && <ElderlyNotificationsScreen elderId={patient.id} />}
         {tab === "settings"      && <ElderlySettingsScreen     patient={patient} onBack={onBack} />}
       </div>
 

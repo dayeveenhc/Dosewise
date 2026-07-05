@@ -41,9 +41,31 @@ export function QuickAction({ icon, label, colour, onClick }: { icon: React.Reac
   );
 }
 
-export function PatientSwitcher({ patients, selected, onSelect }: { patients: Patient[]; selected: number; onSelect: (i: number) => void }) {
+export function PatientSwitcher({ patients, selected, onSelect, onAddCareRecipient }: {
+  patients: Patient[];
+  selected: number;
+  onSelect: (i: number) => void;
+  onAddCareRecipient: () => void;
+}) {
   const [open, setOpen] = useState(false);
   const patient = patients[selected];
+
+  if (!patient) {
+    return (
+      <button
+        onClick={onAddCareRecipient}
+        className="flex items-center gap-2.5 bg-white/70 backdrop-blur-sm border border-border rounded-2xl px-3 py-2 w-full text-left"
+      >
+        <div className="w-8 h-8 rounded-full bg-muted flex items-center justify-center shrink-0">
+          <Plus size={14} className="text-muted-foreground" />
+        </div>
+        <div className="flex-1 text-left">
+          <div className="text-xs font-semibold text-foreground leading-tight">No linked patients yet</div>
+          <div className="text-[10px] text-muted-foreground">Tap to add a care recipient</div>
+        </div>
+      </button>
+    );
+  }
 
   return (
     <div className="relative z-[200]">
@@ -75,7 +97,10 @@ export function PatientSwitcher({ patients, selected, onSelect }: { patients: Pa
               {i === selected && <CheckCircle2 size={14} className="ml-auto text-primary" />}
             </button>
           ))}
-          <button className="flex items-center gap-3 w-full px-3 py-2.5 text-left hover:bg-muted border-t border-border">
+          <button
+            onClick={() => { setOpen(false); onAddCareRecipient(); }}
+            className="flex items-center gap-3 w-full px-3 py-2.5 text-left hover:bg-muted border-t border-border"
+          >
             <div className="w-8 h-8 rounded-full bg-muted flex items-center justify-center">
               <Plus size={14} className="text-muted-foreground" />
             </div>

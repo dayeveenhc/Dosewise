@@ -1,39 +1,32 @@
-import { useState, useRef } from "react";
+import { useEffect, useRef, useState } from "react";
 import { Volume2, Mic, Send, AlertTriangle, Brain, Circle, Check, Trash2, Plus } from "lucide-react";
 import type { Patient } from "../../types";
-import type { EMsg, ElderlyTab, DoctorQ } from "./types";
-import { aiRespond } from "./aiRespond";
+import type { EMsg, DoctorQ } from "./types";
+import { agentTurn } from "../../lib/hermes";
 import { VOICE_DEMOS } from "../../data/medications";
 
-export function ElderlyAIScreen({ patient, onLogDose, onNavigate, doctorQuestions, onAddDoctorQ, onMarkAnswered, onDeleteQuestion, autoMessage }: {
+const nowLabel = () => new Date().toLocaleTimeString("en-SG", { hour: "2-digit", minute: "2-digit" });
+
+export function ElderlyAIScreen({ patient, elderJwt, onDataChanged, doctorQuestions, onAddDoctorQ, onMarkAnswered, onDeleteQuestion, autoMessage }: {
   patient: Patient;
-  onLogDose: (id: number) => void;
-  onNavigate: (tab: ElderlyTab) => void;
+  elderJwt?: string;
+  onDataChanged: () => void;
   doctorQuestions: DoctorQ[];
   onAddDoctorQ: (q: string) => void;
-  onMarkAnswered: (id: number) => void;
-  onDeleteQuestion: (id: number) => void;
+  onMarkAnswered: (id: string) => void;
+  onDeleteQuestion: (id: string) => void;
   autoMessage?: string;
 }) {
   const nick = patient.nickname || patient.name.split(" ")[1];
   const h = new Date().getHours();
   const g = h < 12 ? "morning" : h < 17 ? "afternoon" : "evening";
   const next = patient.medications.find(m => m.status === "upcoming");
-  const now = new Date().toLocaleTimeString("en-SG", { hour: "2-digit", minute: "2-digit" });
   const greeting: EMsg = {
     id: 1, role: "agent",
     text: `Good ${g}, ${nick}! 😊\n\nI'm Mei, your medicine helper. ${next ? `Your next medicine is ${next.name} (${next.dose}) at ${next.time}.` : "You've taken all your medicines today — well done! 🌟"}\n\nHow can I help you? Tap the microphone to speak, or type below.`,
-    time: now,
+    time: nowLabel(),
   };
-  const [messages, setMessages] = useState<EMsg[]>(() => {
-    if (!autoMessage) return [greeting];
-    const response = aiRespond(autoMessage, patient);
-    return [
-      greeting,
-      { id: 2, role: "user",  text: autoMessage,    time: now },
-      { id: 3, role: "agent", text: response.text,  time: now, isClinic: response.isClinic },
-    ];
-  });
+  const [messages, setMessages] = useState<EMsg[]>([greeting]);
   const [input, setInput] = useState("");
   const [isListening, setIsListening] = useState(false);
   const [isSpeaking, setIsSpeaking] = useState(false);
@@ -59,23 +52,36 @@ export function ElderlyAIScreen({ patient, onLogDose, onNavigate, doctorQuestion
     }, 1800);
   };
 
+  const sendMessage = async (text: string) => {
+    setMessages(prev => [...prev, { id: Date.now(), role: "user", text, time: nowLabel() }]);
+    scrollToBottom();
+    if (!elderJwt) {
+      setMessages(prev => [...prev, { id: Date.now() + 1, role: "agent", text: "Still signing you in — try again in a moment.", time: nowLabel() }]);
+      return;
+    }
+    try {
+      const { reply, tools_used } = await agentTurn(text, elderJwt);
+      setMessages(prev => [...prev, { id: Date.now() + 1, role: "agent", text: reply, time: nowLabel() }]);
+      if (tools_used.length > 0) onDataChanged();
+      setIsSpeaking(true);
+      setTimeout(() => setIsSpeaking(false), 2500);
+    } catch (e) {
+      setMessages(prev => [...prev, { id: Date.now() + 1, role: "agent", text: "Sorry, I couldn't reach the server just now. Please try again.", time: nowLabel() }]);
+      console.error(e);
+    }
+    scrollToBottom();
+  };
+
+  useEffect(() => {
+    if (autoMessage) sendMessage(autoMessage);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
   const handleSend = () => {
     const text = input.trim();
     if (!text) return;
-    const now = new Date().toLocaleTimeString("en-SG", { hour: "2-digit", minute: "2-digit" });
-    const response = aiRespond(text, patient);
-    setMessages(prev => [...prev,
-      { id: Date.now(),     role: "user",  text,              time: now },
-      { id: Date.now() + 1, role: "agent", text: response.text, time: now, isClinic: response.isClinic },
-    ]);
     setInput("");
-    scrollToBottom();
-    if (response.action === "logDose"     && response.actionPayload) onLogDose(response.actionPayload);
-    if (response.action === "navigate"    && response.actionPayload) setTimeout(() => onNavigate(response.actionPayload), 900);
-    if (response.action === "openDoctorTab") setTimeout(() => setScreenTab("doctor"), 900);
-    if (response.doctorQ) onAddDoctorQ(response.doctorQ);
-    setIsSpeaking(true);
-    setTimeout(() => setIsSpeaking(false), 2500);
+    sendMessage(text);
   };
 
   const LANGS = [{ id: "en" as const, label: "English" }, { id: "zh" as const, label: "华语" }, { id: "hokkien" as const, label: "闽南话" }];

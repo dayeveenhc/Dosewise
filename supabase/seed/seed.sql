@@ -17,25 +17,34 @@
 -- password for all three = "password" (bcrypt hash below). role/aud must be
 -- 'authenticated' for the anon/authenticated JWT flow to work locally.
 -- ---------------------------------------------------------------------------
+-- confirmation_token/recovery_token/email_change_token_new/email_change have
+-- no column default (NULL) — GoTrue's Go driver scans them into non-nullable
+-- strings, so a NULL here makes every password login 500 with "Database
+-- error querying schema" (confirmed against a real GoTrue v2.192.0 instance).
+-- Must be '' explicitly, not left to default.
 insert into auth.users (
   instance_id, id, aud, role, email,
   encrypted_password, email_confirmed_at,
   created_at, updated_at,
-  raw_app_meta_data, raw_user_meta_data
+  raw_app_meta_data, raw_user_meta_data,
+  confirmation_token, recovery_token, email_change_token_new, email_change
 )
 values
   ('00000000-0000-0000-0000-000000000000', '00000000-0000-0000-0000-00000000000a',
    'authenticated', 'authenticated', 'elder.a@dosewise.local',
    crypt('password', gen_salt('bf')), now(), now(), now(),
-   '{"provider":"email","providers":["email"]}', '{"full_name":"Elder A"}'),
+   '{"provider":"email","providers":["email"]}', '{"full_name":"Elder A"}',
+   '', '', '', ''),
   ('00000000-0000-0000-0000-000000000000', '00000000-0000-0000-0000-00000000000b',
    'authenticated', 'authenticated', 'elder.b@dosewise.local',
    crypt('password', gen_salt('bf')), now(), now(), now(),
-   '{"provider":"email","providers":["email"]}', '{"full_name":"Elder B"}'),
+   '{"provider":"email","providers":["email"]}', '{"full_name":"Elder B"}',
+   '', '', '', ''),
   ('00000000-0000-0000-0000-000000000000', '00000000-0000-0000-0000-00000000000c',
    'authenticated', 'authenticated', 'caregiver.c@dosewise.local',
    crypt('password', gen_salt('bf')), now(), now(), now(),
-   '{"provider":"email","providers":["email"]}', '{"full_name":"Caregiver C"}')
+   '{"provider":"email","providers":["email"]}', '{"full_name":"Caregiver C"}',
+   '', '', '', '')
 on conflict (id) do nothing;
 
 -- Email identities so local email/password login works (GoTrue requires an
