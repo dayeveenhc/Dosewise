@@ -29,8 +29,11 @@ if [ ! -f "$ENV_FILE" ]; then
 fi
 
 echo "[sync-env] pushing $(basename "$ENV_FILE") -> $VPS_SSH:$VPS_REPO_DIR/.env"
-# --chmod=F600 locks the file to owner-only on arrival; -v lists the filename only.
-rsync -e ssh -v --chmod=F600 "$ENV_FILE" "$VPS_SSH:$VPS_REPO_DIR/.env"
+# -v lists the filename only, never the file body. Permissions are locked to
+# owner-only via a follow-up `ssh chmod` (below) rather than rsync's --chmod flag,
+# since macOS ships a stock rsync (2.6.9) too old to support --chmod (added in 3.1).
+rsync -e ssh -v "$ENV_FILE" "$VPS_SSH:$VPS_REPO_DIR/.env"
+ssh "$VPS_SSH" "chmod 600 '$VPS_REPO_DIR/.env'"
 
 if [ "$RESTART" = "1" ]; then
   echo "[sync-env] restarting hermes so it re-reads .env"
