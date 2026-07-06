@@ -80,10 +80,67 @@ export const MED_COLOURS = [
 
 export const PRESET_TIMES = ["6:00 AM", "7:00 AM", "8:00 AM", "12:00 PM", "2:00 PM", "6:00 PM", "8:00 PM", "9:00 PM", "10:00 PM"];
 
+// Fallback clock times for vague / meal-relative doses (e.g. "after breakfast").
+// In a real deployment these come from the caregiver's saved routine for the
+// elder; here we default to Singapore national-average meal/wake times. Keys are
+// matched longest-first against the dose's time text and its plain-language
+// direction, so "after breakfast" wins over "breakfast".
+export const MEAL_TIMES: Record<string, string> = {
+  "after breakfast": "8:30 AM",
+  "before breakfast": "7:00 AM",
+  "after lunch":      "1:00 PM",
+  "before lunch":     "12:00 PM",
+  "after dinner":     "7:30 PM",
+  "before dinner":    "6:00 PM",
+  "before bed":       "10:00 PM",
+  "before sleep":     "10:00 PM",
+  "bedtime":          "10:00 PM",
+  "breakfast":        "8:00 AM",
+  "lunch":            "12:30 PM",
+  "dinner":           "7:00 PM",
+  "morning":          "8:00 AM",
+  "afternoon":        "2:00 PM",
+  "evening":          "7:00 PM",
+  "night":            "10:00 PM",
+  "noon":             "12:00 PM",
+};
+
 export const VOICE_DEMOS = [
   "I took my morning medicine",
   "What medicines do I have today?",
   "Am I running low on anything?",
   "What is metformin for?",
   "Show me my prescription list",
+];
+
+// Common conditions offered as type-ahead suggestions for the "Purpose" field.
+export const COMMON_CONDITIONS = [
+  "Diabetes", "Blood Pressure", "Cholesterol", "Joint Pain", "Blood Thinning",
+  "Heart Rate", "Glaucoma", "Acid Reflux", "Asthma", "Thyroid", "Osteoporosis",
+  "Pain Relief", "Allergy", "Anxiety", "Fluid Retention", "Vitamins",
+];
+
+// Catalogue of common medications for the type-ahead. Picking one auto-fills the
+// usual purpose and a typical dose, which the user can still edit.
+export const MEDICATION_CATALOG: { name: string; purpose: string; dose: string }[] = [
+  { name: "Metformin",             purpose: "Diabetes",        dose: "500mg" },
+  { name: "Gliclazide",            purpose: "Diabetes",        dose: "80mg" },
+  { name: "Insulin",               purpose: "Diabetes",        dose: "per sliding scale" },
+  { name: "Amlodipine",            purpose: "Blood Pressure",  dose: "5mg" },
+  { name: "Losartan",              purpose: "Blood Pressure",  dose: "50mg" },
+  { name: "Ramipril",              purpose: "Blood Pressure",  dose: "5mg" },
+  { name: "Atorvastatin",          purpose: "Cholesterol",     dose: "20mg" },
+  { name: "Simvastatin",           purpose: "Cholesterol",     dose: "20mg" },
+  { name: "Celecoxib",             purpose: "Joint Pain",      dose: "200mg" },
+  { name: "Paracetamol",           purpose: "Pain Relief",     dose: "500mg" },
+  { name: "Warfarin",              purpose: "Blood Thinning",  dose: "3mg" },
+  { name: "Aspirin",               purpose: "Blood Thinning",  dose: "100mg" },
+  { name: "Bisoprolol",            purpose: "Heart Rate",      dose: "2.5mg" },
+  { name: "Metoprolol",            purpose: "Heart Rate",      dose: "50mg" },
+  { name: "Latanoprost Eye Drops", purpose: "Glaucoma",        dose: "1 drop each eye" },
+  { name: "Omeprazole",            purpose: "Acid Reflux",     dose: "20mg" },
+  { name: "Salbutamol Inhaler",    purpose: "Asthma",          dose: "2 puffs" },
+  { name: "Levothyroxine",         purpose: "Thyroid",         dose: "50mcg" },
+  { name: "Furosemide",            purpose: "Fluid Retention", dose: "40mg" },
+  { name: "Calcium + Vitamin D",   purpose: "Osteoporosis",    dose: "1 tablet" },
 ];

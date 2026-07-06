@@ -4,7 +4,7 @@ import { useAccessibility } from "../../accessibility.tsx";
 import type { Patient } from "../../types";
 import { MED_PLAIN, MED_PHOTOS, MED_SIMPLE, MED_SHAPES, EYEDROP_STEPS } from "../../data/medications";
 
-export function ElderlyPrescriptionScreen({ patient, onOpenAI }: { patient: Patient; onOpenAI: (msg?: string) => void }) {
+export function ElderlyPrescriptionScreen({ patient, onOpenAI, onAddRx }: { patient: Patient; onOpenAI: (msg?: string) => void; onAddRx: () => void }) {
   const { colourBlind } = useAccessibility();
   const [helpOpen, setHelpOpen] = useState<number | null>(null);
 
@@ -16,7 +16,7 @@ export function ElderlyPrescriptionScreen({ patient, onOpenAI }: { patient: Pati
         <div className="flex items-center justify-between pt-1">
           <p className="text-sm text-muted-foreground">{patient.medications.length} medicines</p>
           <button
-            onClick={() => onOpenAI("I need a refill or new prescription")}
+            onClick={onAddRx}
             className="h-9 px-3 bg-primary text-primary-foreground rounded-xl text-sm font-semibold flex items-center gap-1.5 active:scale-95 transition-transform"
           >
             <Plus size={14} />Add refill / prescription

@@ -1,12 +1,13 @@
 import { useState } from "react";
 import { Droplets, Home, Pill, Brain, Bell, Settings } from "lucide-react";
-import type { Patient, MedStatus, Message } from "../../types";
+import type { Patient, Medication, MedStatus, Message } from "../../types";
 import type { ElderlyTab, DoctorQ } from "./types";
 import { ElderlyHomeScreen } from "./ElderlyHomeScreen";
 import { ElderlyPrescriptionScreen } from "./ElderlyPrescriptionScreen";
 import { ElderlyAIScreen } from "./ElderlyAIScreen";
 import { ElderlyNotificationsScreen } from "./ElderlyNotificationsScreen";
 import { ElderlySettingsScreen } from "./ElderlySettingsScreen";
+import { AddPrescriptionSheet } from "../AddPrescriptionSheet";
 
 export function ElderlyApp({ patient, onUpdatePatient, onBack }: {
   patient: Patient;
@@ -15,6 +16,7 @@ export function ElderlyApp({ patient, onUpdatePatient, onBack }: {
 }) {
   const [tab, setTab] = useState<ElderlyTab>("home");
   const [pendingAIMessage, setPendingAIMessage] = useState<string | undefined>();
+  const [addRx, setAddRx] = useState<null | "scan" | "manual">(null);
 
   const openAI = (msg?: string) => {
     setPendingAIMessage(msg);
@@ -25,9 +27,14 @@ export function ElderlyApp({ patient, onUpdatePatient, onBack }: {
     { id: 2, question: "Is it normal to feel a little dizzy after taking Amlodipine?",  addedAt: "Added by Mei · Yesterday", answered: false },
   ]);
 
-  const handleLogDose = (medId: number) => {
-    const t = new Date().toLocaleTimeString("en-SG", { hour: "2-digit", minute: "2-digit" });
+  const handleLogDose = (medId: number, takenAt?: string) => {
+    const t = takenAt ?? new Date().toLocaleTimeString("en-SG", { hour: "2-digit", minute: "2-digit" });
     onUpdatePatient({ ...patient, medications: patient.medications.map(m => m.id === medId ? { ...m, status: "taken" as MedStatus, takenAt: t } : m) });
+  };
+
+  const handleAddPrescription = (med: Omit<Medication, "id" | "status">) => {
+    const nextId = patient.medications.reduce((max, m) => Math.max(max, m.id), 0) + 1;
+    onUpdatePatient({ ...patient, medications: [...patient.medications, { ...med, id: nextId, status: "upcoming" as MedStatus }] });
   };
 
   const handleAddDoctorQ = (q: string) => {
@@ -78,13 +85,14 @@ export function ElderlyApp({ patient, onUpdatePatient, onBack }: {
 
       {/* Screen content */}
       <div className="flex-1 overflow-hidden flex flex-col">
-        {tab === "home"          && <ElderlyHomeScreen         patient={patient} onLogDose={handleLogDose} onNavigate={setTab} />}
-        {tab === "prescriptions" && <ElderlyPrescriptionScreen patient={patient} onOpenAI={openAI} />}
+        {tab === "home"          && <ElderlyHomeScreen         patient={patient} onLogDose={handleLogDose} />}
+        {tab === "prescriptions" && <ElderlyPrescriptionScreen patient={patient} onOpenAI={openAI} onAddRx={() => setAddRx("manual")} />}
         {tab === "ai"            && (
           <ElderlyAIScreen
             patient={patient}
             onLogDose={handleLogDose}
             onNavigate={setTab}
+            onAddRxPhoto={() => setAddRx("scan")}
             doctorQuestions={doctorQuestions}
             onAddDoctorQ={handleAddDoctorQ}
             onMarkAnswered={(id: number) => setDoctorQuestions(p => p.map(q => q.id === id ? { ...q, answered: true } : q))}
@@ -124,6 +132,8 @@ export function ElderlyApp({ patient, onUpdatePatient, onBack }: {
           })}
         </div>
       </div>
+
+      {addRx && <AddPrescriptionSheet initialTab={addRx} onClose={() => setAddRx(null)} onAdd={handleAddPrescription} />}
     </div>
   );
 }
