@@ -5,12 +5,6 @@ import { StatusPill } from "../components/shared";
 import { MED_PHOTOS, MED_SIMPLE } from "../data/medications";
 import { DASH_DAYS } from "../lib/constants";
 
-function hashCode(s: string): number {
-  let hash = 0;
-  for (let i = 0; i < s.length; i++) hash = (hash * 31 + s.charCodeAt(i)) | 0;
-  return Math.abs(hash);
-}
-
 export function TimelineScreen({ patient }: { patient: Patient }) {
   const [view, setView] = useState<"daily" | "weekly">("daily");
   const today = new Date();
@@ -58,7 +52,7 @@ export function TimelineScreen({ patient }: { patient: Patient }) {
 
   const statusForDay = (m: Medication, day: Date): MedStatus => {
     if (isToday(day)) return m.status;
-    if (isPast(day))  return (day.getDate() * 3 + hashCode(m.id)) % 10 > 2 ? "taken" : "missed";
+    if (isPast(day))  return (day.getDate() * 3 + m.id) % 10 > 2 ? "taken" : "missed";
     return "upcoming";
   };
 

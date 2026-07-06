@@ -1,22 +1,18 @@
-import { useEffect, useState } from "react";
+import { useState } from "react";
 import { Users, Send } from "lucide-react";
-import type { Patient, Message } from "../types";
-import { fetchCaregiverMessages, sendCaregiverMessage } from "../data/api";
+import { MESSAGES } from "../data/patients";
 
-export function MessagesScreen({ patient, currentUserId }: { patient: Patient; currentUserId: string }) {
-  const [messages, setMessages] = useState<Message[]>([]);
+export function MessagesScreen() {
+  const [messages, setMessages] = useState(MESSAGES);
   const [draft, setDraft] = useState("");
 
-  useEffect(() => {
-    fetchCaregiverMessages(patient.id, currentUserId).then(setMessages).catch(console.error);
-  }, [patient.id, currentUserId]);
-
-  const send = async () => {
-    const body = draft.trim();
-    if (!body) return;
+  const send = () => {
+    if (!draft.trim()) return;
+    setMessages(prev => [
+      ...prev,
+      { id: prev.length + 1, author: "You", role: "Son", body: draft.trim(), time: "Now", isMe: true },
+    ]);
     setDraft("");
-    await sendCaregiverMessage(patient.id, currentUserId, body);
-    setMessages(await fetchCaregiverMessages(patient.id, currentUserId));
   };
 
   return (
@@ -25,7 +21,13 @@ export function MessagesScreen({ patient, currentUserId }: { patient: Patient; c
       <div className="px-4 py-3 bg-card border-b border-border">
         <div className="flex items-center gap-2 mb-0.5">
           <Users size={14} className="text-muted-foreground" />
-          <p className="text-xs text-muted-foreground font-medium">{patient.name} — Care Team</p>
+          <p className="text-xs text-muted-foreground font-medium">Mdm Tan Bee Leng — Care Team</p>
+        </div>
+        <div className="flex items-center gap-2">
+          {["WM", "SF", "SN"].map((init, i) => (
+            <div key={i} className="w-6 h-6 rounded-full bg-secondary border-2 border-background flex items-center justify-center text-[9px] font-bold text-primary">{init}</div>
+          ))}
+          <span className="text-[11px] text-muted-foreground">You, Shu Fen, Siti Nuraini</span>
         </div>
       </div>
 

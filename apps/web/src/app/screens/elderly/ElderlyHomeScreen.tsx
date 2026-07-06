@@ -5,19 +5,13 @@ import type { Patient, Medication, MedStatus } from "../../types";
 import type { ElderlyTab } from "./types";
 import { MED_PHOTOS, MED_SIMPLE, MED_SHAPES } from "../../data/medications";
 
-function hashCode(s: string): number {
-  let hash = 0;
-  for (let i = 0; i < s.length; i++) hash = (hash * 31 + s.charCodeAt(i)) | 0;
-  return Math.abs(hash);
-}
-
 export function ElderlyHomeScreen({ patient, onLogDose, onNavigate }: {
   patient: Patient;
-  onLogDose: (id: string) => void;
+  onLogDose: (id: number) => void;
   onNavigate: (tab: ElderlyTab) => void;
 }) {
   const { colourBlind } = useAccessibility();
-  const [confirmedId, setConfirmedId] = useState<string | null>(null);
+  const [confirmedId, setConfirmedId] = useState<number | null>(null);
   const [now, setNow] = useState(new Date());
   const [weekOffset, setWeekOffset] = useState(0);
   useEffect(() => {
@@ -46,7 +40,7 @@ export function ElderlyHomeScreen({ patient, onLogDose, onNavigate }: {
   // Resolve medication status for an arbitrary day
   const statusForDay = (m: Medication, day: Date): MedStatus => {
     if (isToday(day)) return m.status;
-    if (isPast(day))  return (day.getDate() * 3 + hashCode(m.id)) % 10 > 2 ? "taken" : "missed";
+    if (isPast(day))  return (day.getDate() * 3 + m.id) % 10 > 2 ? "taken" : "missed";
     return "upcoming";
   };
 
@@ -60,7 +54,7 @@ export function ElderlyHomeScreen({ patient, onLogDose, onNavigate }: {
     ? patient.medications.find(m => m.status === "upcoming")?.id
     : undefined;
 
-  const handleLogDose = (id: string) => {
+  const handleLogDose = (id: number) => {
     onLogDose(id);
     setConfirmedId(id);
     setTimeout(() => setConfirmedId(null), 2500);
@@ -260,7 +254,7 @@ export function ElderlyHomeScreen({ patient, onLogDose, onNavigate }: {
 
                 {isSelectedToday && (isNext || isMissed) ? (
                   <button
-                    onClick={() => handleLogDose(m.medicationId)}
+                    onClick={() => handleLogDose(m.id)}
                     className={`w-full flex items-center justify-center gap-2.5 py-3.5 border-t font-bold text-[15px] active:opacity-80 transition-opacity ${
                       isNext ? "border-primary/20 bg-primary/10 text-primary" : "border-orange-200 bg-orange-100/60 text-orange-700"
                     }`}

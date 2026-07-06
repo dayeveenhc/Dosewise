@@ -1,15 +1,10 @@
-import { useEffect, useState } from "react";
-import type { Session } from "@supabase/supabase-js";
+import { useState } from "react";
 import { Droplets, ArrowLeft, Bell, MessageSquare } from "lucide-react";
 import type { AppMode, Screen, Patient, Medication } from "./types";
-import { supabase } from "./lib/supabase";
-import { fetchMyProfile, fetchPatients, addPrescription, archiveMedication, createLinkedElder } from "./data/api";
-import type { Profile } from "./data/api";
-import { NOTIFICATIONS } from "./data/patients";
+import { PATIENTS, NOTIFICATIONS } from "./data/patients";
 import { NAV_ITEMS } from "./nav";
 import { PatientSwitcher } from "./components/shared";
 import { OnboardingScreen } from "./screens/OnboardingScreen";
-import { AuthScreen } from "./screens/AuthScreen";
 import { DashboardScreen } from "./screens/DashboardScreen";
 import { PatientScreen } from "./screens/PatientScreen";
 import { TimelineScreen } from "./screens/TimelineScreen";
@@ -18,62 +13,30 @@ import { AskMeiScreen } from "./screens/AskMeiScreen";
 import { MessagesScreen } from "./screens/MessagesScreen";
 import { SettingsScreen } from "./screens/SettingsScreen";
 import { AddPrescriptionSheet } from "./screens/AddPrescriptionSheet";
-import { AddCareRecipientSheet } from "./screens/AddCareRecipientSheet";
 import { EditProfileSheet } from "./screens/EditProfileSheet";
 import { ElderlyApp } from "./screens/elderly/ElderlyApp";
 import { AccessibilityProvider } from "./accessibility.tsx";
 
 export default function App() {
-  const [session, setSession] = useState<Session | null>(null);
-  const [profile, setProfile] = useState<Profile | null>(null);
-  const [pendingRole, setPendingRole] = useState<"elder" | "caregiver" | null>(null);
+  const [appMode, setAppMode] = useState<AppMode>("onboarding");
   const [screen, setScreen] = useState<Screen>("dashboard");
   const [selectedPatient, setSelectedPatient] = useState(0);
-  const [patients, setPatients] = useState<Patient[]>([]);
+  const [patients, setPatients] = useState<Patient[]>(PATIENTS);
   const [showAddPrescription, setShowAddPrescription] = useState(false);
   const [showEditProfile, setShowEditProfile] = useState(false);
-  const [showAddCareRecipient, setShowAddCareRecipient] = useState(false);
-
-  useEffect(() => {
-    supabase.auth.getSession().then(({ data }) => setSession(data.session));
-    const { data: sub } = supabase.auth.onAuthStateChange((_event, s) => setSession(s));
-    return () => sub.subscription.unsubscribe();
-  }, []);
-
-  useEffect(() => {
-    if (!session) { setProfile(null); return; }
-    fetchMyProfile(session.user.id).then(setProfile).catch(console.error);
-  }, [session]);
-
-  const reloadPatients = () => {
-    if (!profile) return;
-    fetchPatients(profile).then(setPatients).catch(console.error);
-  };
-
-  useEffect(() => {
-    if (profile) reloadPatients();
-    else setPatients([]);
-    setScreen("dashboard");
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [profile]);
 
   const patient = patients[selectedPatient];
-  const currentUserId = session?.user.id ?? "";
+  let nextMedId = patients.flatMap(p => p.medications).reduce((max, m) => Math.max(max, m.id), 0) + 1;
 
-  const handleAddPrescription = async (med: Omit<Medication, "id" | "medicationId" | "status" | "colour">) => {
-    if (!patient) return;
-    await addPrescription(patient.id, med);
-    reloadPatients();
+  const handleAddPrescription = (med: Omit<Medication, "id" | "status">) => {
+    setPatients(prev => prev.map((p, i) => i !== selectedPatient ? p : {
+      ...p,
+      medications: [...p.medications, { ...med, id: nextMedId++, status: "upcoming" }],
+    }));
   };
 
-  const handleArchiveMedication = async (medicationId: string) => {
-    await archiveMedication(medicationId);
-    reloadPatients();
-  };
-
-  const handleAddCareRecipient = async (fullName: string, relationship: string) => {
-    await createLinkedElder(currentUserId, fullName, relationship);
-    reloadPatients();
+  const handleUpdatePatient = (updated: Patient) => {
+    setPatients(prev => prev.map((p, i) => i === selectedPatient ? updated : p));
   };
 
   const unreadCount = NOTIFICATIONS.filter(n => !n.read).length;
@@ -84,48 +47,26 @@ export default function App() {
   const showPatientSwitcher = ["dashboard", "patient", "timeline"].includes(screen);
   const showBack = ["messages"].includes(screen);
 
-  if (!session || !profile) {
-    if (!pendingRole) {
-      return (
-        <div className="min-h-screen bg-stone-300 flex items-center justify-center p-4" style={{ fontFamily: "'DM Sans', system-ui, sans-serif" }}>
-          <div className="w-[390px] h-[844px] bg-background relative overflow-hidden rounded-[3rem] shadow-2xl border-[6px] border-stone-800 flex flex-col">
-            <OnboardingScreen onSelect={(mode) => setPendingRole(mode === "caregiver" ? "caregiver" : "elder")} />
-          </div>
-        </div>
-      );
-    }
+  if (appMode === "onboarding") {
     return (
       <div className="min-h-screen bg-stone-300 flex items-center justify-center p-4" style={{ fontFamily: "'DM Sans', system-ui, sans-serif" }}>
         <div className="w-[390px] h-[844px] bg-background relative overflow-hidden rounded-[3rem] shadow-2xl border-[6px] border-stone-800 flex flex-col">
-          <AuthScreen
-            role={pendingRole}
-            onBack={() => setPendingRole(null)}
-            onAuthed={(userId) => { fetchMyProfile(userId).then(setProfile).catch(console.error); }}
-          />
+          <OnboardingScreen onSelect={(mode) => { setScreen("dashboard"); setAppMode(mode); }} />
         </div>
       </div>
     );
   }
-
-  const appMode: AppMode = profile.role === "elder" ? "elderly" : "caregiver";
-
-  const handleSignOut = async () => {
-    await supabase.auth.signOut();
-    setPendingRole(null);
-  };
 
   if (appMode === "elderly") {
     return (
       <div className="min-h-screen bg-stone-300 flex items-center justify-center p-4" style={{ fontFamily: "'DM Sans', system-ui, sans-serif" }}>
         <div className="w-[390px] h-[844px] bg-background relative overflow-hidden rounded-[3rem] shadow-2xl border-[6px] border-stone-800 flex flex-col">
           <AccessibilityProvider>
-            {patient && (
-              <ElderlyApp
-                patient={patient}
-                onUpdatePatient={reloadPatients}
-                onBack={handleSignOut}
-              />
-            )}
+            <ElderlyApp
+              patient={patients[0]}
+              onUpdatePatient={(p) => setPatients(prev => [p, ...prev.slice(1)])}
+              onBack={() => setAppMode("onboarding")}
+            />
           </AccessibilityProvider>
         </div>
       </div>
@@ -179,31 +120,26 @@ export default function App() {
             </div>
           )}
           {showPatientSwitcher && (
-            <PatientSwitcher
-              patients={patients}
-              selected={selectedPatient}
-              onSelect={setSelectedPatient}
-              onAddCareRecipient={() => setShowAddCareRecipient(true)}
-            />
+            <PatientSwitcher patients={patients} selected={selectedPatient} onSelect={setSelectedPatient} />
           )}
         </div>
 
         {/* Screen content */}
         <div className={`flex-1 ${screen === "ai" ? "overflow-hidden flex flex-col" : "overflow-y-auto scrollbar-none"}`}>
-          {patient && screen === "dashboard" && <DashboardScreen patient={patient} onNavigate={setScreen} />}
-          {patient && screen === "patient" && (
+          {screen === "dashboard" && <DashboardScreen patient={patient} onNavigate={setScreen} />}
+          {screen === "patient" && (
             <PatientScreen
               patient={patient}
               onEditProfile={() => setShowEditProfile(true)}
               onAddPrescription={() => setShowAddPrescription(true)}
-              onDeleteMedication={handleArchiveMedication}
+              onDeleteMedication={(id) => setPatients(prev => prev.map((p, i) => i !== selectedPatient ? p : { ...p, medications: p.medications.filter(m => m.id !== id) }))}
             />
           )}
-          {patient && screen === "timeline" && <TimelineScreen patient={patient} />}
+          {screen === "timeline" && <TimelineScreen patient={patient} />}
           {screen === "notifications" && <NotificationsScreen />}
-          {patient && screen === "ai" && <AskMeiScreen patient={patient} />}
-          {patient && screen === "messages" && <MessagesScreen patient={patient} currentUserId={currentUserId} />}
-          {screen === "settings" && <SettingsScreen onSwitchMode={handleSignOut} />}
+          {screen === "ai" && <AskMeiScreen patient={patient} />}
+          {screen === "messages" && <MessagesScreen />}
+          {screen === "settings" && <SettingsScreen onSwitchMode={() => setAppMode("onboarding")} />}
         </div>
 
         {/* Modals */}
@@ -213,17 +149,11 @@ export default function App() {
             onAdd={handleAddPrescription}
           />
         )}
-        {showEditProfile && patient && (
+        {showEditProfile && (
           <EditProfileSheet
             patient={patient}
             onClose={() => setShowEditProfile(false)}
-            onSave={() => setShowEditProfile(false)}
-          />
-        )}
-        {showAddCareRecipient && (
-          <AddCareRecipientSheet
-            onClose={() => setShowAddCareRecipient(false)}
-            onAdd={handleAddCareRecipient}
+            onSave={handleUpdatePatient}
           />
         )}
 

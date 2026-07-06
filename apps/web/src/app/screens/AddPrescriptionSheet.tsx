@@ -5,7 +5,7 @@ import { MED_COLOURS, PRESET_TIMES } from "../data/medications";
 
 interface AddPrescriptionSheetProps {
   onClose: () => void;
-  onAdd: (med: Omit<Medication, "id" | "medicationId" | "status" | "colour">) => void;
+  onAdd: (med: Omit<Medication, "id" | "status">) => void;
 }
 
 export function AddPrescriptionSheet({ onClose, onAdd }: AddPrescriptionSheetProps) {
@@ -28,6 +28,7 @@ export function AddPrescriptionSheet({ onClose, onAdd }: AddPrescriptionSheetPro
       purpose: purpose.trim(),
       time: useCustomTime ? customTime || time : time,
       refillDaysLeft: refillDays ? parseInt(refillDays) : undefined,
+      colour,
     });
     onClose();
   };

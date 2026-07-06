@@ -1,12 +1,6 @@
 import { useRef, useState } from "react";
 import { Send, TrendingUp } from "lucide-react";
 import type { Patient } from "../types";
-// Stays on the local canned responder rather than Hermes's /agent/turn: that
-// contract only resolves elder_id from the caller's own JWT (services/hermes/
-// src/hermes/api/routes.py), with no "caregiver acting on a specific linked
-// elder" mode yet. Wiring this for real needs a contract change on the Hermes
-// side, out of scope here — see ElderlyAIScreen.tsx for the elder's own chat,
-// which already calls Hermes for real since that mapping fits as-is.
 import { caregiverAiRespond } from "./caregiverAiRespond";
 import { WeeklySummarySheet } from "./WeeklySummarySheet";
 
