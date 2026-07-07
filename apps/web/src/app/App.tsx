@@ -1,9 +1,17 @@
-import { useState } from "react";
-import { Droplets, ArrowLeft, Bell, MessageSquare } from "lucide-react";
+import { useEffect, useState } from "react";
+import type { Session } from "@supabase/supabase-js";
+import { Droplets, ArrowLeft, Bell, MessageSquare, HelpCircle } from "lucide-react";
 import type { AppMode, Screen, Patient, Medication } from "./types";
 import { PATIENTS, NOTIFICATIONS } from "./data/patients";
 import { NAV_ITEMS } from "./nav";
 import { PatientSwitcher } from "./components/shared";
+import { supabase } from "./lib/supabase";
+import { ensureProfile, fetchElderMedications, fetchArchivedMedications, addMedication, archiveMedication, to24h } from "./lib/medications";
+import { fetchProfileRole, fetchProfile } from "./lib/profile";
+import { WelcomeScreen } from "./screens/setup/WelcomeScreen";
+import { SetupMethodScreen } from "./screens/setup/SetupMethodScreen";
+import { GuidedSetupWizard } from "./screens/setup/GuidedSetupWizard";
+import { LoginScreen } from "./screens/LoginScreen";
 import { OnboardingScreen } from "./screens/OnboardingScreen";
 import { DashboardScreen } from "./screens/DashboardScreen";
 import { PatientScreen } from "./screens/PatientScreen";
@@ -16,22 +24,177 @@ import { AddPrescriptionSheet } from "./screens/AddPrescriptionSheet";
 import { EditProfileSheet } from "./screens/EditProfileSheet";
 import { ElderlyApp } from "./screens/elderly/ElderlyApp";
 import { AccessibilityProvider } from "./accessibility.tsx";
+import { GuidedTour } from "./components/GuidedTour";
+import type { TourStep } from "./components/GuidedTour";
+import { ConfirmDialog } from "./components/ConfirmDialog";
 
 export default function App() {
+  const [session, setSession] = useState<Session | null>(null);
+  const [authLoading, setAuthLoading] = useState(true);
   const [appMode, setAppMode] = useState<AppMode>("onboarding");
+  // Sub-stage shown while appMode is "onboarding" — walks a new user through
+  // Sign-in-or-Get-started -> Caregiver-or-Myself -> HealthHub-or-Guided -> wizard.
+  const [preAuthStage, setPreAuthStage] = useState<"welcome" | "signin" | "mode" | "method" | "wizard">("welcome");
+  const [pendingMode, setPendingMode] = useState<"caregiver" | "elderly">("elderly");
+  // True only when a session exists but has no profile row yet (e.g. signed in
+  // without ever finishing setup) — routes back through the wizard instead of
+  // treating the mode picker as a quick preview-mode switch.
+  const [needsWizard, setNeedsWizard] = useState(false);
   const [screen, setScreen] = useState<Screen>("dashboard");
   const [selectedPatient, setSelectedPatient] = useState(0);
   const [patients, setPatients] = useState<Patient[]>(PATIENTS);
   const [showAddPrescription, setShowAddPrescription] = useState(false);
   const [showEditProfile, setShowEditProfile] = useState(false);
+  // Set true the moment the guided setup wizard finishes, so the app that
+  // follows can auto-start the tour exactly once. Cleared shortly after so a
+  // later mode-switch remount doesn't auto-start it again.
+  const [justOnboarded, setJustOnboarded] = useState(false);
+  const [showCaregiverTour, setShowCaregiverTour] = useState(false);
+  const [showCaregiverTourConfirm, setShowCaregiverTourConfirm] = useState(false);
+
+  useEffect(() => {
+    if (!justOnboarded) return;
+    if (appMode === "caregiver") setShowCaregiverTour(true);
+    const t = setTimeout(() => setJustOnboarded(false), 1000);
+    return () => clearTimeout(t);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [justOnboarded, appMode]);
+
+  const caregiverTourSteps: TourStep[] = [
+    {
+      target: '[data-tour="cg-dashboard"]', navTarget: '[data-tour="nav-dashboard"]', onEnter: () => setScreen("dashboard"),
+      title: "Today's adherence", body: "See at a glance how many doses have been taken today, and jump to the full schedule.",
+    },
+    {
+      target: '[data-tour="cg-medlist"]', navTarget: '[data-tour="nav-patient"]', onEnter: () => setScreen("patient"),
+      title: "Current medications", body: "Every medication you're managing, with refill status — add a new one anytime.",
+    },
+    {
+      target: '[data-tour="cg-askmei"]', navTarget: '[data-tour="nav-ai"]', onEnter: () => setScreen("ai"),
+      title: "Ask Mei", body: "Ask about adherence, missed doses, or refills, get a weekly summary, or plan a trip with Travel Mode.",
+    },
+    {
+      target: '[data-tour="cg-settings"]', navTarget: '[data-tour="nav-settings"]', onEnter: () => setScreen("settings"),
+      title: "Notifications", body: "Choose what you're alerted about — missed doses, low refills, and weekly summaries.",
+    },
+  ];
+
+  useEffect(() => {
+    supabase.auth.getSession().then(({ data: { session } }) => {
+      setSession(session);
+      setAuthLoading(false);
+    });
+    const { data: { subscription } } = supabase.auth.onAuthStateChange((_event, session) => {
+      setSession(session);
+    });
+    return () => subscription.unsubscribe();
+  }, []);
+
+  // Routes a session into the right app view by looking up its role — covers both
+  // a returning user's sign-in and reopening the app with a persisted session.
+  // Skipped while mid-wizard: the wizard creates its own session as its first step
+  // and must not be yanked into the main app before the later steps run.
+  useEffect(() => {
+    if (!session || preAuthStage === "wizard") return;
+    (async () => {
+      const role = await fetchProfileRole(session.user.id);
+      if (role) {
+        setNeedsWizard(false);
+        setAppMode(role === "elder" ? "elderly" : "caregiver");
+      } else {
+        setNeedsWizard(true);
+        setPreAuthStage("mode");
+      }
+    })();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [session, preAuthStage === "wizard"]);
+
+  // Sign-out: drop back to the welcome screen instead of leaving a stale app view
+  // (with no elderId) on screen.
+  useEffect(() => {
+    if (!session && appMode !== "onboarding") {
+      setAppMode("onboarding");
+      setPreAuthStage("welcome");
+      setNeedsWizard(false);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [session]);
+
+  const elderId = session?.user.id;
+
+  // Already-onboarded users switching preview mode from Settings (not new setup).
+  const openModeSwitch = () => { setNeedsWizard(false); setPreAuthStage("mode"); setAppMode("onboarding"); };
+
+  // Loads the signed-in user's real medications into the first (only, for now)
+  // patient slot on login, keeping the mock cosmetic fields (photo, contacts, etc.)
+  // that have no equivalent column in the real schema.
+  useEffect(() => {
+    // Also gated on appMode: elderId becomes truthy the moment the wizard's
+    // account step creates a session, long before the wizard finishes saving
+    // the rest of the profile (name, age, conditions...) via saveProfile.
+    // Fetching immediately would show stale/empty data in the app that follows
+    // — wait until onboarding is actually done (appMode flips) to load for real.
+    if (!elderId || appMode === "onboarding") return;
+    (async () => {
+      await ensureProfile(elderId);
+      const [medications, profile, pastMedications] = await Promise.all([
+        fetchElderMedications(elderId),
+        fetchProfile(elderId),
+        fetchArchivedMedications(elderId),
+      ]);
+      const taken = medications.filter(m => m.status === "taken").length;
+      const adherenceToday = medications.length ? Math.round((taken / medications.length) * 100) : 0;
+      const displayName = profile?.fullName || session?.user.email || "You";
+      // The wizard only ever collects one name field ("preferred name") — it IS
+      // the nickname, not a formal name to be split down to its first word.
+      const preferredName = profile?.fullName || displayName.split("@")[0];
+      setPatients(prev => [{
+        ...prev[0],
+        name: displayName,
+        nickname: preferredName,
+        age: profile?.details.age ?? prev[0].age,
+        gender: profile?.details.gender ?? prev[0].gender,
+        weightKg: profile?.details.weightKg ?? prev[0].weightKg,
+        heightCm: profile?.details.heightCm ?? prev[0].heightCm,
+        mealTimes: profile?.details.mealTimes ?? prev[0].mealTimes,
+        sleepTime: profile?.details.sleepTime ?? prev[0].sleepTime,
+        travelPlan: profile?.details.travelPlan ?? prev[0].travelPlan,
+        conditions: profile?.details.conditions?.length ? profile.details.conditions : prev[0].conditions,
+        allergies: profile?.details.allergies?.length || profile?.details.drugAllergies?.length
+          ? [...(profile.details.allergies ?? []), ...(profile.details.drugAllergies ?? [])]
+          : prev[0].allergies,
+        medications,
+        pastMedications,
+        adherenceToday,
+        adherenceWeek: adherenceToday, // no historical "missed" records exist to compute a real week figure
+      }, ...prev.slice(1)]);
+    })();
+  }, [elderId, appMode]);
 
   const patient = patients[selectedPatient];
   let nextMedId = patients.flatMap(p => p.medications).reduce((max, m) => Math.max(max, m.id), 0) + 1;
 
-  const handleAddPrescription = (med: Omit<Medication, "id" | "status">) => {
+  const handleAddPrescription = async (med: Omit<Medication, "id" | "status">) => {
+    if (!elderId) return;
+    const medicationId = await addMedication(elderId, {
+      name: med.name, dosage: med.dose, purpose: med.purpose,
+      timeHHMM: to24h(med.time), refillDays: med.refillDaysLeft,
+    });
     setPatients(prev => prev.map((p, i) => i !== selectedPatient ? p : {
       ...p,
-      medications: [...p.medications, { ...med, id: nextMedId++, status: "upcoming" }],
+      medications: [...p.medications, { ...med, id: nextMedId++, medicationId, status: "upcoming" }],
+    }));
+  };
+
+  const handleDeleteMedication = async (id: number) => {
+    const med = patients[selectedPatient].medications.find(m => m.id === id);
+    if (med?.medicationId) await archiveMedication(med.medicationId);
+    setPatients(prev => prev.map((p, i) => i !== selectedPatient ? p : {
+      ...p,
+      medications: p.medications.filter(m => m.id !== id),
+      pastMedications: med?.medicationId
+        ? [...(p.pastMedications ?? []), { id: med.medicationId, name: med.name, dose: med.dose, purpose: med.purpose }]
+        : p.pastMedications,
     }));
   };
 
@@ -47,11 +210,42 @@ export default function App() {
   const showPatientSwitcher = ["dashboard", "patient", "timeline"].includes(screen);
   const showBack = ["messages"].includes(screen);
 
+  if (authLoading) {
+    return (
+      <div className="min-h-screen bg-stone-300 flex items-center justify-center p-4" style={{ fontFamily: "'DM Sans', system-ui, sans-serif" }}>
+        <div className="w-[390px] h-[844px] bg-background relative overflow-hidden rounded-[3rem] shadow-2xl border-[6px] border-stone-800 flex flex-col" />
+      </div>
+    );
+  }
+
   if (appMode === "onboarding") {
     return (
       <div className="min-h-screen bg-stone-300 flex items-center justify-center p-4" style={{ fontFamily: "'DM Sans', system-ui, sans-serif" }}>
         <div className="w-[390px] h-[844px] bg-background relative overflow-hidden rounded-[3rem] shadow-2xl border-[6px] border-stone-800 flex flex-col">
-          <OnboardingScreen onSelect={(mode) => { setScreen("dashboard"); setAppMode(mode); }} />
+          {preAuthStage === "welcome" && (
+            <WelcomeScreen onSignIn={() => setPreAuthStage("signin")} onGetStarted={() => setPreAuthStage("mode")} />
+          )}
+          {preAuthStage === "signin" && (
+            <LoginScreen onBack={() => setPreAuthStage("welcome")} onGetStarted={() => setPreAuthStage("mode")} />
+          )}
+          {preAuthStage === "mode" && (
+            <OnboardingScreen onSelect={(mode) => {
+              if (session && !needsWizard) { setScreen("dashboard"); setAppMode(mode); }
+              else { setPendingMode(mode); setPreAuthStage("method"); }
+            }} />
+          )}
+          {preAuthStage === "method" && (
+            <SetupMethodScreen onBack={() => setPreAuthStage("mode")} onGuided={() => setPreAuthStage("wizard")} />
+          )}
+          {preAuthStage === "wizard" && (
+            <GuidedSetupWizard
+              mode={pendingMode}
+              hasSession={!!session}
+              elderId={elderId}
+              onComplete={() => { setNeedsWizard(false); setScreen("dashboard"); setJustOnboarded(true); setAppMode(pendingMode); }}
+              onExit={() => setPreAuthStage("method")}
+            />
+          )}
         </div>
       </div>
     );
@@ -64,8 +258,11 @@ export default function App() {
           <AccessibilityProvider>
             <ElderlyApp
               patient={patients[0]}
+              elderId={elderId}
               onUpdatePatient={(p) => setPatients(prev => [p, ...prev.slice(1)])}
-              onBack={() => setAppMode("onboarding")}
+              onBack={openModeSwitch}
+              onSignOut={() => supabase.auth.signOut()}
+              startTour={justOnboarded}
             />
           </AccessibilityProvider>
         </div>
@@ -107,6 +304,9 @@ export default function App() {
                 </h1>
               </div>
               <div className="flex items-center gap-2">
+                <button onClick={() => setShowCaregiverTourConfirm(true)} className="w-8 h-8 bg-card border border-border rounded-xl flex items-center justify-center">
+                  <HelpCircle size={15} className="text-muted-foreground" />
+                </button>
                 <button onClick={() => setScreen("messages")} className="w-8 h-8 bg-card border border-border rounded-xl flex items-center justify-center">
                   <MessageSquare size={15} className="text-accent" />
                 </button>
@@ -132,14 +332,14 @@ export default function App() {
               patient={patient}
               onEditProfile={() => setShowEditProfile(true)}
               onAddPrescription={() => setShowAddPrescription(true)}
-              onDeleteMedication={(id) => setPatients(prev => prev.map((p, i) => i !== selectedPatient ? p : { ...p, medications: p.medications.filter(m => m.id !== id) }))}
+              onDeleteMedication={handleDeleteMedication}
             />
           )}
           {screen === "timeline" && <TimelineScreen patient={patient} />}
           {screen === "notifications" && <NotificationsScreen />}
-          {screen === "ai" && <AskMeiScreen patient={patient} />}
+          {screen === "ai" && <AskMeiScreen patient={patient} elderId={elderId} onUpdatePatient={handleUpdatePatient} />}
           {screen === "messages" && <MessagesScreen />}
-          {screen === "settings" && <SettingsScreen onSwitchMode={() => setAppMode("onboarding")} />}
+          {screen === "settings" && <SettingsScreen onSwitchMode={openModeSwitch} onSignOut={() => supabase.auth.signOut()} />}
         </div>
 
         {/* Modals */}
@@ -156,6 +356,16 @@ export default function App() {
             onSave={handleUpdatePatient}
           />
         )}
+        {showCaregiverTour && <GuidedTour steps={caregiverTourSteps} onFinish={() => setShowCaregiverTour(false)} />}
+        {showCaregiverTourConfirm && (
+          <ConfirmDialog
+            title="Replay guided tour?"
+            body="We'll walk you through the main features again, starting from the Dashboard."
+            confirmLabel="Replay"
+            onConfirm={() => { setShowCaregiverTourConfirm(false); setShowCaregiverTour(true); }}
+            onCancel={() => setShowCaregiverTourConfirm(false)}
+          />
+        )}
 
         {/* Bottom navigation */}
         <div className="shrink-0 bg-card/95 backdrop-blur-md border-t border-border px-2 pb-6 pt-2">
@@ -167,6 +377,7 @@ export default function App() {
                   <div key={item.id} className="flex-1 flex flex-col items-center">
                     <button
                       onClick={() => setScreen(item.id)}
+                      data-tour={`nav-${item.id}`}
                       className={`w-14 h-14 rounded-full flex items-center justify-center -mt-7 shadow-lg active:scale-95 transition-transform bg-primary ${isActive ? "ring-4 ring-primary/25" : ""}`}
                     >
                       <item.icon size={24} className="text-primary-foreground" />
@@ -179,6 +390,7 @@ export default function App() {
                 <button
                   key={item.id}
                   onClick={() => setScreen(item.id)}
+                  data-tour={`nav-${item.id}`}
                   className="flex-1 flex flex-col items-center gap-1 py-1 relative"
                 >
                   <div className={`w-10 h-7 rounded-2xl flex items-center justify-center transition-colors ${isActive ? "bg-primary" : ""}`}>

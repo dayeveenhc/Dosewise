@@ -1,28 +1,28 @@
-import { useState, useRef } from "react";
-import { Volume2, Mic, Send, AlertTriangle, Brain, Circle, Check, Trash2, Plus, Camera, FileText, Pill, Globe, Sparkles, ChevronDown, X } from "lucide-react";
+import { useState, useRef, useEffect } from "react";
+import { Volume2, Mic, Send, AlertTriangle, Brain, Circle, Check, Trash2, Plus, Camera, FileText, Pill, Globe, Sparkles, ChevronDown, X, Plane } from "lucide-react";
 import type { Patient } from "../../types";
 import type { EMsg, ElderlyTab, DoctorQ } from "./types";
-import { aiRespond } from "./aiRespond";
+import { agentTurn } from "../../lib/hermes";
 import { VOICE_DEMOS } from "../../data/medications";
 
 const nowLabel = () => new Date().toLocaleTimeString("en-SG", { hour: "2-digit", minute: "2-digit" });
 
 // A single feature tile in the "Quick help" launcher.
-function FeatureBtn({ icon: Icon, label, sub, onClick }: { icon: any; label: string; sub: string; onClick: () => void }) {
+function FeatureBtn({ icon: Icon, label, onClick, "data-tour": dataTour }: { icon: any; label: string; onClick: () => void; "data-tour"?: string }) {
   return (
-    <button onClick={onClick} className="flex flex-col items-start gap-1.5 bg-card border border-border rounded-xl p-3 text-left active:bg-muted transition-colors">
-      <div className="w-8 h-8 rounded-lg bg-primary/10 flex items-center justify-center"><Icon size={16} className="text-primary" /></div>
-      <span className="text-[13px] font-bold text-foreground leading-tight">{label}</span>
-      <span className="text-[11px] text-muted-foreground leading-tight">{sub}</span>
+    <button onClick={onClick} data-tour={dataTour} className="flex items-center gap-2 bg-card border border-border rounded-xl p-2.5 text-left active:bg-muted transition-colors">
+      <div className="w-7 h-7 rounded-lg bg-primary/10 flex items-center justify-center shrink-0"><Icon size={14} className="text-primary" /></div>
+      <span className="text-[12px] font-bold text-foreground leading-tight">{label}</span>
     </button>
   );
 }
 
-export function ElderlyAIScreen({ patient, onLogDose, onNavigate, onAddRxPhoto, doctorQuestions, onAddDoctorQ, onMarkAnswered, onDeleteQuestion, autoMessage }: {
+export function ElderlyAIScreen({ patient, onLogDose, onNavigate, onAddRxPhoto, onOpenTravel, doctorQuestions, onAddDoctorQ, onMarkAnswered, onDeleteQuestion, autoMessage }: {
   patient: Patient;
   onLogDose: (id: number) => void;
   onNavigate: (tab: ElderlyTab) => void;
   onAddRxPhoto: () => void;
+  onOpenTravel: () => void;
   doctorQuestions: DoctorQ[];
   onAddDoctorQ: (q: string) => void;
   onMarkAnswered: (id: number) => void;
@@ -35,19 +35,12 @@ export function ElderlyAIScreen({ patient, onLogDose, onNavigate, onAddRxPhoto, 
   const next = patient.medications.find(m => m.status === "upcoming");
   const greeting: EMsg = {
     id: 1, role: "agent",
-    text: `Good ${g}, ${nick}! 😊\n\nI'm Mei, your medicine helper. ${next ? `Your next medicine is ${next.name} (${next.dose}) at ${next.time}.` : "You've taken all your medicines today — well done! 🌟"}\n\nTap a button above for quick help, or just type your question below.`,
+    text: `Good ${g}, ${nick}! 😊\n\nI'm Mei, your medication helper. ${next ? `Your next medication is ${next.name} (${next.dose}) at ${next.time}.` : "You've taken all your medications today — well done! 🌟"}\n\nTap a button above for quick help, or just type your question below.`,
     time: nowLabel(),
   };
-  const [messages, setMessages] = useState<EMsg[]>(() => {
-    if (!autoMessage) return [greeting];
-    const response = aiRespond(autoMessage, patient);
-    return [
-      greeting,
-      { id: 2, role: "user",  text: autoMessage,    time: nowLabel() },
-      { id: 3, role: "agent", text: response.text,  time: nowLabel(), isClinic: response.isClinic },
-    ];
-  });
+  const [messages, setMessages] = useState<EMsg[]>([greeting]);
   const [input, setInput] = useState("");
+  const [sending, setSending] = useState(false);
   const [isListening, setIsListening] = useState(false);
   const [isSpeaking, setIsSpeaking] = useState(false);
   const [language, setLanguage] = useState<"en" | "zh" | "hokkien">("en");
@@ -85,19 +78,16 @@ export function ElderlyAIScreen({ patient, onLogDose, onNavigate, onAddRxPhoto, 
     }, 1800);
   };
 
-  const send = (text: string) => {
+  const send = async (text: string) => {
     const t = text.trim();
-    if (!t) return;
-    const response = aiRespond(t, patient);
-    setMessages(prev => [...prev,
-      { id: Date.now(),     role: "user",  text: t,             time: nowLabel() },
-      { id: Date.now() + 1, role: "agent", text: response.text, time: nowLabel(), isClinic: response.isClinic },
-    ]);
+    if (!t || sending) return;
+    setMessages(prev => [...prev, { id: Date.now(), role: "user", text: t, time: nowLabel() }]);
     scrollToBottom();
-    if (response.action === "logDose"     && response.actionPayload) onLogDose(response.actionPayload);
-    if (response.action === "navigate"    && response.actionPayload) setTimeout(() => onNavigate(response.actionPayload), 900);
-    if (response.action === "openDoctorTab") setTimeout(() => setScreenTab("doctor"), 900);
-    if (response.doctorQ) onAddDoctorQ(response.doctorQ);
+    setSending(true);
+    const { reply } = await agentTurn(t);
+    setMessages(prev => [...prev, { id: Date.now() + 1, role: "agent", text: reply, time: nowLabel() }]);
+    setSending(false);
+    scrollToBottom();
     speak();
   };
 
@@ -108,10 +98,15 @@ export function ElderlyAIScreen({ patient, onLogDose, onNavigate, onAddRxPhoto, 
     send(text);
   };
 
+  useEffect(() => {
+    if (autoMessage) send(autoMessage);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
   // Quick-help feature actions ----------------------------------------------
   const handleSetup = () => {
     setQuickOpen(false);
-    pushAgent(`Let's get you set up, ${nick}! Here's what I can do:\n\n📷 Add a medicine — tap “Add prescription” and snap a photo of the box.\n📄 Update your health profile — upload a clinic report and I'll read it.\n💊 Ask about a medicine — tap “Ask a medicine” and pick one.\n🌐 Change language or turn my voice on/off.\n\nWhat would you like to do first?`);
+    pushAgent(`Let's get you set up, ${nick}! Here's what I can do:\n\n📷 Add a medication — tap “Add prescription” and snap a photo of the box.\n📄 Update your health profile — upload a clinic report and I'll read it.\n💊 Ask about a medication — tap “Ask a medication” and pick one.\n🌐 Change language or turn my voice on/off.\n\nWhat would you like to do first?`);
   };
 
   const runReport = () => {
@@ -142,15 +137,15 @@ export function ElderlyAIScreen({ patient, onLogDose, onNavigate, onAddRxPhoto, 
         <div className="flex-1 overflow-y-auto scrollbar-none px-4 pb-28 pt-3 space-y-3">
           {/* Flagged by Mei — AI couldn't answer */}
           {flagged.length > 0 && (
-            <div className="bg-amber-50 border border-amber-200 rounded-2xl overflow-hidden">
-              <div className="flex items-center gap-2 px-4 pt-3 pb-2">
+            <div>
+              <div className="flex items-center gap-2 px-1 pb-2">
                 <AlertTriangle size={14} className="text-amber-600 shrink-0" />
                 <p className="text-sm font-bold text-amber-900">Mei wasn't sure — ask your doctor</p>
                 <span className="ml-auto text-xs font-bold text-amber-700 bg-amber-100 px-2 py-0.5 rounded-full">{flagged.length}</span>
               </div>
-              <div className="divide-y divide-amber-100">
+              <div className="space-y-2">
                 {flagged.map(q => (
-                  <div key={q.id} className="px-4 py-3 flex items-start gap-3">
+                  <div key={q.id} className="bg-amber-50 border border-amber-200 rounded-2xl px-4 py-3 flex items-start gap-3">
                     <div className="flex-1">
                       <div className="flex items-center gap-1.5 mb-1">
                         <Brain size={11} className="text-amber-600" />
@@ -230,7 +225,7 @@ export function ElderlyAIScreen({ patient, onLogDose, onNavigate, onAddRxPhoto, 
       ) : (
         <>
           {/* Quick help feature launcher */}
-          <div className="px-4 pt-2.5 shrink-0">
+          <div className="px-4 pt-2.5 shrink-0" data-tour="elder-quickhelp">
             <button onClick={() => setQuickOpen(o => !o)} className="w-full flex items-center gap-1.5 mb-2">
               <Sparkles size={15} className="text-primary" />
               <span className="text-sm font-bold text-foreground">Quick help</span>
@@ -241,15 +236,16 @@ export function ElderlyAIScreen({ patient, onLogDose, onNavigate, onAddRxPhoto, 
                 <button onClick={handleSetup} className="w-full flex items-center gap-2 bg-primary/10 text-primary rounded-xl px-3 py-2.5 text-sm font-bold active:scale-[0.99] transition-transform">
                   <Sparkles size={16} />Help me set up
                 </button>
-                <div className="grid grid-cols-2 gap-2">
-                  <FeatureBtn icon={Camera}   label="Add prescription" sub="Snap a photo"  onClick={onAddRxPhoto} />
-                  <FeatureBtn icon={FileText} label="Update profile"    sub="Upload report" onClick={() => reportRef.current?.click()} />
-                  <FeatureBtn icon={Pill}     label="Ask a medicine"    sub="Tap to learn"  onClick={() => setShowMedPicker(v => !v)} />
-                  <FeatureBtn icon={Globe}    label="Language & voice"  sub={`${language.toUpperCase()} · Voice ${voiceOutput ? "on" : "off"}`} onClick={() => setShowLangSheet(true)} />
+                <div className="grid grid-cols-2 gap-1.5">
+                  <FeatureBtn icon={Camera}   label="Add prescription" onClick={onAddRxPhoto} />
+                  <FeatureBtn icon={FileText} label="Update profile"   onClick={() => reportRef.current?.click()} />
+                  <FeatureBtn icon={Pill}     label="Ask a medication" onClick={() => setShowMedPicker(v => !v)} />
+                  <FeatureBtn icon={Globe}    label="Language & voice" onClick={() => setShowLangSheet(true)} />
+                  <FeatureBtn icon={Plane}    label="Travel Mode"      onClick={onOpenTravel} />
                 </div>
                 {showMedPicker && (
                   <div className="bg-card border border-border rounded-xl p-2.5">
-                    <p className="text-[11px] text-muted-foreground font-semibold px-0.5 pb-1.5">Which medicine would you like to know about?</p>
+                    <p className="text-[11px] text-muted-foreground font-semibold px-0.5 pb-1.5">Which medication would you like to know about?</p>
                     <div className="flex flex-wrap gap-1.5">
                       {uniqueMeds.map(n => (
                         <button key={n} onClick={() => { setShowMedPicker(false); send(`What is ${n} for?`); }} className="text-xs font-semibold bg-muted text-foreground rounded-full px-3 py-1.5 active:bg-primary/10 active:text-primary transition-colors">
@@ -302,7 +298,7 @@ export function ElderlyAIScreen({ patient, onLogDose, onNavigate, onAddRxPhoto, 
 
           <div className="px-4 pb-2 shrink-0">
             <div className="flex gap-2 overflow-x-auto scrollbar-none pb-1">
-              {["I took my medicine", "What do I take?", "Check refills", "Help"].map(s => (
+              {["I took my medication", "What do I take?", "Check refills", "Help"].map(s => (
                 <button key={s} onClick={() => setInput(s)} className="shrink-0 bg-muted text-muted-foreground rounded-full px-3 py-1.5 text-xs font-semibold whitespace-nowrap active:bg-primary/10 active:text-primary transition-colors">
                   {s}
                 </button>
@@ -312,10 +308,10 @@ export function ElderlyAIScreen({ patient, onLogDose, onNavigate, onAddRxPhoto, 
 
           <div className="px-4 pb-4 pt-1 border-t border-border shrink-0">
             <div className="flex gap-2 items-end">
-              <button onClick={handleMic} className={`w-12 h-12 rounded-full flex items-center justify-center shrink-0 transition-colors ${isListening ? "bg-red-500 text-white" : "bg-muted text-foreground"}`}>
-                <Mic size={20} />
+              <button onClick={handleMic} className={`w-10 h-10 rounded-full flex items-center justify-center shrink-0 transition-colors ${isListening ? "bg-red-500 text-white" : "bg-muted text-foreground"}`}>
+                <Mic size={17} />
               </button>
-              <div className="flex-1 bg-input-background rounded-2xl px-4 py-3">
+              <div className="flex-1 bg-input-background rounded-2xl px-3.5 py-2">
                 <textarea
                   value={input}
                   onChange={e => setInput(e.target.value)}
@@ -325,8 +321,8 @@ export function ElderlyAIScreen({ patient, onLogDose, onNavigate, onAddRxPhoto, 
                   rows={1}
                 />
               </div>
-              <button onClick={handleSend} disabled={!input.trim()} className="w-12 h-12 rounded-full bg-primary text-primary-foreground flex items-center justify-center shrink-0 disabled:opacity-30 active:scale-95 transition-transform">
-                <Send size={18} />
+              <button onClick={handleSend} disabled={!input.trim() || sending} className="w-10 h-10 rounded-full bg-primary text-primary-foreground flex items-center justify-center shrink-0 disabled:opacity-30 active:scale-95 transition-transform">
+                <Send size={16} />
               </button>
             </div>
             <p className="text-center text-[10px] text-muted-foreground mt-2">Mei is an AI helper. Always check with a doctor or pharmacist for medical advice.</p>
@@ -363,6 +359,7 @@ export function ElderlyAIScreen({ patient, onLogDose, onNavigate, onAddRxPhoto, 
           )}
         </>
       )}
+
     </div>
   );
 }

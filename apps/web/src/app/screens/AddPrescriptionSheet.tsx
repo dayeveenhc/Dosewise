@@ -175,7 +175,7 @@ export function AddPrescriptionSheet({ onClose, onAdd, initialTab = "manual" }: 
                       <Camera size={26} className="text-primary" />
                     </div>
                     <p className="text-[15px] font-semibold text-foreground">Take a photo</p>
-                    <p className="text-xs text-muted-foreground leading-relaxed">Snap the medicine box or the prescription label — we'll fill in the details for you to check.</p>
+                    <p className="text-xs text-muted-foreground leading-relaxed">Snap the medication box or the prescription label — we'll fill in the details for you to check.</p>
                   </button>
                   <button
                     onClick={() => runScan(MED_PHOTOS["Metformin"], MEDICATION_CATALOG[0])}

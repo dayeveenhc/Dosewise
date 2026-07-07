@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { Plus, BookOpen, ChevronDown, Play, Eye } from "lucide-react";
+import { Plus, BookOpen, ChevronDown, Play, Eye, History } from "lucide-react";
 import { useAccessibility } from "../../accessibility.tsx";
 import type { Patient } from "../../types";
 import { MED_PLAIN, MED_PHOTOS, MED_SIMPLE, MED_SHAPES, EYEDROP_STEPS } from "../../data/medications";
@@ -7,6 +7,8 @@ import { MED_PLAIN, MED_PHOTOS, MED_SIMPLE, MED_SHAPES, EYEDROP_STEPS } from "..
 export function ElderlyPrescriptionScreen({ patient, onOpenAI, onAddRx }: { patient: Patient; onOpenAI: (msg?: string) => void; onAddRx: () => void }) {
   const { colourBlind } = useAccessibility();
   const [helpOpen, setHelpOpen] = useState<number | null>(null);
+  const [pastOpen, setPastOpen] = useState(false);
+  const pastMedications = patient.pastMedications ?? [];
 
   return (
     <div className="flex-1 overflow-y-auto scrollbar-none">
@@ -14,16 +16,23 @@ export function ElderlyPrescriptionScreen({ patient, onOpenAI, onAddRx }: { pati
 
         {/* Header */}
         <div className="flex items-center justify-between pt-1">
-          <p className="text-sm text-muted-foreground">{patient.medications.length} medicines</p>
+          <p className="text-sm text-muted-foreground">{patient.medications.length} medications</p>
           <button
             onClick={onAddRx}
-            className="h-9 px-3 bg-primary text-primary-foreground rounded-xl text-sm font-semibold flex items-center gap-1.5 active:scale-95 transition-transform"
+            data-tour="elder-add-prescription"
+            className="h-9 px-3 bg-primary text-primary-foreground rounded-xl text-xs font-semibold flex items-center gap-1 whitespace-nowrap active:scale-95 transition-transform"
           >
-            <Plus size={14} />Add refill / prescription
+            <Plus size={13} className="shrink-0" />Add refill / prescription
           </button>
         </div>
 
-        {/* Medication cards */}
+        {/* Medication cards — tour target framed tightly around just these, not the whole page */}
+        <div data-tour="elder-medlist" className="space-y-3">
+        {patient.medications.length === 0 && (
+          <div className="bg-muted/40 rounded-2xl p-6 text-center">
+            <p className="text-sm text-muted-foreground">No medicines added yet — tap "Add refill / prescription" above to get started.</p>
+          </div>
+        )}
         {patient.medications.map(m => {
           const plain       = MED_PLAIN[m.name];
           const photo       = MED_PHOTOS[m.name] ?? "https://images.unsplash.com/photo-1584308666744-24d5c474f2ae?w=120&h=120&fit=crop&auto=format";
@@ -130,9 +139,34 @@ export function ElderlyPrescriptionScreen({ patient, onOpenAI, onAddRx }: { pati
             </div>
           );
         })}
+        </div>
+
+        {pastMedications.length > 0 && (
+          <div className="bg-card rounded-2xl border border-border overflow-hidden">
+            <button
+              onClick={() => setPastOpen(v => !v)}
+              className="w-full flex items-center gap-2 px-4 py-3.5 text-sm font-semibold text-foreground"
+            >
+              <History size={15} className="text-muted-foreground" />
+              Past medications
+              <span className="text-xs font-bold text-muted-foreground bg-muted rounded-full px-2 py-0.5">{pastMedications.length}</span>
+              <ChevronDown size={14} className={`ml-auto text-muted-foreground transition-transform ${pastOpen ? "rotate-180" : ""}`} />
+            </button>
+            {pastOpen && (
+              <div className="divide-y divide-border border-t border-border">
+                {pastMedications.map(m => (
+                  <div key={m.id} className="px-4 py-3">
+                    <p className="text-sm font-semibold text-muted-foreground">{m.name} <span className="text-xs font-normal">{m.dose}</span></p>
+                    <p className="text-xs text-muted-foreground/80">{m.purpose}</p>
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+        )}
 
         <div className="bg-muted/40 rounded-2xl p-4 text-center">
-          <p className="text-xs text-muted-foreground leading-relaxed">Always take medicines exactly as prescribed. Never stop or change your dose without checking with your doctor first.</p>
+          <p className="text-xs text-muted-foreground leading-relaxed">Always take medications exactly as prescribed. Never stop or change your dose without checking with your doctor first.</p>
         </div>
       </div>
     </div>

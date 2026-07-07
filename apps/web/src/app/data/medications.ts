@@ -106,8 +106,8 @@ export const MEAL_TIMES: Record<string, string> = {
 };
 
 export const VOICE_DEMOS = [
-  "I took my morning medicine",
-  "What medicines do I have today?",
+  "I took my morning medication",
+  "What medications do I have today?",
   "Am I running low on anything?",
   "What is metformin for?",
   "Show me my prescription list",
@@ -118,6 +118,21 @@ export const COMMON_CONDITIONS = [
   "Diabetes", "Blood Pressure", "Cholesterol", "Joint Pain", "Blood Thinning",
   "Heart Rate", "Glaucoma", "Acid Reflux", "Asthma", "Thyroid", "Osteoporosis",
   "Pain Relief", "Allergy", "Anxiety", "Fluid Retention", "Vitamins",
+];
+
+// Starter list for the allergy type-ahead — not a real medical database, just
+// enough common entries to make autofill useful today. Free text is still
+// allowed for anything not on this list.
+export const COMMON_ALLERGIES = [
+  "Peanuts", "Tree nuts", "Shellfish", "Fish", "Eggs", "Milk", "Soy", "Wheat / Gluten",
+  "Sesame", "Latex", "Pollen", "Dust mites", "Pet dander", "Bee stings", "Mould",
+];
+
+// Starter list for the medicine-allergy type-ahead — common drugs/drug classes
+// people report reactions to.
+export const COMMON_DRUG_ALLERGIES = [
+  "Penicillin", "Sulfa drugs", "Aspirin", "Ibuprofen", "Codeine", "Morphine",
+  "Iodine contrast dye", "Local anaesthetics", "Certain antibiotics",
 ];
 
 // Catalogue of common medications for the type-ahead. Picking one auto-fills the

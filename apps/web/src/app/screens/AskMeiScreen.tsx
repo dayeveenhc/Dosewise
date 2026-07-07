@@ -1,14 +1,15 @@
 import { useRef, useState } from "react";
-import { Send, TrendingUp } from "lucide-react";
+import { Send, TrendingUp, Plane } from "lucide-react";
 import type { Patient } from "../types";
-import { caregiverAiRespond } from "./caregiverAiRespond";
+import { agentTurn } from "../lib/hermes";
 import { WeeklySummarySheet } from "./WeeklySummarySheet";
+import { TravelModeSheet } from "./TravelModeSheet";
 
 interface ChatMsg { id: number; role: "user" | "agent"; text: string; time: string }
 
 const nowLabel = () => new Date().toLocaleTimeString("en-SG", { hour: "2-digit", minute: "2-digit" });
 
-export function AskMeiScreen({ patient }: { patient: Patient }) {
+export function AskMeiScreen({ patient, elderId, onUpdatePatient }: { patient: Patient; elderId?: string; onUpdatePatient: (p: Patient) => void }) {
   const [messages, setMessages] = useState<ChatMsg[]>(() => [
     {
       id: 1,
@@ -18,33 +19,42 @@ export function AskMeiScreen({ patient }: { patient: Patient }) {
     },
   ]);
   const [input, setInput] = useState("");
+  const [sending, setSending] = useState(false);
   const [showSummary, setShowSummary] = useState(false);
+  const [showTravel, setShowTravel] = useState(false);
   const scrollRef = useRef<HTMLDivElement>(null);
 
   const scrollToBottom = () => setTimeout(() => {
     if (scrollRef.current) scrollRef.current.scrollTop = scrollRef.current.scrollHeight;
   }, 60);
 
-  const handleSend = () => {
+  const handleSend = async () => {
     const text = input.trim();
-    if (!text) return;
-    const reply = caregiverAiRespond(text, patient);
-    setMessages(prev => [...prev,
-      { id: Date.now(), role: "user", text, time: nowLabel() },
-      { id: Date.now() + 1, role: "agent", text: reply, time: nowLabel() },
-    ]);
+    if (!text || sending) return;
     setInput("");
+    setMessages(prev => [...prev, { id: Date.now(), role: "user", text, time: nowLabel() }]);
+    scrollToBottom();
+    setSending(true);
+    const { reply } = await agentTurn(text);
+    setMessages(prev => [...prev, { id: Date.now() + 1, role: "agent", text: reply, time: nowLabel() }]);
+    setSending(false);
     scrollToBottom();
   };
 
   return (
     <div className="flex flex-col flex-1 overflow-hidden relative">
-      <div className="px-4 py-2.5 border-b border-border shrink-0">
+      <div className="px-4 py-2.5 border-b border-border shrink-0 flex gap-2" data-tour="cg-askmei">
         <button
           onClick={() => setShowSummary(true)}
-          className="w-full flex items-center justify-center gap-1.5 bg-secondary text-primary text-xs font-semibold rounded-full px-3 py-2 active:opacity-80 transition-opacity"
+          className="flex-1 flex items-center justify-center gap-1.5 bg-secondary text-primary text-xs font-semibold rounded-full px-3 py-2 active:opacity-80 transition-opacity"
         >
-          <TrendingUp size={13} /> View Weekly Summary
+          <TrendingUp size={13} /> Weekly Summary
+        </button>
+        <button
+          onClick={() => setShowTravel(true)}
+          className="flex-1 flex items-center justify-center gap-1.5 bg-secondary text-primary text-xs font-semibold rounded-full px-3 py-2 active:opacity-80 transition-opacity"
+        >
+          <Plane size={13} /> Travel Mode
         </button>
       </div>
 
@@ -94,7 +104,7 @@ export function AskMeiScreen({ patient }: { patient: Patient }) {
           </div>
           <button
             onClick={handleSend}
-            disabled={!input.trim()}
+            disabled={!input.trim() || sending}
             className="w-12 h-12 rounded-full bg-primary text-primary-foreground flex items-center justify-center shrink-0 disabled:opacity-30 active:scale-95 transition-transform"
           >
             <Send size={18} />
@@ -103,6 +113,14 @@ export function AskMeiScreen({ patient }: { patient: Patient }) {
       </div>
 
       {showSummary && <WeeklySummarySheet patient={patient} onClose={() => setShowSummary(false)} />}
+      {showTravel && (
+        <TravelModeSheet
+          patient={patient}
+          elderId={elderId}
+          onClose={() => setShowTravel(false)}
+          onSaved={plan => onUpdatePatient({ ...patient, travelPlan: plan })}
+        />
+      )}
     </div>
   );
 }

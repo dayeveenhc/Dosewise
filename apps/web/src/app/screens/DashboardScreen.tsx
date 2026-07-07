@@ -39,7 +39,7 @@ export function DashboardScreen({ patient, onNavigate }: { patient: Patient; onN
   return (
     <div className="px-4 py-5 space-y-3">
       {/* Adherence overview */}
-      <Card className="p-3.5">
+      <Card className="p-3.5" data-tour="cg-dashboard">
         <div className="flex items-start justify-between gap-3">
           <p className="text-[10px] text-muted-foreground uppercase tracking-widest font-medium mb-0.5">Today's Adherence</p>
           <button

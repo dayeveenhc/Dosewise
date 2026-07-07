@@ -1,4 +1,4 @@
-import { Activity, AlertTriangle, Info, Star, User, Phone, Plus, Trash2 } from "lucide-react";
+import { Activity, AlertTriangle, Info, Star, User, Phone, Plus, Trash2, History } from "lucide-react";
 import type { Patient } from "../types";
 import { Card, SectionHeader } from "../components/shared";
 import { MED_PHOTOS, MED_FREQUENCY } from "../data/medications";
@@ -99,7 +99,7 @@ export function PatientScreen({ patient, onEditProfile, onAddPrescription, onDel
       {/* Current medications */}
       <div>
         <SectionHeader title="Current Medications" action="+ Add" onAction={onAddPrescription} />
-        <Card className="divide-y divide-border">
+        <Card className="divide-y divide-border" data-tour="cg-medlist">
           {groupedMedications.map((m) => (
             <div key={m.name} className="px-4 py-3 flex items-center gap-3">
               <div className="w-8 h-8 rounded-full overflow-hidden shrink-0 bg-muted">
@@ -139,6 +139,26 @@ export function PatientScreen({ patient, onEditProfile, onAddPrescription, onDel
           </button>
         </Card>
       </div>
+
+      {/* Past medications */}
+      {(patient.pastMedications?.length ?? 0) > 0 && (
+        <div>
+          <SectionHeader title="Past Medications" />
+          <Card className="divide-y divide-border">
+            {patient.pastMedications!.map(m => (
+              <div key={m.id} className="px-4 py-3 flex items-center gap-3">
+                <div className="w-8 h-8 rounded-full bg-muted flex items-center justify-center shrink-0">
+                  <History size={13} className="text-muted-foreground" />
+                </div>
+                <div className="flex-1 min-w-0">
+                  <p className="text-sm font-semibold text-muted-foreground">{m.name} <span className="text-xs font-normal">{m.dose}</span></p>
+                  <p className="text-[11px] text-muted-foreground/80">{m.purpose}</p>
+                </div>
+              </div>
+            ))}
+          </Card>
+        </div>
+      )}
 
       {/* Emergency contacts */}
       <div>

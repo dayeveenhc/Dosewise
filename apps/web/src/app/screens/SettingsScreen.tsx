@@ -1,9 +1,9 @@
 import { useState } from "react";
-import { ChevronRight, Lock, Shield, Edit3, RefreshCw, Plus, CheckCircle2 } from "lucide-react";
+import { ChevronRight, Lock, Shield, Edit3, RefreshCw, Plus, CheckCircle2, LogOut } from "lucide-react";
 import { Card, SectionHeader } from "../components/shared";
 import { Switch } from "../components/ui/switch";
 
-export function SettingsScreen({ onSwitchMode }: { onSwitchMode: () => void }) {
+export function SettingsScreen({ onSwitchMode, onSignOut }: { onSwitchMode: () => void; onSignOut: () => void }) {
   const [notifMissed, setNotifMissed] = useState(true);
   const [notifRefill, setNotifRefill] = useState(true);
   const [notifSummary, setNotifSummary] = useState(true);
@@ -29,7 +29,7 @@ export function SettingsScreen({ onSwitchMode }: { onSwitchMode: () => void }) {
       </div>
 
       {/* Notifications */}
-      <div>
+      <div data-tour="cg-settings">
         <SectionHeader title="Notifications" />
         <Card className="divide-y divide-border">
           {[
@@ -112,6 +112,10 @@ export function SettingsScreen({ onSwitchMode }: { onSwitchMode: () => void }) {
 
       <button onClick={onSwitchMode} className="w-full h-12 rounded-2xl border border-border text-muted-foreground text-sm font-medium flex items-center justify-center gap-2 active:scale-[0.98] transition-transform">
         <RefreshCw size={14} />Switch to Elderly Mode
+      </button>
+
+      <button onClick={onSignOut} className="w-full h-12 rounded-2xl border border-destructive/30 text-destructive text-sm font-medium flex items-center justify-center gap-2 active:scale-[0.98] transition-transform">
+        <LogOut size={14} />Sign out
       </button>
 
       <p className="text-center text-[11px] text-muted-foreground pb-4">DOSEWISE v1.0 · Made with care in Singapore</p>

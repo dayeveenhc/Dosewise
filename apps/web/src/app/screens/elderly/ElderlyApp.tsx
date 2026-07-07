@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { Droplets, Home, Pill, Brain, Bell, Settings } from "lucide-react";
+import { Droplets, Home, Pill, Brain, Bell, Settings, HelpCircle } from "lucide-react";
 import type { Patient, Medication, MedStatus, Message } from "../../types";
 import type { ElderlyTab, DoctorQ } from "./types";
 import { ElderlyHomeScreen } from "./ElderlyHomeScreen";
@@ -8,15 +8,57 @@ import { ElderlyAIScreen } from "./ElderlyAIScreen";
 import { ElderlyNotificationsScreen } from "./ElderlyNotificationsScreen";
 import { ElderlySettingsScreen } from "./ElderlySettingsScreen";
 import { AddPrescriptionSheet } from "../AddPrescriptionSheet";
+import { TravelModeSheet } from "../TravelModeSheet";
+import { GuidedTour } from "../../components/GuidedTour";
+import type { TourStep } from "../../components/GuidedTour";
+import { ConfirmDialog } from "../../components/ConfirmDialog";
+import { logDoseTaken, addMedication, to24h } from "../../lib/medications";
 
-export function ElderlyApp({ patient, onUpdatePatient, onBack }: {
+export function ElderlyApp({ patient, elderId, onUpdatePatient, onBack, onSignOut, startTour }: {
   patient: Patient;
+  elderId?: string;
   onUpdatePatient: (p: Patient) => void;
   onBack: () => void;
+  onSignOut: () => void;
+  startTour?: boolean;
 }) {
   const [tab, setTab] = useState<ElderlyTab>("home");
   const [pendingAIMessage, setPendingAIMessage] = useState<string | undefined>();
   const [addRx, setAddRx] = useState<null | "scan" | "manual">(null);
+  const [showTravel, setShowTravel] = useState(false);
+  const [showTour, setShowTour] = useState(!!startTour);
+  const [showTourConfirm, setShowTourConfirm] = useState(false);
+
+  const tourSteps: TourStep[] = [
+    {
+      target: '[data-tour="elder-schedule"]', navTarget: '[data-tour="nav-home"]', onEnter: () => setTab("home"),
+      title: "Your daily schedule", body: "Your medicines for the day appear here, at the time you take them. Tap a card to mark it as taken.",
+    },
+    {
+      target: '[data-tour="elder-medlist"]', navTarget: '[data-tour="nav-prescriptions"]', onEnter: () => setTab("prescriptions"),
+      title: "Your medications", body: "See every medicine you're taking, how to take it, and how much supply you have left.",
+    },
+    {
+      target: '[data-tour="elder-add-prescription"]', navTarget: '[data-tour="nav-prescriptions"]', onEnter: () => setTab("prescriptions"),
+      title: "Add a new prescription", body: "Tap here to add a medicine by typing it in, or snap a photo of the label.",
+    },
+    {
+      target: '[data-tour="elder-quickhelp"]', navTarget: '[data-tour="nav-ai"]', onEnter: () => setTab("ai"),
+      title: "Ask Mei", body: "Chat with Mei anytime — add a prescription by photo, ask about a medicine, or plan a trip with Travel Mode.",
+    },
+    {
+      target: '[data-tour="elder-profile-section"]', navTarget: '[data-tour="nav-settings"]', onEnter: () => setTab("settings"),
+      title: "Your profile", body: "Update your age, conditions, allergies, and more here anytime — this is what Mei uses to keep you safe.",
+    },
+    {
+      target: '[data-tour="elder-fontsize"]', navTarget: '[data-tour="nav-settings"]', onEnter: () => setTab("settings"),
+      title: "Make text easier to read", body: "Drag this to make text bigger or smaller, whatever's comfortable for you.",
+    },
+    {
+      target: '[data-tour="elder-language"]', navTarget: '[data-tour="nav-settings"]', onEnter: () => setTab("settings"),
+      title: "Language & voice", body: "Change the language Mei speaks and types in, and turn her spoken replies on or off.",
+    },
+  ];
 
   const openAI = (msg?: string) => {
     setPendingAIMessage(msg);
@@ -29,12 +71,23 @@ export function ElderlyApp({ patient, onUpdatePatient, onBack }: {
 
   const handleLogDose = (medId: number, takenAt?: string) => {
     const t = takenAt ?? new Date().toLocaleTimeString("en-SG", { hour: "2-digit", minute: "2-digit" });
-    onUpdatePatient({ ...patient, medications: patient.medications.map(m => m.id === medId ? { ...m, status: "taken" as MedStatus, takenAt: t } : m) });
+    onUpdatePatient({
+      ...patient,
+      medications: patient.medications.map(m => m.id === medId ? {
+        ...m, status: "taken" as MedStatus, takenAt: t,
+        refillDaysLeft: m.refillDaysLeft !== undefined ? Math.max(0, m.refillDaysLeft - 1) : undefined,
+      } : m),
+    });
+    const med = patient.medications.find(m => m.id === medId);
+    if (elderId && med?.medicationId) logDoseTaken(med.medicationId, elderId);
   };
 
-  const handleAddPrescription = (med: Omit<Medication, "id" | "status">) => {
+  const handleAddPrescription = async (med: Omit<Medication, "id" | "status">) => {
     const nextId = patient.medications.reduce((max, m) => Math.max(max, m.id), 0) + 1;
-    onUpdatePatient({ ...patient, medications: [...patient.medications, { ...med, id: nextId, status: "upcoming" as MedStatus }] });
+    const medicationId = elderId
+      ? await addMedication(elderId, { name: med.name, dosage: med.dose, purpose: med.purpose, timeHHMM: to24h(med.time), refillDays: med.refillDaysLeft })
+      : undefined;
+    onUpdatePatient({ ...patient, medications: [...patient.medications, { ...med, id: nextId, medicationId, status: "upcoming" as MedStatus }] });
   };
 
   const handleAddDoctorQ = (q: string) => {
@@ -50,7 +103,7 @@ export function ElderlyApp({ patient, onUpdatePatient, onBack }: {
 
   const NAV: { id: ElderlyTab; icon: any; label: string; fab?: boolean }[] = [
     { id: "home",          icon: Home,        label: "Home"     },
-    { id: "prescriptions", icon: Pill,        label: "Medicines" },
+    { id: "prescriptions", icon: Pill,        label: "Medications" },
     { id: "ai",            icon: Brain,       label: "Ask Mei",  fab: true },
     { id: "notifications", icon: Bell,        label: "Notifications" },
     { id: "settings",      icon: Settings,    label: "Settings" },
@@ -74,10 +127,13 @@ export function ElderlyApp({ patient, onUpdatePatient, onBack }: {
           <div>
             <p className="text-[10px] text-muted-foreground uppercase tracking-[0.2em] font-medium">DOSEWISE</p>
             <h1 className="font-['Fraunces'] text-lg font-semibold text-foreground leading-tight">
-              {tab === "home" ? "Home" : tab === "prescriptions" ? "My Medicines" : tab === "ai" ? "Ask Mei" : tab === "notifications" ? "Notifications" : "Settings"}
+              {tab === "home" ? `Hello, ${patient.nickname || patient.name.split(" ")[1]}!` : tab === "prescriptions" ? "My Medications" : tab === "ai" ? "Ask Mei" : tab === "notifications" ? "Notifications" : "Settings"}
             </h1>
           </div>
           <div className="flex items-center gap-2">
+            <button onClick={() => setShowTourConfirm(true)} className="w-8 h-8 rounded-full bg-card border border-border flex items-center justify-center">
+              <HelpCircle size={15} className="text-muted-foreground" />
+            </button>
             <img src={patient.photo} alt={patient.nickname} className="w-9 h-9 rounded-full object-cover border-2 border-primary/30" />
           </div>
         </div>
@@ -85,7 +141,7 @@ export function ElderlyApp({ patient, onUpdatePatient, onBack }: {
 
       {/* Screen content */}
       <div className="flex-1 overflow-hidden flex flex-col">
-        {tab === "home"          && <ElderlyHomeScreen         patient={patient} onLogDose={handleLogDose} />}
+        {tab === "home"          && <ElderlyHomeScreen         patient={patient} onLogDose={handleLogDose} onOpenTravel={() => setShowTravel(true)} />}
         {tab === "prescriptions" && <ElderlyPrescriptionScreen patient={patient} onOpenAI={openAI} onAddRx={() => setAddRx("manual")} />}
         {tab === "ai"            && (
           <ElderlyAIScreen
@@ -93,6 +149,7 @@ export function ElderlyApp({ patient, onUpdatePatient, onBack }: {
             onLogDose={handleLogDose}
             onNavigate={setTab}
             onAddRxPhoto={() => setAddRx("scan")}
+            onOpenTravel={() => setShowTravel(true)}
             doctorQuestions={doctorQuestions}
             onAddDoctorQ={handleAddDoctorQ}
             onMarkAnswered={(id: number) => setDoctorQuestions(p => p.map(q => q.id === id ? { ...q, answered: true } : q))}
@@ -101,7 +158,7 @@ export function ElderlyApp({ patient, onUpdatePatient, onBack }: {
           />
         )}
         {tab === "notifications" && <ElderlyNotificationsScreen careMessages={CARE_MSGS} />}
-        {tab === "settings"      && <ElderlySettingsScreen     patient={patient} onBack={onBack} />}
+        {tab === "settings"      && <ElderlySettingsScreen     patient={patient} elderId={elderId} onUpdatePatient={onUpdatePatient} onBack={onBack} onSignOut={onSignOut} />}
       </div>
 
       {/* Bottom nav */}
@@ -111,7 +168,7 @@ export function ElderlyApp({ patient, onUpdatePatient, onBack }: {
             if (item.fab) {
               return (
                 <div key={item.id} className="flex-1 flex flex-col items-center">
-                  <button onClick={() => setTab(item.id)} className={`relative w-14 h-14 rounded-full flex items-center justify-center -mt-7 shadow-lg active:scale-95 transition-transform bg-primary ${tab === item.id ? "ring-4 ring-primary/25" : ""}`}>
+                  <button onClick={() => setTab(item.id)} data-tour={`nav-${item.id}`} className={`relative w-14 h-14 rounded-full flex items-center justify-center -mt-7 shadow-lg active:scale-95 transition-transform bg-primary ${tab === item.id ? "ring-4 ring-primary/25" : ""}`}>
                     <Brain size={24} className="text-primary-foreground" />
                     {unasked > 0 && (
                       <div className="absolute -top-1 -right-0.5 w-4 h-4 bg-amber-500 rounded-full text-[9px] font-bold text-white flex items-center justify-center">{unasked}</div>
@@ -122,7 +179,7 @@ export function ElderlyApp({ patient, onUpdatePatient, onBack }: {
               );
             }
             return (
-              <button key={item.id} onClick={() => setTab(item.id)} className="flex-1 flex flex-col items-center gap-1 py-1">
+              <button key={item.id} onClick={() => setTab(item.id)} data-tour={`nav-${item.id}`} className="flex-1 flex flex-col items-center gap-1 py-1">
                 <div className={`w-10 h-7 rounded-2xl flex items-center justify-center transition-colors relative ${tab === item.id ? "bg-primary" : ""}`}>
                   <item.icon size={18} className={tab === item.id ? "text-primary-foreground" : "text-muted-foreground"} />
                 </div>
@@ -134,6 +191,24 @@ export function ElderlyApp({ patient, onUpdatePatient, onBack }: {
       </div>
 
       {addRx && <AddPrescriptionSheet initialTab={addRx} onClose={() => setAddRx(null)} onAdd={handleAddPrescription} />}
+      {showTravel && (
+        <TravelModeSheet
+          patient={patient}
+          elderId={elderId}
+          onClose={() => setShowTravel(false)}
+          onSaved={plan => onUpdatePatient({ ...patient, travelPlan: plan })}
+        />
+      )}
+      {showTour && <GuidedTour steps={tourSteps} onFinish={() => setShowTour(false)} />}
+      {showTourConfirm && (
+        <ConfirmDialog
+          title="Replay guided tour?"
+          body="We'll walk you through the main features again, starting from Home."
+          confirmLabel="Replay"
+          onConfirm={() => { setShowTourConfirm(false); setShowTour(true); }}
+          onCancel={() => setShowTourConfirm(false)}
+        />
+      )}
     </div>
   );
 }

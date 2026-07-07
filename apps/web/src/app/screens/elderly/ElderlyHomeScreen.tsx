@@ -1,5 +1,5 @@
 import { useState, useEffect, useRef, useMemo } from "react";
-import { RefreshCw, CheckCircle2, ChevronLeft, ChevronRight, Clock, AlertTriangle, Check, LocateFixed, X } from "lucide-react";
+import { RefreshCw, CheckCircle2, ChevronLeft, ChevronRight, Clock, AlertTriangle, Check, LocateFixed, X, Plane } from "lucide-react";
 import { useAccessibility } from "../../accessibility.tsx";
 import type { Patient, Medication, MedStatus } from "../../types";
 import { MED_PHOTOS, MED_SIMPLE, MED_SHAPES, MEAL_TIMES } from "../../data/medications";
@@ -18,7 +18,7 @@ const topFor = (minutes: number) => (Math.max(START_MIN, Math.min(END_MIN, minut
 
 // DEMO ONLY: pretend "now" is this clock time so missed/upcoming states are
 // visible regardless of the real clock. Set to null to use the real time.
-const DEMO_NOW: string | null = "3:00 PM";
+const DEMO_NOW: string | null = null;
 
 // Parse a "7:00 AM" clock string to minutes-since-midnight, or null if it isn't
 // a concrete clock time.
@@ -68,14 +68,16 @@ const input24hTo12h = (v: string) => {
   return minutesToClock(hh * 60 + mm);
 };
 
-export function ElderlyHomeScreen({ patient, onLogDose }: {
+export function ElderlyHomeScreen({ patient, onLogDose, onOpenTravel }: {
   patient: Patient;
   onLogDose: (id: number, takenAt?: string) => void;
+  onOpenTravel: () => void;
 }) {
   const { colourBlind } = useAccessibility();
   const [now, setNow] = useState(makeNow());
   const [selectedDay, setSelectedDay] = useState<Date>(new Date());
   const [confirmedId, setConfirmedId] = useState<number | null>(null);
+  const [toastVisible, setToastVisible] = useState(false);
   const [pendingDose, setPendingDose] = useState<Medication | null>(null);
   const [takenInput, setTakenInput] = useState("");
   const [showJump, setShowJump] = useState(false);
@@ -158,8 +160,10 @@ export function ElderlyHomeScreen({ patient, onLogDose }: {
     if (!pendingDose) return;
     onLogDose(pendingDose.id, input24hTo12h(takenInput));
     setConfirmedId(pendingDose.id);
+    setToastVisible(true);
     setPendingDose(null);
-    setTimeout(() => setConfirmedId(null), 2600);
+    setTimeout(() => setToastVisible(false), 1600); // start fade
+    setTimeout(() => setConfirmedId(null), 2100);   // unmount after the fade finishes
   };
 
   const changeDay = (delta: number) => {
@@ -168,8 +172,6 @@ export function ElderlyHomeScreen({ patient, onLogDose }: {
     setSelectedDay(d);
   };
 
-  const h = today.getHours();
-  const greeting = h < 12 ? "Good morning" : h < 17 ? "Good afternoon" : "Good evening";
   const hourTicks = Array.from({ length: END_HOUR - START_HOUR + 1 }, (_, i) => START_HOUR + i);
 
   // --- one medication card (keeps the original card design) ----------------
@@ -254,25 +256,27 @@ export function ElderlyHomeScreen({ patient, onLogDose }: {
     );
   };
 
+  const travelPlan = patient.travelPlan;
+  // Still show the banner through the last day of the trip, not just before it starts.
+  const travelActive = travelPlan && new Date(`${travelPlan.endDate}T23:59:59`) >= new Date();
+  const formatTravelDate = (d: string) => new Date(d).toLocaleDateString("en-SG", { day: "numeric", month: "short" });
+
   return (
     <div className="flex flex-col flex-1 overflow-hidden relative">
-      {/* Greeting + live time */}
-      <div className="px-4 pt-2 shrink-0 relative z-20 bg-background">
-        <div className="flex items-end justify-between">
-          <div className="min-w-0">
-            <p className="text-xs text-muted-foreground uppercase tracking-wide">{greeting}</p>
-            <h2 className="font-['Fraunces'] text-xl font-semibold text-foreground truncate">Hello, {patient.nickname}! 👋</h2>
-          </div>
-          <div className="shrink-0 ml-3 bg-card border border-border rounded-xl px-2.5 py-1.5 flex items-baseline gap-1">
-            <p className="text-[22px] font-bold text-foreground font-mono leading-none tracking-tight">
-              {now.toLocaleTimeString("en-SG", { hour: "numeric", minute: "2-digit", hour12: true }).split(" ")[0]}
-            </p>
-            <p className="text-[10px] font-semibold text-muted-foreground">
-              {now.toLocaleTimeString("en-SG", { hour: "numeric", minute: "2-digit", hour12: true }).split(" ")[1]?.toUpperCase()}
-            </p>
-          </div>
-        </div>
-      </div>
+      {/* Travel Mode indicator — display only; the schedule below still runs on
+          local time, it doesn't actually shift to the destination timezone. */}
+      {travelActive && travelPlan && (
+        <button
+          onClick={onOpenTravel}
+          className="mx-4 mt-2 shrink-0 flex flex-col items-center gap-0.5 bg-primary/10 border border-primary/20 rounded-xl px-3 py-2 text-center active:bg-primary/15 transition-colors"
+        >
+          <p className="flex items-center gap-1.5 text-xs font-semibold text-primary">
+            <Plane size={13} className="shrink-0" />
+            Travel Mode · {formatTravelDate(travelPlan.startDate)}–{formatTravelDate(travelPlan.endDate)}
+          </p>
+          <p className="text-[11px] text-primary/80">Times shown in {travelPlan.timezone}</p>
+        </button>
+      )}
 
       {/* Day navigation — single day with arrows (no week strip) */}
       <div className="px-4 pt-2.5 pb-2 shrink-0 relative z-20 bg-background">
@@ -315,12 +319,12 @@ export function ElderlyHomeScreen({ patient, onLogDose }: {
       )}
 
       {/* Timeline */}
-      <div ref={scrollRef} onScroll={onTimelineScroll} className="relative flex-1 overflow-y-auto scrollbar-none border-t border-border">
+      <div ref={scrollRef} data-tour="elder-schedule" onScroll={onTimelineScroll} className="relative flex-1 overflow-y-auto scrollbar-none border-t border-border">
         <div className="relative" style={{ height: TIMELINE_PX + TOP_PAD + BOTTOM_PAD }}>
           {/* hour grid */}
           {hourTicks.map(hr => (
             <div key={hr} className="absolute left-0 right-0 flex items-start" style={{ top: topFor(hr * 60) }}>
-              <span className="w-14 shrink-0 pl-3 -mt-2 text-[10px] font-semibold text-muted-foreground/70 font-mono">
+              <span className="w-14 shrink-0 pl-3 -mt-2 text-xs font-semibold text-muted-foreground/70 font-mono">
                 {minutesToClock(hr * 60).replace(":00", "")}
               </span>
               <div className="flex-1 h-px bg-border/50 mt-0.5" />
@@ -330,7 +334,7 @@ export function ElderlyHomeScreen({ patient, onLogDose }: {
           {/* now line (today only) */}
           {isSelectedToday && nowInWindow && (
             <div className="absolute left-0 right-0 z-20 flex items-center pointer-events-none" style={{ top: topFor(nowMinutes) }}>
-              <span className="ml-2 shrink-0 text-[9px] font-bold text-white bg-red-500 rounded-full px-1.5 py-0.5 leading-none">
+              <span className="ml-2 shrink-0 text-[11px] font-bold text-white bg-red-500 rounded-full px-2 py-0.5 leading-none">
                 {now.toLocaleTimeString("en-SG", { hour: "numeric", minute: "2-digit", hour12: true })}
               </span>
               <div className="flex-1 h-0.5 bg-red-500/80" />
@@ -345,7 +349,7 @@ export function ElderlyHomeScreen({ patient, onLogDose }: {
           ))}
 
           {slots.length === 0 && (
-            <div className="absolute left-14 right-3 top-8 text-center text-sm text-muted-foreground">No medicines scheduled.</div>
+            <div className="absolute left-14 right-3 top-8 text-center text-sm text-muted-foreground">No medications scheduled.</div>
           )}
         </div>
       </div>
@@ -361,13 +365,12 @@ export function ElderlyHomeScreen({ patient, onLogDose }: {
         </button>
       )}
 
-      {/* Confirmation toast */}
+      {/* Confirmation toast — centred, fades out rather than vanishing abruptly */}
       {confirmedId !== null && (
-        <div className="absolute top-3 left-4 right-4 z-40 bg-emerald-500 text-white rounded-2xl p-4 flex items-center gap-3 shadow-xl">
-          <CheckCircle2 size={22} />
-          <div>
+        <div className={`absolute inset-0 z-40 flex items-center justify-center pointer-events-none transition-opacity duration-500 ${toastVisible ? "opacity-100" : "opacity-0"}`}>
+          <div className="bg-emerald-500 text-white rounded-2xl px-6 py-5 flex items-center gap-3 shadow-xl">
+            <CheckCircle2 size={24} />
             <p className="font-semibold text-base">Recorded! Well done 🌟</p>
-            <p className="text-sm opacity-90">Your caregiver has been notified</p>
           </div>
         </div>
       )}
