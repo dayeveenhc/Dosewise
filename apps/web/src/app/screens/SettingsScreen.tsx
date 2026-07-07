@@ -1,13 +1,33 @@
 import { useState } from "react";
-import { ChevronRight, Lock, Shield, Edit3, RefreshCw, Plus, CheckCircle2, LogOut } from "lucide-react";
+import { ChevronRight, ChevronDown, Lock, Shield, Edit3, RefreshCw, Plus, CheckCircle2, LogOut } from "lucide-react";
 import { Card, SectionHeader } from "../components/shared";
 import { Switch } from "../components/ui/switch";
+import type { Patient } from "../types";
 
-export function SettingsScreen({ onSwitchMode, onSignOut }: { onSwitchMode: () => void; onSignOut: () => void }) {
+interface CaregiverProfile { fullName: string; age?: number; gender?: string; email?: string }
+
+export function SettingsScreen({ caregiverProfile, patients, onEditCaregiverProfile, onEditRecipient, onSwitchMode, onSignOut }: {
+  caregiverProfile: CaregiverProfile;
+  patients: Patient[];
+  onEditCaregiverProfile: () => void;
+  onEditRecipient: (index: number) => void;
+  onSwitchMode: () => void;
+  onSignOut: () => void;
+}) {
   const [notifMissed, setNotifMissed] = useState(true);
   const [notifRefill, setNotifRefill] = useState(true);
   const [notifSummary, setNotifSummary] = useState(true);
   const [notifRefillDays, setNotifRefillDays] = useState("7");
+  const [recipientsOpen, setRecipientsOpen] = useState(false);
+
+  const initials = caregiverProfile.fullName.trim()
+    ? caregiverProfile.fullName.trim().split(/\s+/).map(w => w[0]).slice(0, 2).join("").toUpperCase()
+    : "?";
+  const subtitle = [
+    "Primary Caregiver",
+    caregiverProfile.age ? `Age ${caregiverProfile.age}` : null,
+    caregiverProfile.email,
+  ].filter(Boolean).join(" · ");
 
   return (
     <div className="px-4 py-5 space-y-5">
@@ -16,15 +36,40 @@ export function SettingsScreen({ onSwitchMode, onSignOut }: { onSwitchMode: () =
         <SectionHeader title="Account" />
         <Card>
           <div className="flex items-center gap-3 px-4 py-4 border-b border-border">
-            <div className="w-12 h-12 rounded-2xl bg-primary flex items-center justify-center text-primary-foreground font-bold text-lg shrink-0">TW</div>
-            <div>
-              <p className="text-sm font-semibold text-foreground">Tan Wei Ming</p>
-              <p className="text-xs text-muted-foreground">Primary Caregiver · wm.tan@gmail.com</p>
+            <div className="w-12 h-12 rounded-2xl bg-primary flex items-center justify-center text-primary-foreground font-bold text-lg shrink-0">{initials}</div>
+            <div className="min-w-0">
+              <p className="text-sm font-semibold text-foreground truncate">{caregiverProfile.fullName || "You"}</p>
+              <p className="text-xs text-muted-foreground truncate">{subtitle}</p>
             </div>
           </div>
-          <button className="w-full flex items-center justify-between px-4 py-3 text-sm text-foreground font-medium">
+          <button onClick={onEditCaregiverProfile} className="w-full flex items-center justify-between px-4 py-3 text-sm text-foreground font-medium">
             Edit profile <ChevronRight size={14} className="text-muted-foreground" />
           </button>
+          <div className="border-t border-border">
+            <button
+              onClick={() => setRecipientsOpen(o => !o)}
+              className="w-full flex items-center justify-between px-4 py-3 text-sm text-foreground font-medium"
+            >
+              Care recipients ({patients.length})
+              <ChevronDown size={14} className={`text-muted-foreground transition-transform ${recipientsOpen ? "rotate-180" : ""}`} />
+            </button>
+            {recipientsOpen && (
+              <div className="divide-y divide-border border-t border-border">
+                {patients.map((p, i) => (
+                  <div key={p.id} className="flex items-center gap-3 px-4 py-3">
+                    <img src={p.photo} alt={p.name} className="w-9 h-9 rounded-full object-cover bg-muted shrink-0" />
+                    <div className="flex-1 min-w-0">
+                      <p className="text-sm font-semibold text-foreground truncate">{p.nickname}</p>
+                      <p className="text-xs text-muted-foreground truncate">{p.relation} · Age {p.age}</p>
+                    </div>
+                    <button onClick={() => onEditRecipient(i)} className="shrink-0 text-xs font-semibold text-primary flex items-center gap-1">
+                      Edit <ChevronRight size={12} />
+                    </button>
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
         </Card>
       </div>
 

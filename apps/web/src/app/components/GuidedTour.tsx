@@ -38,13 +38,20 @@ export function GuidedTour({ steps, onFinish }: { steps: TourStep[]; onFinish: (
         // coordinates that don't match where the element ends up on screen.
         targetEl.scrollIntoView({ block: "center" });
         const p = parent.getBoundingClientRect();
+        // getBoundingClientRect() measures the border box, but this overlay is
+        // absolutely positioned with inset-0, which CSS resolves against the
+        // padding box — off by the parent's border width otherwise (barely
+        // visible on a big card, glaring on a small icon target).
+        const parentStyle = getComputedStyle(parent);
+        const originTop = p.top + parseFloat(parentStyle.borderTopWidth || "0");
+        const originLeft = p.left + parseFloat(parentStyle.borderLeftWidth || "0");
         const t = targetEl.getBoundingClientRect();
-        setRect({ top: t.top - p.top, left: t.left - p.left, width: t.width, height: t.height });
+        setRect({ top: t.top - originTop, left: t.left - originLeft, width: t.width, height: t.height });
         setContainerHeight(p.height);
         const navEl = step.navTarget ? document.querySelector(step.navTarget) : null;
         if (navEl) {
           const n = navEl.getBoundingClientRect();
-          setNavRect({ top: n.top - p.top, left: n.left - p.left, width: n.width, height: n.height });
+          setNavRect({ top: n.top - originTop, left: n.left - originLeft, width: n.width, height: n.height });
         }
       } else if (attempts < 20) {
         attempts++;

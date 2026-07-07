@@ -1,6 +1,6 @@
 import { useState } from "react";
 import type { ReactNode } from "react";
-import { ArrowLeft, Loader2, Plus, X, Check, Coffee, Utensils, Moon, PartyPopper, Users, Camera, Sparkles } from "lucide-react";
+import { ArrowLeft, Loader2, Plus, X, Check, Coffee, Utensils, Moon, PartyPopper, Users, Camera, Sparkles, QrCode } from "lucide-react";
 import { supabase } from "../../lib/supabase";
 import { saveProfile } from "../../lib/profile";
 import { addMedication, archiveMedication, to24h } from "../../lib/medications";
@@ -275,7 +275,7 @@ export function GuidedSetupWizard({ mode, hasSession, elderId: initialElderId, o
   const role: Role = mode === "elderly" ? "elder" : "caregiver";
   const allSteps = mode === "elderly"
     ? ["account", "profile", "conditions", "allergies", "current-meds", "med-history", "routine", "done"]
-    : ["account", "placeholder"];
+    : ["account", "caregiver-profile", "qr-scan", "placeholder"];
   const steps = allSteps.filter(s => !(s === "account" && hasSessionAtStart));
   const step = steps[stepIndex];
   const total = steps.length;
@@ -321,7 +321,10 @@ export function GuidedSetupWizard({ mode, hasSession, elderId: initialElderId, o
         await archiveMedication(id);
       }
     } else {
-      await saveProfile(elderId, role, fullName, {});
+      await saveProfile(elderId, role, fullName, {
+        age: age ? Number(age) : undefined,
+        gender: gender || undefined,
+      });
     }
     setFinishing(false);
     onComplete();
@@ -482,6 +485,55 @@ export function GuidedSetupWizard({ mode, hasSession, elderId: initialElderId, o
         </>
       )}
 
+      {step === "caregiver-profile" && (
+        <>
+          <StepHeader title="Tell us about yourself" subtitle="Just the basics — you can update this anytime in Settings." />
+          <div className="space-y-3 flex-1">
+            <div className="flex gap-3">
+              <div className="flex-1">
+                <label className="block text-xs font-semibold text-foreground mb-1.5">Age</label>
+                <input type="number" value={age} onChange={e => setAge(e.target.value)} placeholder="e.g. 45" className={cls(isPositiveNumber(age))} />
+              </div>
+              <div className="flex-1">
+                <label className="block text-xs font-semibold text-foreground mb-1.5">Gender</label>
+                <div className="flex gap-2">
+                  {(["Female", "Male"] as const).map(g => (
+                    <button
+                      key={g}
+                      onClick={() => setGender(g)}
+                      className={`flex-1 py-3.5 rounded-xl border text-base font-semibold transition-colors ${gender === g ? "bg-primary text-primary-foreground border-primary" : "bg-input-background text-foreground border-border"}`}
+                    >
+                      {g}
+                    </button>
+                  ))}
+                </div>
+              </div>
+            </div>
+          </div>
+          <ContinueButton onClick={goNext}>Continue</ContinueButton>
+        </>
+      )}
+
+      {step === "qr-scan" && (
+        <>
+          <StepHeader title="Link the person you're caring for" subtitle="Scan the QR code from their Dosewise app to connect your accounts." />
+          <div className="flex-1 flex flex-col items-center justify-center">
+            <div className="relative w-56 h-56 rounded-3xl bg-muted flex items-center justify-center mb-5">
+              <div className="absolute top-3 left-3 w-8 h-8 border-t-[3px] border-l-[3px] border-primary rounded-tl-lg" />
+              <div className="absolute top-3 right-3 w-8 h-8 border-t-[3px] border-r-[3px] border-primary rounded-tr-lg" />
+              <div className="absolute bottom-3 left-3 w-8 h-8 border-b-[3px] border-l-[3px] border-primary rounded-bl-lg" />
+              <div className="absolute bottom-3 right-3 w-8 h-8 border-b-[3px] border-r-[3px] border-primary rounded-br-lg" />
+              <QrCode size={64} className="text-muted-foreground/50" />
+            </div>
+            <p className="text-sm text-muted-foreground text-center leading-relaxed max-w-[240px]">
+              Ask them to open Dosewise, go to Settings, and show their QR code — then point your camera at it.
+            </p>
+          </div>
+          <ContinueButton onClick={goNext}>Continue</ContinueButton>
+          <button onClick={goNext} className="w-full py-3 text-sm font-medium text-muted-foreground">Skip for now</button>
+        </>
+      )}
+
       {step === "placeholder" && (
         <>
           <div className="flex-1 flex flex-col items-center justify-center text-center">
@@ -489,7 +541,7 @@ export function GuidedSetupWizard({ mode, hasSession, elderId: initialElderId, o
               <Users size={28} className="text-primary" />
             </div>
             <h1 className="font-['Fraunces'] text-xl font-semibold text-foreground mb-2">You're set up!</h1>
-            <p className="text-sm text-muted-foreground leading-relaxed max-w-[260px]">Next, link the person you're caring for — that's coming soon. For now, take a look around.</p>
+            <p className="text-sm text-muted-foreground leading-relaxed max-w-[260px]">You can always link or manage the people you care for from Settings. For now, take a look around.</p>
           </div>
           <ContinueButton onClick={finish} loading={finishing}><Check size={16} />Go to Dosewise</ContinueButton>
         </>

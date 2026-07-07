@@ -1,13 +1,13 @@
 import { useEffect, useState } from "react";
 import type { Session } from "@supabase/supabase-js";
 import { Droplets, ArrowLeft, Bell, MessageSquare, HelpCircle } from "lucide-react";
-import type { AppMode, Screen, Patient, Medication } from "./types";
+import type { AppMode, Screen, Patient, Medication, MedStatus } from "./types";
 import { PATIENTS, NOTIFICATIONS } from "./data/patients";
 import { NAV_ITEMS } from "./nav";
 import { PatientSwitcher } from "./components/shared";
 import { supabase } from "./lib/supabase";
-import { ensureProfile, fetchElderMedications, fetchArchivedMedications, addMedication, archiveMedication, to24h } from "./lib/medications";
-import { fetchProfileRole, fetchProfile } from "./lib/profile";
+import { ensureProfile, fetchElderMedications, fetchArchivedMedications, addMedication, archiveMedication, logDoseTaken, to24h } from "./lib/medications";
+import { fetchProfileRole, fetchProfile, saveProfile } from "./lib/profile";
 import { WelcomeScreen } from "./screens/setup/WelcomeScreen";
 import { SetupMethodScreen } from "./screens/setup/SetupMethodScreen";
 import { GuidedSetupWizard } from "./screens/setup/GuidedSetupWizard";
@@ -22,6 +22,7 @@ import { MessagesScreen } from "./screens/MessagesScreen";
 import { SettingsScreen } from "./screens/SettingsScreen";
 import { AddPrescriptionSheet } from "./screens/AddPrescriptionSheet";
 import { EditProfileSheet } from "./screens/EditProfileSheet";
+import { EditCaregiverProfileSheet } from "./screens/EditCaregiverProfileSheet";
 import { ElderlyApp } from "./screens/elderly/ElderlyApp";
 import { AccessibilityProvider } from "./accessibility.tsx";
 import { GuidedTour } from "./components/GuidedTour";
@@ -43,8 +44,16 @@ export default function App() {
   const [screen, setScreen] = useState<Screen>("dashboard");
   const [selectedPatient, setSelectedPatient] = useState(0);
   const [patients, setPatients] = useState<Patient[]>(PATIENTS);
+  // Separate from `patients` (the caregiver's care-recipient list): this holds
+  // the logged-in elder's own self-view profile. Previewing "elderly" mode
+  // from a caregiver account used to overwrite patients[0] with the logged-in
+  // user's own name, which then leaked into the caregiver's recipient switcher
+  // after switching back — keeping it in its own state prevents that.
+  const [elderPatient, setElderPatient] = useState<Patient>(PATIENTS[0]);
   const [showAddPrescription, setShowAddPrescription] = useState(false);
   const [showEditProfile, setShowEditProfile] = useState(false);
+  const [showEditCaregiverProfile, setShowEditCaregiverProfile] = useState(false);
+  const [caregiverProfile, setCaregiverProfile] = useState<{ fullName: string; age?: number; gender?: string; email?: string }>({ fullName: "" });
   // Set true the moment the guided setup wizard finishes, so the app that
   // follows can auto-start the tour exactly once. Cleared shortly after so a
   // later mode-switch remount doesn't auto-start it again.
@@ -66,6 +75,10 @@ export default function App() {
       title: "Today's adherence", body: "See at a glance how many doses have been taken today, and jump to the full schedule.",
     },
     {
+      target: '[data-tour="cg-schedule"]', navTarget: '[data-tour="nav-timeline"]', onEnter: () => setScreen("timeline"),
+      title: "Log a dose", body: "Tap any medication to see its details — then log the dose yourself if you're the one giving it.",
+    },
+    {
       target: '[data-tour="cg-medlist"]', navTarget: '[data-tour="nav-patient"]', onEnter: () => setScreen("patient"),
       title: "Current medications", body: "Every medication you're managing, with refill status — add a new one anytime.",
     },
@@ -76,6 +89,10 @@ export default function App() {
     {
       target: '[data-tour="cg-settings"]', navTarget: '[data-tour="nav-settings"]', onEnter: () => setScreen("settings"),
       title: "Notifications", body: "Choose what you're alerted about — missed doses, low refills, and weekly summaries.",
+    },
+    {
+      target: '[data-tour="cg-messages"]', onEnter: () => setScreen("dashboard"),
+      title: "Care Team Notes", body: "Message everyone helping with care — family, helpers, doctors — all in one thread.",
     },
   ];
 
@@ -137,6 +154,22 @@ export default function App() {
     if (!elderId || appMode === "onboarding") return;
     (async () => {
       await ensureProfile(elderId);
+
+      // In caregiver mode, elderId is the caregiver's own auth id (no real
+      // linked care-recipient exists yet) — so the fetched profile row is the
+      // caregiver's own data and must NOT be merged into the patients list,
+      // which is what the PatientSwitcher displays as care recipients.
+      if (appMode === "caregiver") {
+        const profile = await fetchProfile(elderId);
+        setCaregiverProfile({
+          fullName: profile?.fullName || session?.user.email?.split("@")[0] || "You",
+          age: profile?.details.age,
+          gender: profile?.details.gender,
+          email: session?.user.email,
+        });
+        return;
+      }
+
       const [medications, profile, pastMedications] = await Promise.all([
         fetchElderMedications(elderId),
         fetchProfile(elderId),
@@ -148,26 +181,26 @@ export default function App() {
       // The wizard only ever collects one name field ("preferred name") — it IS
       // the nickname, not a formal name to be split down to its first word.
       const preferredName = profile?.fullName || displayName.split("@")[0];
-      setPatients(prev => [{
-        ...prev[0],
+      setElderPatient(prev => ({
+        ...prev,
         name: displayName,
         nickname: preferredName,
-        age: profile?.details.age ?? prev[0].age,
-        gender: profile?.details.gender ?? prev[0].gender,
-        weightKg: profile?.details.weightKg ?? prev[0].weightKg,
-        heightCm: profile?.details.heightCm ?? prev[0].heightCm,
-        mealTimes: profile?.details.mealTimes ?? prev[0].mealTimes,
-        sleepTime: profile?.details.sleepTime ?? prev[0].sleepTime,
-        travelPlan: profile?.details.travelPlan ?? prev[0].travelPlan,
-        conditions: profile?.details.conditions?.length ? profile.details.conditions : prev[0].conditions,
+        age: profile?.details.age ?? prev.age,
+        gender: profile?.details.gender ?? prev.gender,
+        weightKg: profile?.details.weightKg ?? prev.weightKg,
+        heightCm: profile?.details.heightCm ?? prev.heightCm,
+        mealTimes: profile?.details.mealTimes ?? prev.mealTimes,
+        sleepTime: profile?.details.sleepTime ?? prev.sleepTime,
+        travelPlan: profile?.details.travelPlan ?? prev.travelPlan,
+        conditions: profile?.details.conditions?.length ? profile.details.conditions : prev.conditions,
         allergies: profile?.details.allergies?.length || profile?.details.drugAllergies?.length
           ? [...(profile.details.allergies ?? []), ...(profile.details.drugAllergies ?? [])]
-          : prev[0].allergies,
+          : prev.allergies,
         medications,
         pastMedications,
         adherenceToday,
         adherenceWeek: adherenceToday, // no historical "missed" records exist to compute a real week figure
-      }, ...prev.slice(1)]);
+      }));
     })();
   }, [elderId, appMode]);
 
@@ -200,6 +233,29 @@ export default function App() {
 
   const handleUpdatePatient = (updated: Patient) => {
     setPatients(prev => prev.map((p, i) => i === selectedPatient ? updated : p));
+  };
+
+  const handleLogDose = (medId: number, takenAt?: string) => {
+    const t = takenAt ?? new Date().toLocaleTimeString("en-SG", { hour: "2-digit", minute: "2-digit" });
+    setPatients(prev => prev.map((p, i) => i !== selectedPatient ? p : {
+      ...p,
+      medications: p.medications.map(m => m.id === medId ? {
+        ...m, status: "taken" as MedStatus, takenAt: t,
+        refillDaysLeft: m.refillDaysLeft !== undefined ? Math.max(0, m.refillDaysLeft - 1) : undefined,
+      } : m),
+    }));
+    const med = patients[selectedPatient].medications.find(m => m.id === medId);
+    if (elderId && med?.medicationId) logDoseTaken(med.medicationId, elderId);
+  };
+
+  const handleEditRecipient = (index: number) => {
+    setSelectedPatient(index);
+    setShowEditProfile(true);
+  };
+
+  const handleSaveCaregiverProfile = async (updated: typeof caregiverProfile) => {
+    setCaregiverProfile(updated);
+    if (elderId) await saveProfile(elderId, "caregiver", updated.fullName, { age: updated.age, gender: updated.gender });
   };
 
   const unreadCount = NOTIFICATIONS.filter(n => !n.read).length;
@@ -257,9 +313,9 @@ export default function App() {
         <div className="w-[390px] h-[844px] bg-background relative overflow-hidden rounded-[3rem] shadow-2xl border-[6px] border-stone-800 flex flex-col">
           <AccessibilityProvider>
             <ElderlyApp
-              patient={patients[0]}
+              patient={elderPatient}
               elderId={elderId}
-              onUpdatePatient={(p) => setPatients(prev => [p, ...prev.slice(1)])}
+              onUpdatePatient={setElderPatient}
               onBack={openModeSwitch}
               onSignOut={() => supabase.auth.signOut()}
               startTour={justOnboarded}
@@ -307,7 +363,7 @@ export default function App() {
                 <button onClick={() => setShowCaregiverTourConfirm(true)} className="w-8 h-8 bg-card border border-border rounded-xl flex items-center justify-center">
                   <HelpCircle size={15} className="text-muted-foreground" />
                 </button>
-                <button onClick={() => setScreen("messages")} className="w-8 h-8 bg-card border border-border rounded-xl flex items-center justify-center">
+                <button onClick={() => setScreen("messages")} data-tour="cg-messages" className="w-8 h-8 bg-card border border-border rounded-xl flex items-center justify-center">
                   <MessageSquare size={15} className="text-accent" />
                 </button>
                 <button onClick={() => setScreen("notifications")} className="w-8 h-8 bg-card border border-border rounded-xl flex items-center justify-center relative">
@@ -320,7 +376,15 @@ export default function App() {
             </div>
           )}
           {showPatientSwitcher && (
-            <PatientSwitcher patients={patients} selected={selectedPatient} onSelect={setSelectedPatient} />
+            <div className="space-y-1.5">
+              <div className="flex items-center gap-2 px-1">
+                <div className="w-6 h-6 rounded-full bg-primary flex items-center justify-center text-primary-foreground text-[10px] font-bold shrink-0">
+                  {(caregiverProfile.fullName || "?").slice(0, 1).toUpperCase()}
+                </div>
+                <span className="text-xs font-semibold text-foreground truncate">{caregiverProfile.fullName || "You"}</span>
+              </div>
+              <PatientSwitcher patients={patients} selected={selectedPatient} onSelect={setSelectedPatient} />
+            </div>
           )}
         </div>
 
@@ -335,11 +399,20 @@ export default function App() {
               onDeleteMedication={handleDeleteMedication}
             />
           )}
-          {screen === "timeline" && <TimelineScreen patient={patient} />}
+          {screen === "timeline" && <TimelineScreen patient={patient} onLogDose={handleLogDose} />}
           {screen === "notifications" && <NotificationsScreen />}
           {screen === "ai" && <AskMeiScreen patient={patient} elderId={elderId} onUpdatePatient={handleUpdatePatient} />}
           {screen === "messages" && <MessagesScreen />}
-          {screen === "settings" && <SettingsScreen onSwitchMode={openModeSwitch} onSignOut={() => supabase.auth.signOut()} />}
+          {screen === "settings" && (
+            <SettingsScreen
+              caregiverProfile={caregiverProfile}
+              patients={patients}
+              onEditCaregiverProfile={() => setShowEditCaregiverProfile(true)}
+              onEditRecipient={handleEditRecipient}
+              onSwitchMode={openModeSwitch}
+              onSignOut={() => supabase.auth.signOut()}
+            />
+          )}
         </div>
 
         {/* Modals */}
@@ -354,6 +427,13 @@ export default function App() {
             patient={patient}
             onClose={() => setShowEditProfile(false)}
             onSave={handleUpdatePatient}
+          />
+        )}
+        {showEditCaregiverProfile && (
+          <EditCaregiverProfileSheet
+            profile={caregiverProfile}
+            onClose={() => setShowEditCaregiverProfile(false)}
+            onSave={handleSaveCaregiverProfile}
           />
         )}
         {showCaregiverTour && <GuidedTour steps={caregiverTourSteps} onFinish={() => setShowCaregiverTour(false)} />}
