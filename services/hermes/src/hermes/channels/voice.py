@@ -21,6 +21,57 @@ log = logging.getLogger("hermes.voice")
 
 _HF_BASE = "https://api-inference.huggingface.co/models"
 
+# HF TTS degrades badly past ~1000 chars, so long replies are spoken in sentence
+# chunks. Capped: past 3 clips the spoken version stops adding value over the text.
+TTS_CHAR_LIMIT = 1000
+MAX_TTS_CHUNKS = 3
+
+_SENTENCE_ENDS = ".!?。！？\n"
+
+
+def chunk_text(text: str, limit: int = TTS_CHAR_LIMIT) -> list[str]:
+    """Split ``text`` into <=limit chunks on sentence boundaries for TTS.
+
+    A single sentence longer than ``limit`` is hard-split. Pure — no I/O."""
+    text = (text or "").strip()
+    if not text:
+        return []
+    if len(text) <= limit:
+        return [text]
+
+    # Split into sentences (keeping their end punctuation), then pack greedily.
+    sentences: list[str] = []
+    start = 0
+    for i, ch in enumerate(text):
+        if ch in _SENTENCE_ENDS:
+            piece = text[start : i + 1].strip()
+            if piece:
+                sentences.append(piece)
+            start = i + 1
+    tail = text[start:].strip()
+    if tail:
+        sentences.append(tail)
+
+    chunks: list[str] = []
+    current = ""
+    for sentence in sentences:
+        while len(sentence) > limit:  # one overlong sentence: hard-split
+            if current:
+                chunks.append(current)
+                current = ""
+            chunks.append(sentence[:limit])
+            sentence = sentence[limit:].strip()
+        if not sentence:
+            continue
+        if current and len(current) + 1 + len(sentence) > limit:
+            chunks.append(current)
+            current = sentence
+        else:
+            current = f"{current} {sentence}".strip()
+    if current:
+        chunks.append(current)
+    return chunks
+
 
 def _extract_text(data) -> str | None:
     """Whisper returns {"text": "..."}; some models return a list of chunks."""

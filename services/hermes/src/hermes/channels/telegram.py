@@ -16,22 +16,30 @@ from zoneinfo import ZoneInfo
 import httpx
 from anthropic import AsyncAnthropic
 
-from ..agent.loop import run_agent_turn
+from ..agent.loop import (
+    hydrate_medical_profile,
+    persist_exchange,
+    record_exchange,
+    run_agent_turn,
+)
 from ..config import get_settings
 from ..db.supabase import Supabase
+from ..ratelimit import turn_tiers
 from ..tools import ToolContext, get_handler
 from .format import strip_markdown
 from .lang import DIALECT_ISO, detect_language, language_name, stt_plan, tts_model_for
 from .pdf import extract_pdf_text
 from .session import SEED_ELDERS, SessionRegistry
-from .voice import synthesize, transcribe
+from .voice import MAX_TTS_CHUNKS, chunk_text, synthesize, transcribe
 
 log = logging.getLogger("hermes.telegram")
 
 _HELP = (
     "Hi, I'm Dosewise — your medication helper. Just talk to me: ask about your "
     "medicines, tell me when you've taken one, or send a photo of a prescription.\n"
-    "Commands: /schedule (today's plan), /whoami, /switch a|b (test identities)."
+    "Commands: /schedule or /today (today's plan), /week (this week), "
+    "/voice on|off (spoken replies), /setup (set up or redo your profile), /help.\n"
+    "For testing: /whoami, /switch a|b."
 )
 
 # Yes/No tap-keyboard attached when the agent is awaiting a confirmation, so an
@@ -44,6 +52,25 @@ _CONFIRM_KEYBOARD = {
         ]
     ]
 }
+
+
+async def _within_rate_limit(rate_limiter, chat_id: int, telegram: TelegramClient) -> bool:
+    """Per-user cap on expensive agent turns, keyed by Telegram chat_id. On deny,
+    send a gentle slow-down message and return False so the caller skips the turn.
+    A ``None`` limiter (e.g. offline tests) means no limiting."""
+    settings = get_settings()
+    if not settings.rate_limit_enabled or rate_limiter is None:
+        return True
+    allowed, retry_after = rate_limiter.check(f"turn:{chat_id}", turn_tiers(settings))
+    if allowed:
+        return True
+    wait = int(retry_after) + 1
+    await telegram.send_message(
+        chat_id,
+        f"You're sending messages very quickly. Please wait about {wait} "
+        "seconds and try again. 🙏",
+    )
+    return False
 
 
 class TelegramClient:
@@ -109,6 +136,10 @@ class TelegramClient:
             params["secret_token"] = secret_token
         return await self._call("setWebhook", **params)
 
+    async def set_my_commands(self, commands: list[dict]) -> dict:
+        """Register the bot's command menu (the ☰ button next to the input field)."""
+        return await self._call("setMyCommands", commands=commands)
+
     async def download_file(self, file_id: str) -> bytes:
         info = await self._call("getFile", file_id=file_id)
         file_path = info["result"]["file_path"]
@@ -133,16 +164,31 @@ async def _deliver_reply(
     reply = strip_markdown(reply)
     markup = _CONFIRM_KEYBOARD if getattr(state, "awaiting_confirmation", False) else None
     await telegram.send_message(chat_id, reply or "…", reply_markup=markup)
-    # Speak the reply when the elder spoke OR when voice is their default (low
-    # digital literacy). Text always lands first, so a TTS failure is silent.
+    # Speak the reply when the elder spoke this turn OR opted into voice replies
+    # (/voice on, profile tts:true). Long replies go out in sentence chunks. Text
+    # always lands first; if voice was expected but nothing could be spoken, say so
+    # instead of failing silently.
     if reply and (spoke or getattr(state, "voice_default", False)):
+        sent_any = False
         try:
             model = tts_model_for(lang_iso, get_settings().hf_tts_model)
-            audio = await synthesize(reply, model=model)
-            if audio:
+            for chunk in chunk_text(reply)[:MAX_TTS_CHUNKS]:
+                audio = await synthesize(chunk, model=model)
+                if audio is None:
+                    break
                 await telegram.send_audio(chat_id, audio)
+                sent_any = True
         except Exception:
             log.warning("failed to send voice reply", exc_info=True)
+        if not sent_any:
+            try:
+                await telegram.send_message(
+                    chat_id,
+                    "🔇 I couldn't send a voice reply this time — everything is in "
+                    "the text above.",
+                )
+            except Exception:
+                log.warning("failed to send TTS-failure notice", exc_info=True)
 
 
 async def _send_schedule(
@@ -176,6 +222,44 @@ async def _send_schedule(
     await telegram.send_message(chat_id, strip_markdown(text), reply_markup=reply_markup)
 
 
+def _pending_commit_call(state) -> tuple[str, dict] | None:
+    """Map the session's pending proposal to the (tool_name, kwargs) that commits
+    it — the deterministic ✅-tap path, no LLM round-trip. Only the tool's declared
+    args are passed (e.g. the stashed prescription photo is NOT a parameter; the
+    commit path reads it from the matched proposal itself). Priority order matches
+    how unlikely a clash is: prescription, then reminder, then profile."""
+    p = getattr(state, "pending_proposal", None)
+    if p:
+        return "add_prescription", {
+            "name": p.get("name"), "dosage": p.get("dosage"), "purpose": p.get("purpose"),
+            "instructions": p.get("instructions"), "times": p.get("times"),
+            "confirmed": True,
+        }
+    p = getattr(state, "pending_reminder", None)
+    if p:
+        return "set_medication_reminder", {
+            "name": p.get("name"), "times": p.get("times"), "days": p.get("days"),
+            "confirmed": True,
+        }
+    p = getattr(state, "pending_profile", None)
+    if p:
+        return "update_medical_profile", {
+            "content": p.get("content"), "replace": bool(p.get("replace")),
+            "confirmed": True,
+        }
+    return None
+
+
+def _clear_pending(state) -> None:
+    """Drop every pending proposal (and any held photo) — the elder said no, or a
+    commit failed and must be re-proposed rather than half-retried."""
+    state.pending_proposal = None
+    state.pending_reminder = None
+    state.pending_profile = None
+    state.pending_image = None
+    state.awaiting_confirmation = False
+
+
 async def _handle_callback(
     callback: dict,
     *,
@@ -183,33 +267,80 @@ async def _handle_callback(
     supabase: Supabase,
     registry: SessionRegistry,
     telegram: TelegramClient,
+    rate_limiter=None,
 ) -> None:
     """Handle a tapped inline button (Telegram ``callback_query``).
 
     Two families of buttons:
-    * ``confirm:yes|no`` — a generic confirmation. We translate the tap into the
-      plain text the agent already understands ("yes"/"no") and re-enter the
-      normal turn, so the existing propose→confirm tool guards handle it unchanged.
+    * ``confirm:yes|no`` — a confirmation of a pending proposal. When the proposal
+      is still on the session, the tap commits (or discards) it deterministically —
+      no LLM round-trip, so a ✅ always saves exactly what was read back. Only when
+      the pending state is gone (e.g. the process restarted) does the tap fall back
+      to a normal agent turn with the plain text "yes"/"no".
     * ``dose:taken|later:<med_id>`` — a daily-reminder response. "Taken" logs the
       dose deterministically (no LLM turn); "Later" just acknowledges.
+
+    Telegram honors one answerCallbackQuery per tap, so each path acks exactly once
+    — before its real work, so the client spinner never hangs on a slow turn.
     """
     cq_id = callback.get("id")
     message = callback.get("message") or {}
     chat_id = (message.get("chat") or {}).get("id")
     data = callback.get("data") or ""
-    if cq_id is not None:
-        await telegram.answer_callback_query(cq_id)
     if chat_id is None:
+        if cq_id is not None:
+            await telegram.answer_callback_query(cq_id)
         return
     state = registry.get(chat_id)
 
     if data in ("confirm:yes", "confirm:no"):
         answer = "yes" if data == "confirm:yes" else "no"
-        lang_iso = DIALECT_ISO.get((state.dialect or "").lower())
-        await telegram.send_chat_action(chat_id)
+        lang_iso = state.last_lang_iso or DIALECT_ISO.get((state.dialect or "").lower())
         ctx = ToolContext(
             supabase=supabase, elder_id=state.elder_id, session=state, telegram=telegram
         )
+
+        call = _pending_commit_call(state)
+        if call is not None:
+            # Deterministic path — a cheap direct commit/discard, so it is exempt
+            # from the per-user cap (same rationale as dose:taken below).
+            if cq_id is not None:
+                await telegram.answer_callback_query(cq_id)
+            tools_used: list[str] = []
+            if data == "confirm:no":
+                _clear_pending(state)
+                reply = "Okay, I won't save that. Tell me what you'd like to change."
+            else:
+                tool_name, kwargs = call
+                try:
+                    reply = await get_handler(tool_name)(ctx, **kwargs)
+                    tools_used = [tool_name]
+                except Exception:
+                    log.exception("deterministic confirm failed (%s)", tool_name)
+                    _clear_pending(state)
+                    reply = (
+                        "I couldn't save that just now. Please tell me again in a "
+                        "message and I'll re-check it."
+                    )
+            # Keep the model's view of the conversation coherent: it never saw
+            # this turn, so record the tap and the outcome in history + memory.
+            state.messages = record_exchange(state.messages, answer, reply)
+            await persist_exchange(ctx, answer, reply, tools_used)
+            await _deliver_reply(telegram, chat_id, state, reply, spoke=False, lang_iso=lang_iso)
+            return
+
+        # Fallback (pending lost — e.g. process restart): re-enter the LLM turn, so
+        # it's subject to the per-user cap. A denied tap must still get feedback:
+        # ack with a visible toast (plus _within_rate_limit's chat message).
+        if not await _within_rate_limit(rate_limiter, chat_id, telegram):
+            if cq_id is not None:
+                await telegram.answer_callback_query(
+                    cq_id, text="One moment — please try again shortly."
+                )
+            return
+        if cq_id is not None:
+            await telegram.answer_callback_query(cq_id)
+        await telegram.send_chat_action(chat_id)
         try:
             reply, _tools, state.messages = await run_agent_turn(
                 anthropic, ctx, answer, history=state.messages,
@@ -223,6 +354,9 @@ async def _handle_callback(
             return
         await _deliver_reply(telegram, chat_id, state, reply, spoke=False, lang_iso=lang_iso)
         return
+
+    if cq_id is not None:
+        await telegram.answer_callback_query(cq_id)
 
     if data.startswith("dose:"):
         _, _, rest = data.partition(":")
@@ -265,13 +399,14 @@ async def handle_update(
     supabase: Supabase,
     registry: SessionRegistry,
     telegram: TelegramClient,
+    rate_limiter=None,
 ) -> None:
     # A tapped inline button arrives as ``callback_query`` (no top-level message).
     callback = update.get("callback_query")
     if callback:
         await _handle_callback(
             callback, anthropic=anthropic, supabase=supabase,
-            registry=registry, telegram=telegram,
+            registry=registry, telegram=telegram, rate_limiter=rate_limiter,
         )
         return
     message = update.get("message") or update.get("edited_message")
@@ -281,16 +416,91 @@ async def handle_update(
     text = (message.get("text") or message.get("caption") or "").strip()
 
     # Commands.
-    if text.startswith("/start") or text.startswith("/help"):
+    if text.startswith("/help"):
         await telegram.send_message(chat_id, _HELP)
+        return
+    if text.startswith("/start") or text.startswith("/setup"):
+        # First-time setup: /start opens the guided intake only when no medical
+        # profile is saved yet; /setup opens it unconditionally (redo/update).
+        state = registry.get(chat_id)
+        ctx = ToolContext(
+            supabase=supabase, elder_id=state.elder_id, session=state, telegram=telegram
+        )
+        if text.startswith("/setup"):
+            state.intake_active = True
+            kickoff = (
+                "[The patient asked to set up or redo their medical profile. Begin "
+                "the setup questions.]"
+            )
+        else:
+            await telegram.send_message(chat_id, _HELP)
+            profile = await hydrate_medical_profile(ctx)
+            if profile is not None:
+                return  # already set up — the help text is enough
+            kickoff = (
+                "[The patient has just started the bot for the first time. Greet "
+                "them warmly and begin the setup questions.]"
+            )
+        if not await _within_rate_limit(rate_limiter, chat_id, telegram):
+            return
+        lang_iso = state.last_lang_iso or DIALECT_ISO.get((state.dialect or "").lower())
+        await telegram.send_chat_action(chat_id)
+        try:
+            reply, _tools, state.messages = await run_agent_turn(
+                anthropic, ctx, kickoff, history=state.messages,
+                reply_language=language_name(lang_iso),
+            )
+        except Exception:
+            log.exception("agent turn failed (setup)")
+            await telegram.send_message(
+                chat_id, "Sorry, something went wrong. Let me get a person to help."
+            )
+            return
+        await _deliver_reply(telegram, chat_id, state, reply, spoke=False, lang_iso=lang_iso)
         return
     if text.startswith("/whoami"):
         state = registry.get(chat_id)
         await telegram.send_message(chat_id, f"Acting as elder: {state.elder_id}")
         return
-    if text.startswith("/schedule") or text.startswith("/today"):
+    if text.startswith("/voice"):
         state = registry.get(chat_id)
-        view = "week" if "week" in text.lower() else "today"
+        arg = text.split(maxsplit=1)[1].strip().lower() if " " in text else ""
+        if arg not in ("on", "off"):
+            await telegram.send_message(
+                chat_id, "Say /voice on for spoken replies, or /voice off for text only."
+            )
+            return
+        on = arg == "on"
+        # Persist to profiles.accessibility.tts (read-merge-write so the medical
+        # profile and other keys survive). Best-effort: the session flag flips
+        # regardless, so the change takes effect immediately either way.
+        try:
+            db = supabase.user_client(state.elder_id)
+            rows = await db.select(
+                "profiles", columns="accessibility",
+                filters={"id": f"eq.{state.elder_id}"}, limit=1,
+            )
+            access = dict((rows[0].get("accessibility") if rows else None) or {})
+            access["tts"] = on
+            await db.update(
+                "profiles", {"accessibility": access},
+                filters={"id": f"eq.{state.elder_id}"}, returning=False,
+            )
+        except Exception:
+            log.warning("failed to persist voice preference", exc_info=True)
+        state.voice_default = on
+        state.voice_loaded = True
+        await telegram.send_message(
+            chat_id,
+            "🔊 Voice replies are on. I'll speak every reply. Say /voice off to stop."
+            if on
+            else "🔇 Voice replies are off. I'll still speak back when you send me a "
+            "voice message. Say /voice on to change.",
+        )
+        return
+    if text.startswith(("/schedule", "/today", "/week")):
+        state = registry.get(chat_id)
+        view = "week" if (text.startswith("/week") or "week" in text.lower()) else "today"
         try:
             await _send_schedule(chat_id, state, supabase, telegram, view)
         except Exception:
@@ -298,12 +508,21 @@ async def handle_update(
             await telegram.send_message(chat_id, "I couldn't load your schedule just now.")
         return
     if text.startswith("/switch"):
+        # Impersonating a seed elder is a dev-only affordance; strict prod disables it.
+        if get_settings().hermes_strict_auth:
+            await telegram.send_message(chat_id, "Switching identities is disabled here.")
+            return
         code = text.split(maxsplit=1)[1].strip().lower() if " " in text else ""
         if code in SEED_ELDERS:
             registry.switch(chat_id, SEED_ELDERS[code])
             await telegram.send_message(chat_id, f"Now acting as elder {code.upper()}.")
         else:
             await telegram.send_message(chat_id, "Usage: /switch a  (or b)")
+        return
+
+    # Everything past here funnels into an agent turn (after optional STT/PDF/vision
+    # work), so apply the per-user cap now — before any expensive download/inference.
+    if not await _within_rate_limit(rate_limiter, chat_id, telegram):
         return
 
     state = registry.get(chat_id)
@@ -384,9 +603,14 @@ async def handle_update(
     if not text and image_bytes is None:
         return
 
-    # Detect the language the elder is using now (fastText); fall back to their
-    # stored dialect. This drives both the reply language and the TTS voice.
-    lang_iso = detect_language(text) or DIALECT_ISO.get((state.dialect or "").lower())
+    # Detect the language the elder is using now (fastText). Short/low-confidence
+    # texts return None — then the last confident detection keeps the conversation
+    # language steady, and the stored dialect is the final fallback. This drives
+    # both the reply language and the TTS voice.
+    detected = detect_language(text)
+    if detected:
+        state.last_lang_iso = detected
+    lang_iso = detected or state.last_lang_iso or DIALECT_ISO.get((state.dialect or "").lower())
     reply_language = language_name(lang_iso)
 
     await telegram.send_chat_action(chat_id)
@@ -418,6 +642,7 @@ async def poll_loop(
     supabase: Supabase,
     registry: SessionRegistry,
     telegram: TelegramClient,
+    rate_limiter=None,
 ) -> None:
     log.info("telegram long-poll loop started")
     offset: int | None = None
@@ -436,6 +661,7 @@ async def poll_loop(
                     supabase=supabase,
                     registry=registry,
                     telegram=telegram,
+                    rate_limiter=rate_limiter,
                 )
             except Exception:
                 log.exception("failed to handle update %s", update.get("update_id"))

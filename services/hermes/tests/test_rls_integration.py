@@ -70,3 +70,30 @@ async def test_elder_sees_own_medications(supabase):
     rows = await elder.select("medications", columns="elder_id,name")
     assert rows, "elder should see their own medications"
     assert all(r["elder_id"] == ELDER_A for r in rows)
+
+
+async def test_elder_cannot_read_other_elders_medications(supabase):
+    """Elder A explicitly querying Elder B's medications gets nothing (RLS)."""
+    elder = supabase.user_client(ELDER_A)
+    rows = await elder.select(
+        "medications", columns="id", filters={"elder_id": f"eq.{ELDER_B}"}
+    )
+    assert rows == [], "RLS breach: elder read another elder's medications"
+
+
+async def test_delete_is_denied_by_rls(supabase):
+    """The restrictive deny policies in migration 0004 mean an authenticated user
+    cannot DELETE even their own rows: the DELETE affects zero rows (empty result,
+    not an error), so the medication survives."""
+    elder = supabase.user_client(ELDER_A)
+    before = await elder.select("medications", columns="id", limit=1)
+    assert before, "seed should give Elder A at least one medication"
+    med_id = before[0]["id"]
+
+    deleted = await elder.delete("medications", filters={"id": f"eq.{med_id}"})
+    assert deleted == [], "RLS breach: DELETE removed a row it should not have"
+
+    still_there = await elder.select(
+        "medications", columns="id", filters={"id": f"eq.{med_id}"}
+    )
+    assert still_there, "RLS breach: the medication was deleted despite the deny policy"

@@ -12,6 +12,7 @@ from ..channels.session import SessionState
 from ..channels.telegram import handle_update
 from ..config import get_settings
 from ..db.auth import verify_jwt
+from ..ratelimit import turn_tiers
 from ..tools import ToolContext
 
 router = APIRouter()
@@ -45,8 +46,24 @@ async def agent_turn(body: AgentTurnRequest, request: Request) -> AgentTurnRespo
             elder_id = verify_jwt(body.jwt)["sub"]
         except Exception as exc:
             raise HTTPException(status_code=401, detail=f"invalid jwt: {exc}") from exc
+    elif settings.hermes_strict_auth:
+        # Strict prod posture: no verified JWT means no identity — refuse rather
+        # than mint a token for a caller-supplied elder_id (impersonation).
+        raise HTTPException(status_code=401, detail="jwt required")
     else:
         elder_id = body.elder_id or settings.dev_default_elder_id
+
+    # Per-user cap on expensive agent turns (the coarse per-IP ceiling is applied
+    # by the HTTP middleware in main.py).
+    limiter = getattr(app, "rate_limiter", None)
+    if settings.rate_limit_enabled and limiter is not None:
+        allowed, retry_after = limiter.check(f"turn:{elder_id}", turn_tiers(settings))
+        if not allowed:
+            raise HTTPException(
+                status_code=429,
+                detail="rate limit exceeded",
+                headers={"Retry-After": str(int(retry_after) + 1)},
+            )
 
     image_bytes = base64.b64decode(body.image_base64) if body.image_base64 else None
     # Reuse (or create) this elder's persistent session so pending_proposal and the
@@ -84,5 +101,6 @@ async def telegram_webhook(
         supabase=app.supabase,
         registry=app.registry,
         telegram=app.telegram,
+        rate_limiter=getattr(app, "rate_limiter", None),
     )
     return {"ok": True}

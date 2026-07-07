@@ -100,6 +100,8 @@ async def update_medical_profile(
         ctx.session.medical_profile_loaded = True
         ctx.session.pending_profile = None
         ctx.session.awaiting_confirmation = False
+        # A committed profile ends any guided-intake (/setup) re-run.
+        ctx.session.intake_active = False
     return "Saved to the patient's medical profile. I'll keep it in mind going forward."
 
 

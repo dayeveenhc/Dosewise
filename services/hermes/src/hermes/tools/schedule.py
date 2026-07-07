@@ -9,11 +9,11 @@ when N doses have been logged taken today.
 
 from __future__ import annotations
 
-from datetime import UTC, datetime
+from datetime import UTC, date, datetime, timedelta
 from zoneinfo import ZoneInfo
 
 from ..config import get_settings
-from ..dosing import WEEKDAYS, _parse_hhmm, scheduled_today, start_of_day_utc
+from ..dosing import WEEKDAYS, _parse_hhmm, scheduled_today, start_of_day_utc, start_of_week_utc
 from .base import ToolContext, register
 
 _SCHEMA = {
@@ -78,20 +78,57 @@ def render_today(meds: list[dict], taken_by_med: dict[str, int], now: datetime, 
     return title + "\n\n" + "\n".join(line for _, line in rows)
 
 
-def render_week(meds: list[dict]) -> str:
-    """A simple 7-day view: which medicines fall on each weekday (no live status)."""
+def render_week(
+    meds: list[dict],
+    taken: dict[tuple[str, date], int],
+    now: datetime,
+    tz: str,
+) -> str:
+    """The current week (Mon–Sun, real dates) with a live status per dose slot.
+
+    ``taken`` maps (medication_id, local date) -> doses logged taken that day. The
+    same earliest-N approximation as ``render_today`` marks which slots were taken;
+    past slots without a logged dose show ❌ missed. Pure — no DB, for easy testing.
+    """
+    zone = ZoneInfo(tz)
+    local_now = now.astimezone(zone)
+    local_today = local_now.date()
+    monday = local_today - timedelta(days=local_today.weekday())
+
     lines = ["This week:"]
-    for token in WEEKDAYS:
-        names: list[str] = []
+    for offset in range(7):
+        day = monday + timedelta(days=offset)
+        heading = f"{_DAY_TITLE[WEEKDAYS[day.weekday()]]} {day.strftime('%d %b')}"
+        if day == local_today:
+            heading += " (today)"
+        lines.append(f"\n{heading}:")
+        rows: list[str] = []
         for med in meds:
             schedule = med.get("schedule") or {}
-            days = schedule.get("days") or []
-            if not days or token in {str(d).strip().lower()[:3] for d in days}:
-                times = ", ".join(sorted(schedule.get("times") or [])) or "as directed"
-                names.append(f"{med.get('name')} ({times})")
-        day = _DAY_TITLE[token]
-        lines.append(f"\n{day}:")
-        lines.extend(f"  💊 {n}" for n in names) if names else lines.append("  —")
+            if not scheduled_today(schedule, day):
+                continue
+            label = med.get("name") or "your medicine"
+            if med.get("dosage"):
+                label += f" {med['dosage']}"
+            times = sorted(t for t in (schedule.get("times") or []) if _parse_hhmm(t))
+            if not times:
+                rows.append(f"  💊 {label} (as directed)")
+                continue
+            taken_left = taken.get((med.get("id"), day), 0)
+            slots: list[str] = []
+            for hhmm in times:
+                if taken_left > 0:
+                    status = "✅ taken"
+                    taken_left -= 1
+                elif day < local_today:
+                    status = "❌ missed"
+                elif day == local_today and _parse_hhmm(hhmm) <= local_now.time():
+                    status = "⏳ due now"
+                else:
+                    status = "🕗 upcoming"
+                slots.append(f"{hhmm} {status}")
+            rows.append(f"  💊 {label} — {', '.join(slots)}")
+        lines.extend(rows) if rows else lines.append("  —")
     return "\n".join(lines)
 
 
@@ -110,6 +147,31 @@ async def _taken_counts_today(ctx: ToolContext, now: datetime, tz: str) -> dict[
     return counts
 
 
+async def _taken_counts_week(
+    ctx: ToolContext, now: datetime, tz: str
+) -> dict[tuple[str, date], int]:
+    """Doses logged taken this week, per (medication_id, local date) (RLS-scoped)."""
+    zone = ZoneInfo(tz)
+    rows = await ctx.db().select(
+        "doses",
+        columns="medication_id,scheduled_at",
+        filters={"status": "eq.taken", "scheduled_at": f"gte.{start_of_week_utc(now, tz)}"},
+    )
+    counts: dict[tuple[str, date], int] = {}
+    for r in rows:
+        mid = r.get("medication_id")
+        try:
+            when = datetime.fromisoformat(str(r.get("scheduled_at")))
+        except ValueError:
+            continue
+        if when.tzinfo is None:  # naive timestamps are stored UTC
+            when = when.replace(tzinfo=UTC)
+        if mid:
+            key = (mid, when.astimezone(zone).date())
+            counts[key] = counts.get(key, 0) + 1
+    return counts
+
+
 async def show_schedule(ctx: ToolContext, view: str = "today") -> str:
     tz = get_settings().hermes_tz
     now = datetime.now(UTC)
@@ -121,7 +183,8 @@ async def show_schedule(ctx: ToolContext, view: str = "today") -> str:
     if not meds:
         return "No medications are on file yet."
     if view == "week":
-        return render_week(meds)
+        taken_week = await _taken_counts_week(ctx, now, tz)
+        return render_week(meds, taken_week, now, tz)
     taken = await _taken_counts_today(ctx, now, tz)
     return render_today(meds, taken, now, tz)
 

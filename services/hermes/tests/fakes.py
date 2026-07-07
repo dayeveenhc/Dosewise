@@ -78,6 +78,7 @@ class FakeTelegram:
         self.sent: list[tuple[int, str]] = []
         self.markups: list[dict | None] = []
         self.answered: list[str] = []
+        self.ack_texts: list[str | None] = []  # parallel to answered
         self.audio_sent: list[tuple[int, bytes]] = []
         self.downloads: list[str] = []
         self.audio = b"fake-audio-bytes"
@@ -88,6 +89,7 @@ class FakeTelegram:
 
     async def answer_callback_query(self, callback_query_id, text=None):
         self.answered.append(callback_query_id)
+        self.ack_texts.append(text)
 
     async def send_audio(self, chat_id, audio, *, filename="reply.wav", mime="audio/wav"):
         self.audio_sent.append((chat_id, audio))

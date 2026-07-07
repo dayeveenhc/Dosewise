@@ -9,7 +9,7 @@ from uuid import uuid4
 
 from ..dosing import WEEKDAYS
 from .base import ToolContext, register
-from .drug_info import interaction_text
+from .drug_info import interaction_text, label_mentions
 
 log = logging.getLogger("hermes.tools.medications")
 
@@ -189,10 +189,10 @@ async def _interaction_warning(ctx: ToolContext, new_name: str) -> str:
         existing.discard("")
         if not existing:
             return ""
-        text = (await interaction_text(ctx, new_name)).lower()
+        text = await interaction_text(ctx, new_name)
         if not text:
             return ""
-        hits = sorted(n for n in existing if n.lower() in text)
+        hits = sorted(n for n in existing if label_mentions(text, n))
         if not hits:
             return ""
         return (

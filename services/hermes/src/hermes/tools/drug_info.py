@@ -29,6 +29,36 @@ _BRAND_ALIASES = {
     "glucophage": "metformin",
 }
 
+# Reverse map so a generic also matches its known brands in label text.
+_GENERIC_TO_BRANDS: dict[str, list[str]] = {}
+for _brand, _generic in _BRAND_ALIASES.items():
+    _GENERIC_TO_BRANDS.setdefault(_generic, []).append(_brand)
+
+
+def name_forms(name: str) -> set[str]:
+    """All lowercase forms of a drug name worth matching in label text: the name
+    itself, its US generic (brand→generic alias), and known brands of that generic.
+
+    Substring-based by design — a multiword generic (e.g. "amoxicillin and
+    clavulanate") matches only as the full phrase."""
+    key = (name or "").strip().lower()
+    if not key:
+        return set()
+    forms = {key}
+    generic = _BRAND_ALIASES.get(key)
+    if generic:
+        forms.add(generic)
+        forms.update(_GENERIC_TO_BRANDS.get(generic, []))
+    forms.update(_GENERIC_TO_BRANDS.get(key, []))  # the name IS a generic
+    return forms
+
+
+def label_mentions(label_text: str, name: str) -> bool:
+    """Whether label text mentions a drug under any of its known name forms —
+    catches "Panadol vs acetaminophen" cases a raw substring check misses."""
+    text = (label_text or "").lower()
+    return bool(text) and any(form in text for form in name_forms(name))
+
 _SCHEMA = {
     "name": "get_drug_info",
     "description": (

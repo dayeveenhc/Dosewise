@@ -139,3 +139,33 @@ async def test_synthesize_returns_audio_bytes(monkeypatch):
     monkeypatch.setattr(voice.httpx, "AsyncClient", _Client)
     out = await voice.synthesize("take your metformin")
     assert out == b"OGGaudio"
+
+
+# --- chunk_text (TTS chunking) ----------------------------------------------
+def test_chunk_text_short_text_is_one_chunk():
+    assert voice.chunk_text("Take your metformin.") == ["Take your metformin."]
+    assert voice.chunk_text("") == []
+    assert voice.chunk_text("   ") == []
+
+
+def test_chunk_text_splits_on_sentence_boundaries():
+    text = "First sentence here. Second sentence follows! Third one asks?"
+    chunks = voice.chunk_text(text, limit=25)
+    assert chunks == ["First sentence here.", "Second sentence follows!", "Third one asks?"]
+
+
+def test_chunk_text_packs_sentences_up_to_limit():
+    text = "One. Two. Three."
+    assert voice.chunk_text(text, limit=10) == ["One. Two.", "Three."]
+
+
+def test_chunk_text_hard_splits_an_overlong_sentence():
+    text = "a" * 25
+    chunks = voice.chunk_text(text, limit=10)
+    assert chunks == ["a" * 10, "a" * 10, "a" * 5]
+    assert all(len(c) <= 10 for c in chunks)
+
+
+def test_chunk_text_handles_cjk_punctuation():
+    text = "吃药了吗。记得吃饭！"
+    assert voice.chunk_text(text, limit=6) == ["吃药了吗。", "记得吃饭！"]

@@ -74,7 +74,19 @@ Hermes acts **as the user**. For the test harness it mints a short-lived Supabas
 JWT (`sub` = the mapped elder) signed with `SUPABASE_JWT_SECRET`, then calls
 PostgREST with it — so every existing RLS policy applies unchanged
 (`src/hermes/db/auth.py`, `db/supabase.py`). The service-role key is used **only**
-for `drug_cache` writes.
+for `drug_cache` writes, cron reads, and pill-photo uploads — pinned by
+`tests/test_service_client_guard.py`. Migration `0004_rls_hardening.sql` adds
+restrictive DELETE / reference-write denials so RLS can't be silently re-opened.
+
+**Production posture:** set `HERMES_STRICT_AUTH=1`. Then `/agent/turn` requires a
+verified Supabase JWT (the dev `elder_id` fallback is rejected) and Telegram's
+`/switch` identity-impersonation is disabled. Leave it unset for the local /
+Telegram / CLI demo.
+
+**Rate limiting** (in-process; `src/hermes/ratelimit.py`) is on by default:
+per-user caps on agent turns (`RATE_LIMIT_TURNS_PER_MINUTE` / `_PER_HOUR`, keyed by
+`elder_id` / Telegram `chat_id`) plus a coarse per-IP ceiling on the POST endpoints
+(`RATE_LIMIT_HTTP_PER_MINUTE`). Disable with `RATE_LIMIT_ENABLED=0`.
 
 ## Layout
 

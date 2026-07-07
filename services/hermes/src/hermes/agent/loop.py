@@ -65,12 +65,19 @@ async def run_agent_turn(
     await _elder_voice_pref(ctx)
     recent_memory = await _recent_memory(ctx, history)
     medical_profile = await _medical_profile(ctx)
+    # First-time setup: no saved profile (or an explicit /setup re-run) puts the
+    # turn in guided-intake mode. Ends naturally — the first profile commit
+    # refreshes the session cache and clears intake_active.
+    onboarding = medical_profile is None or bool(
+        getattr(ctx.session, "intake_active", False)
+    )
     system = system_prompt_for(
         dialect,
         slang=slang,
         reply_language=reply_language,
         recent_memory=recent_memory,
         medical_profile=medical_profile,
+        onboarding=onboarding,
     )
 
     eff = llm.effective_provider()
@@ -89,6 +96,41 @@ async def run_agent_turn(
 
     await _persist(ctx, user_text, reply, tools_used)
     return reply, tools_used, messages
+
+
+def record_exchange(history: list | None, user_text: str, reply: str) -> list:
+    """Append a plain user/assistant exchange to a provider-native history.
+
+    Used when a channel resolves a turn without the model (e.g. a deterministic
+    button-tap confirmation), so the threaded history still shows the elder's
+    answer and what happened — otherwise the model would re-ask on the next turn.
+    """
+    messages = list(history or [])
+    if llm.effective_provider() == "gemini":
+        try:
+            from google.genai import types
+
+            messages.append(
+                types.Content(role="user", parts=[types.Part.from_text(text=user_text)])
+            )
+            messages.append(
+                types.Content(role="model", parts=[types.Part.from_text(text=reply)])
+            )
+        except Exception:
+            # No SDK available: skip the in-process append; cross-restart memory
+            # still lands via persist_exchange -> conversation_turns.
+            log.warning("could not record exchange in gemini history", exc_info=True)
+    else:  # anthropic + openai both accept plain string-content dicts
+        messages.append({"role": "user", "content": user_text})
+        messages.append({"role": "assistant", "content": reply})
+    return messages
+
+
+async def persist_exchange(
+    ctx: ToolContext, user_text: str, reply: str, tools_used: list[str]
+) -> None:
+    """Best-effort conversation_turns write for a turn resolved outside the loop."""
+    await _persist(ctx, user_text, reply, tools_used)
 
 
 # ---------------------------------------------------------------------------
@@ -456,15 +498,16 @@ async def _elder_dialect(ctx: ToolContext) -> str | None:
 
 
 async def _elder_voice_pref(ctx: ToolContext) -> bool:
-    """Best-effort: whether the elder wants spoken replies (profiles.accessibility.tts),
-    fetched once and cached on the session. Defaults to True — seniors get voice by
-    default; only a profile that opts out (``tts: false``) turns it off."""
+    """Best-effort: whether the elder wants spoken replies for typed messages too
+    (profiles.accessibility.tts), fetched once and cached on the session. Defaults
+    to False — voice mirrors the user (a voice note is always spoken back); only an
+    explicit opt-in (``tts: true``, via the profile or /voice on) speaks every reply."""
     session = ctx.session
     if session is None:
-        return True
+        return False
     if getattr(session, "voice_loaded", False):
         return session.voice_default
-    pref = True
+    pref = False
     try:
         rows = await ctx.db().select(
             "profiles",
@@ -473,10 +516,10 @@ async def _elder_voice_pref(ctx: ToolContext) -> bool:
             limit=1,
         )
         access = (rows[0].get("accessibility") if rows else None) or {}
-        pref = bool(access.get("tts", True))
+        pref = bool(access.get("tts", False))
     except Exception:
         log.warning("failed to load elder voice preference", exc_info=True)
-        pref = True
+        pref = False
     session.voice_default = pref
     session.voice_loaded = True
     return pref
@@ -545,6 +588,11 @@ async def _medical_profile(ctx: ToolContext) -> str | None:
         session.medical_profile = text
         session.medical_profile_loaded = True
     return text
+
+
+# Public alias: channels use this to check for an empty profile (e.g. /start
+# deciding whether to open the guided intake) without a second query path.
+hydrate_medical_profile = _medical_profile
 
 
 async def _elder_slang(ctx: ToolContext, dialect: str | None) -> list:

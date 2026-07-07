@@ -7,6 +7,14 @@ Two client flavours:
 * ``service_client()`` — uses the service-role key (bypasses RLS). Used **only**
   for reference-table writes (``drug_cache``) and signed-URL generation, never on
   the interactive read path.
+
+Because the service role bypasses RLS, its use is deliberately confined. The ONLY
+sanctioned call sites (enforced by tests/test_service_client_guard.py) are:
+  * ``tools/drug_info.py``      — drug_cache write-through (reference table).
+  * ``channels/scheduler.py``   — identity-less cron reads across all elders.
+  * ``upload_object`` in ``tools/medications.py`` — pill-photo Storage upload.
+Adding a new service-role call site is a security decision: update that guard test
+on purpose, don't route interactive elder data through it.
 """
 
 from __future__ import annotations
@@ -75,6 +83,21 @@ class SupabaseClient:
         headers["Prefer"] = "return=representation" if returning else "return=minimal"
         resp = await self._http.patch(
             f"/rest/v1/{table}", params=filters, json=patch, headers=headers
+        )
+        _raise_for_status(resp)
+        return resp.json() if returning else []
+
+    async def delete(
+        self, table: str, *, filters: dict[str, str], returning: bool = True
+    ) -> list[dict[str, Any]]:
+        """DELETE rows matching ``filters``. Under RLS this only removes rows the
+        caller may delete — with the restrictive deny policies in migration 0004,
+        that is *none* for an authenticated user (returns an empty list, not an
+        error). Used by the RLS regression test."""
+        headers = dict(self._headers)
+        headers["Prefer"] = "return=representation" if returning else "return=minimal"
+        resp = await self._http.delete(
+            f"/rest/v1/{table}", params=filters, headers=headers
         )
         _raise_for_status(resp)
         return resp.json() if returning else []

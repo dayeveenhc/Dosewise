@@ -88,22 +88,36 @@ def _load_lid():
     return _lid_model
 
 
+# Guards against fastText's known weakness on tiny inputs: skip texts that are too
+# short to classify, and reject low-confidence guesses instead of letting an "ok" /
+# "ya" flip the conversation language. The char floor is deliberately low so short
+# CJK messages (e.g. 吃药了吗) still detect — the confidence gate does the real work
+# for short Latin fragments.
+MIN_DETECT_CHARS = 4
+MIN_CONFIDENCE = 0.65
+
+
 def detect_language(text: str | None) -> str | None:
     """Detect the ISO 639-3 language of ``text`` with fastText, or ``None``.
 
-    fastText labels look like ``__label__eng_Latn``; we return the ``eng`` part.
+    Returns ``None`` (caller falls back to the session's last detection or the
+    stored dialect) when the text is too short or the top guess is below
+    ``MIN_CONFIDENCE``. fastText labels look like ``__label__eng_Latn``; we return
+    the ``eng`` part.
     """
     cleaned = (text or "").strip().replace("\n", " ")
-    if not cleaned:
+    if len(cleaned.replace(" ", "")) < MIN_DETECT_CHARS:
         return None
     model = _load_lid()
     if model is None:
         return None
     try:
-        labels, _probs = model.predict(cleaned, k=1)
+        labels, probs = model.predict(cleaned, k=1)
     except Exception:
         return None
     if not labels:
+        return None
+    if probs is not None and len(probs) and float(probs[0]) < MIN_CONFIDENCE:
         return None
     code = labels[0].replace("__label__", "").split("_")[0]
     return code or None

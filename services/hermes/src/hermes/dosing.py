@@ -98,3 +98,12 @@ def start_of_day_utc(now: datetime, tz: str) -> str:
     zone = ZoneInfo(tz)
     local_midnight = datetime.combine(now.astimezone(zone).date(), time(0, 0), tzinfo=zone)
     return local_midnight.astimezone(UTC).isoformat()
+
+
+def start_of_week_utc(now: datetime, tz: str) -> str:
+    """ISO UTC timestamp for local Monday 00:00 of ``now``'s week — for the week view."""
+    zone = ZoneInfo(tz)
+    local_today = now.astimezone(zone).date()
+    monday = local_today.fromordinal(local_today.toordinal() - local_today.weekday())
+    local_midnight = datetime.combine(monday, time(0, 0), tzinfo=zone)
+    return local_midnight.astimezone(UTC).isoformat()

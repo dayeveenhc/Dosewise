@@ -33,3 +33,73 @@ async def test_loader_reads_and_caches_profile():
     # Second call is served from cache (no exception even if DB is emptied).
     session.medical_profile = "Has COPD."
     assert await _medical_profile(ctx) == "Has COPD."
+
+
+# --- Guided first-time intake (onboarding) ----------------------------------
+def test_system_prompt_includes_intake_block_when_onboarding():
+    out = system_prompt_for(onboarding=True)
+    assert "FIRST-TIME SETUP" in out
+    assert "update_medical_profile" in out
+
+
+def test_system_prompt_omits_intake_block_by_default():
+    assert "FIRST-TIME SETUP" not in system_prompt_for()
+    assert "FIRST-TIME SETUP" not in system_prompt_for(medical_profile="Has COPD.")
+
+
+async def test_empty_profile_puts_agent_turn_in_intake_mode(monkeypatch):
+    from fakes import FakeAnthropic, response, text_block, use_anthropic
+    from hermes.agent.loop import run_agent_turn
+
+    use_anthropic(monkeypatch)
+    db = FakeDB({"profiles": [{"id": ELDER_A, "accessibility": {}}],
+                 "conversation_turns": []})
+    session = SessionState(elder_id=ELDER_A)
+    ctx = ToolContext(supabase=FakeSupabase(db=db), elder_id=ELDER_A, session=session)
+    anthropic = FakeAnthropic([response("end_turn", [text_block("Welcome!")])])
+
+    await run_agent_turn(anthropic, ctx, "hello")
+    system_text = "".join(b["text"] for b in anthropic.messages.calls[0]["system"])
+    assert "FIRST-TIME SETUP" in system_text
+
+
+async def test_populated_profile_skips_intake_mode(monkeypatch):
+    from fakes import FakeAnthropic, response, text_block, use_anthropic
+    from hermes.agent.loop import run_agent_turn
+
+    use_anthropic(monkeypatch)
+    db = FakeDB({"profiles": [{"id": ELDER_A,
+                               "accessibility": {"medical_profile": "Has COPD."}}],
+                 "conversation_turns": []})
+    session = SessionState(elder_id=ELDER_A)
+    ctx = ToolContext(supabase=FakeSupabase(db=db), elder_id=ELDER_A, session=session)
+    anthropic = FakeAnthropic([response("end_turn", [text_block("Hi!")])])
+
+    await run_agent_turn(anthropic, ctx, "hello")
+    system_text = "".join(b["text"] for b in anthropic.messages.calls[0]["system"])
+    assert "FIRST-TIME SETUP" not in system_text
+    assert "Has COPD." in system_text
+
+
+async def test_intake_active_forces_intake_mode_and_commit_clears_it(monkeypatch):
+    from fakes import FakeAnthropic, response, text_block, use_anthropic
+    from hermes.agent.loop import run_agent_turn
+    from hermes.tools.profile import update_medical_profile
+
+    use_anthropic(monkeypatch)
+    db = FakeDB({"profiles": [{"id": ELDER_A,
+                               "accessibility": {"medical_profile": "Has COPD."}}],
+                 "conversation_turns": []})
+    session = SessionState(elder_id=ELDER_A)
+    session.intake_active = True  # /setup re-run despite an existing profile
+    ctx = ToolContext(supabase=FakeSupabase(db=db), elder_id=ELDER_A, session=session)
+    anthropic = FakeAnthropic([response("end_turn", [text_block("Let's redo it.")])])
+
+    await run_agent_turn(anthropic, ctx, "redo my profile")
+    system_text = "".join(b["text"] for b in anthropic.messages.calls[0]["system"])
+    assert "FIRST-TIME SETUP" in system_text
+
+    # Committing a profile update ends the re-run.
+    await update_medical_profile(ctx, content="Allergic to aspirin.", confirmed=False)
+    await update_medical_profile(ctx, content="Allergic to aspirin.", confirmed=True)
+    assert session.intake_active is False

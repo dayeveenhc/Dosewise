@@ -13,6 +13,8 @@ from fakes import (
     use_anthropic,
 )
 from hermes.channels.session import SessionRegistry
+from hermes.config import get_settings
+from hermes.ratelimit import SlidingWindowLimiter, turn_tiers
 
 ELDER_A = "00000000-0000-0000-0000-00000000000a"
 
@@ -196,7 +198,8 @@ async def test_reply_gets_yes_no_keyboard_when_awaiting_confirmation(monkeypatch
     assert tg.markups[-1] == telegram._CONFIRM_KEYBOARD  # Yes/No keyboard attached
 
 
-async def test_confirm_yes_callback_runs_turn_and_delivers_reply(monkeypatch):
+async def test_confirm_yes_without_pending_falls_back_to_llm_turn(monkeypatch):
+    """Pending state lost (e.g. restart) -> the tap re-enters a normal agent turn."""
     seen: dict = {}
 
     async def fake_run_agent_turn(
@@ -220,6 +223,406 @@ async def test_confirm_yes_callback_runs_turn_and_delivers_reply(monkeypatch):
     assert tg.answered == ["cq1"]           # spinner stopped
     assert tg.sent[-1] == (111, "Saved it.")
     assert tg.markups[-1] is None           # no longer awaiting -> no keyboard
+
+
+def _no_llm(monkeypatch):
+    """Fail the test if the deterministic path ever re-enters the LLM."""
+    async def boom(*a, **k):
+        raise AssertionError("run_agent_turn must not be called on the deterministic path")
+    monkeypatch.setattr(telegram, "run_agent_turn", boom)
+
+
+def _confirm_update(data="confirm:yes", cq="cq1", chat=111):
+    return {"callback_query": {"id": cq, "data": data, "message": {"chat": {"id": chat}}}}
+
+
+async def test_confirm_yes_commits_pending_prescription_without_llm(monkeypatch):
+    use_anthropic(monkeypatch)
+    _no_llm(monkeypatch)
+    db = FakeDB({"medications": [], "conversation_turns": []})
+    registry = SessionRegistry(ELDER_A)
+    state = registry.get(111)
+    state.pending_proposal = {"name": "Metformin", "dosage": "500mg", "purpose": None,
+                              "instructions": None, "times": ["08:00"], "image": None}
+    state.awaiting_confirmation = True
+    tg = FakeTelegram()
+
+    await telegram.handle_update(
+        _confirm_update(), anthropic=None, supabase=FakeSupabase(db=db),
+        registry=registry, telegram=tg,
+    )
+    saved = [row for table, row in db.inserted if table == "medications"]
+    assert saved and saved[0]["name"] == "Metformin"     # committed deterministically
+    assert state.pending_proposal is None
+    assert state.awaiting_confirmation is False
+    assert tg.markups[-1] is None                        # keyboard dropped
+    assert "Metformin" in tg.sent[-1][1]
+    # The model's history + memory reflect the tap it never saw.
+    assert state.messages[-2:] == [{"role": "user", "content": "yes"},
+                                   {"role": "assistant", "content": tg.sent[-1][1]}]
+    assert any(t == "conversation_turns" for t, _ in db.inserted)
+
+
+async def test_confirm_yes_commits_pending_reminder_without_llm(monkeypatch):
+    use_anthropic(monkeypatch)
+    _no_llm(monkeypatch)
+    med_id = "00000000-0000-0000-0000-0000000000d1"
+    db = FakeDB({"medications": [{"id": med_id, "name": "Metformin", "archived": False,
+                                  "schedule": {"times": ["09:00"]}}],
+                 "conversation_turns": []})
+    registry = SessionRegistry(ELDER_A)
+    state = registry.get(111)
+    state.pending_reminder = {"name": "Metformin", "times": ["08:00", "20:00"], "days": []}
+    state.awaiting_confirmation = True
+    tg = FakeTelegram()
+
+    await telegram.handle_update(
+        _confirm_update(), anthropic=None, supabase=FakeSupabase(db=db),
+        registry=registry, telegram=tg,
+    )
+    updates = [(t, patch) for t, patch, _ in db.updated if t == "medications"]
+    assert updates and updates[0][1]["schedule"]["times"] == ["08:00", "20:00"]
+    assert state.pending_reminder is None
+    assert state.awaiting_confirmation is False
+
+
+async def test_confirm_yes_commits_pending_profile_without_llm(monkeypatch):
+    use_anthropic(monkeypatch)
+    _no_llm(monkeypatch)
+    db = FakeDB({"profiles": [{"id": ELDER_A, "accessibility": {}}],
+                 "conversation_turns": []})
+    registry = SessionRegistry(ELDER_A)
+    state = registry.get(111)
+    state.pending_profile = {"content": "Allergic to penicillin.", "replace": False}
+    state.awaiting_confirmation = True
+    tg = FakeTelegram()
+
+    await telegram.handle_update(
+        _confirm_update(), anthropic=None, supabase=FakeSupabase(db=db),
+        registry=registry, telegram=tg,
+    )
+    updates = [(t, patch) for t, patch, _ in db.updated if t == "profiles"]
+    saved = updates[0][1]["accessibility"]["medical_profile"] if updates else None
+    assert saved == "Allergic to penicillin."
+    assert state.pending_profile is None
+    assert state.awaiting_confirmation is False
+
+
+async def test_confirm_no_clears_pending_and_writes_nothing(monkeypatch):
+    use_anthropic(monkeypatch)
+    _no_llm(monkeypatch)
+    db = FakeDB({"medications": [], "conversation_turns": []})
+    registry = SessionRegistry(ELDER_A)
+    state = registry.get(111)
+    state.pending_proposal = {"name": "Metformin", "image": b"PHOTO"}
+    state.pending_image = b"PHOTO"
+    state.awaiting_confirmation = True
+    tg = FakeTelegram()
+
+    await telegram.handle_update(
+        _confirm_update("confirm:no"), anthropic=None, supabase=FakeSupabase(db=db),
+        registry=registry, telegram=tg,
+    )
+    assert not [r for t, r in db.inserted if t == "medications"]  # nothing saved
+    assert state.pending_proposal is None
+    assert state.pending_image is None            # stale scan can't attach later
+    assert state.awaiting_confirmation is False
+    assert "won't save" in tg.sent[-1][1]
+
+
+async def test_rate_limited_confirm_with_pending_still_commits(monkeypatch):
+    """Deterministic confirms don't burn an LLM turn, so the cap doesn't apply."""
+    use_anthropic(monkeypatch)
+    _no_llm(monkeypatch)
+    s = get_settings()
+    monkeypatch.setattr(s, "rate_limit_turns_per_minute", 1, raising=False)
+    limiter = SlidingWindowLimiter()
+    limiter.check("turn:111", turn_tiers(s))  # burn the single slot
+
+    db = FakeDB({"medications": [], "conversation_turns": []})
+    registry = SessionRegistry(ELDER_A)
+    state = registry.get(111)
+    state.pending_proposal = {"name": "Metformin"}
+    state.awaiting_confirmation = True
+    tg = FakeTelegram()
+
+    await telegram.handle_update(
+        _confirm_update(), anthropic=None, supabase=FakeSupabase(db=db),
+        registry=registry, telegram=tg, rate_limiter=limiter,
+    )
+    assert [r for t, r in db.inserted if t == "medications"]  # still committed
+
+
+async def test_rate_limited_confirm_without_pending_gets_visible_ack(monkeypatch):
+    s = get_settings()
+    monkeypatch.setattr(s, "rate_limit_turns_per_minute", 1, raising=False)
+    captured = _capture_turn(monkeypatch)
+    limiter = SlidingWindowLimiter()
+    limiter.check("turn:111", turn_tiers(s))  # burn the single slot
+
+    registry = SessionRegistry(ELDER_A)
+    tg = FakeTelegram()
+
+    await telegram.handle_update(
+        _confirm_update(), anthropic=None, supabase=FakeSupabase(),
+        registry=registry, telegram=tg, rate_limiter=limiter,
+    )
+    assert captured == {}                          # no LLM turn ran
+    assert tg.answered == ["cq1"]
+    assert tg.ack_texts[-1]                        # visible toast, not a silent swallow
+    assert "wait" in tg.sent[-1][1].lower()        # plus the chat slow-down message
+
+
+async def test_deterministic_commit_failure_apologises_and_clears(monkeypatch):
+    use_anthropic(monkeypatch)
+    _no_llm(monkeypatch)
+
+    class ExplodingDB(FakeDB):
+        async def insert(self, table, row, returning=True):
+            if table == "medications":
+                raise RuntimeError("db down")
+            return await super().insert(table, row, returning=returning)
+
+    db = ExplodingDB({"medications": [], "conversation_turns": []})
+    registry = SessionRegistry(ELDER_A)
+    state = registry.get(111)
+    state.pending_proposal = {"name": "Metformin"}
+    state.awaiting_confirmation = True
+    tg = FakeTelegram()
+
+    await telegram.handle_update(
+        _confirm_update(), anthropic=None, supabase=FakeSupabase(db=db),
+        registry=registry, telegram=tg,
+    )
+    assert "couldn't save" in tg.sent[-1][1]
+    assert state.pending_proposal is None          # must re-propose, not half-retry
+    assert state.awaiting_confirmation is False
+
+
+# --- Rate limiting ---------------------------------------------------------
+async def test_over_rate_limit_skips_turn_and_warns(monkeypatch):
+    s = get_settings()
+    monkeypatch.setattr(s, "rate_limit_turns_per_minute", 1, raising=False)
+    captured = _capture_turn(monkeypatch)  # stubs run_agent_turn
+    registry = SessionRegistry(ELDER_A)
+    tg = FakeTelegram()
+    limiter = SlidingWindowLimiter()
+    update = {"message": {"chat": {"id": 111}, "text": "what are my meds?"}}
+    kwargs = dict(
+        anthropic=FakeAnthropic([response("end_turn", [text_block("x")])]),
+        supabase=FakeSupabase(), registry=registry, telegram=tg, rate_limiter=limiter,
+    )
+
+    await telegram.handle_update(update, **kwargs)   # first turn runs
+    assert captured.get("text") == "what are my meds?"
+
+    captured.clear()
+    await telegram.handle_update(update, **kwargs)   # second is over the cap
+    assert captured == {}                            # run_agent_turn NOT called
+    assert "wait" in tg.sent[-1][1].lower()          # gentle slow-down message
+
+
+async def test_no_limiter_means_no_limiting(monkeypatch):
+    s = get_settings()
+    monkeypatch.setattr(s, "rate_limit_turns_per_minute", 1, raising=False)
+    captured = _capture_turn(monkeypatch)
+    registry = SessionRegistry(ELDER_A)
+    tg = FakeTelegram()
+    update = {"message": {"chat": {"id": 111}, "text": "hi"}}
+    kwargs = dict(
+        anthropic=FakeAnthropic([response("end_turn", [text_block("x")])]),
+        supabase=FakeSupabase(), registry=registry, telegram=tg,  # rate_limiter=None
+    )
+    await telegram.handle_update(update, **kwargs)
+    captured.clear()
+    await telegram.handle_update(update, **kwargs)
+    assert captured.get("text") == "hi"  # second turn still ran (limiting disabled)
+
+
+# --- First-time setup (/start, /setup) --------------------------------------
+async def test_start_with_empty_profile_opens_guided_intake(monkeypatch):
+    captured = _capture_turn(monkeypatch)
+    db = FakeDB({"profiles": [{"id": ELDER_A, "accessibility": {}}]})
+    registry = SessionRegistry(ELDER_A)
+    tg = FakeTelegram()
+
+    await telegram.handle_update(
+        {"message": {"chat": {"id": 111}, "text": "/start"}},
+        anthropic=None, supabase=FakeSupabase(db=db), registry=registry, telegram=tg,
+    )
+    assert tg.sent[0][1] == telegram._HELP        # welcome first
+    assert "started the bot" in captured["text"]  # then the intake kickoff turn
+
+
+async def test_start_with_populated_profile_shows_help_only(monkeypatch):
+    captured = _capture_turn(monkeypatch)
+    db = FakeDB({"profiles": [{"id": ELDER_A,
+                               "accessibility": {"medical_profile": "Has COPD."}}]})
+    registry = SessionRegistry(ELDER_A)
+    tg = FakeTelegram()
+
+    await telegram.handle_update(
+        {"message": {"chat": {"id": 111}, "text": "/start"}},
+        anthropic=None, supabase=FakeSupabase(db=db), registry=registry, telegram=tg,
+    )
+    assert tg.sent == [(111, telegram._HELP)]
+    assert captured == {}  # no agent turn
+
+
+async def test_setup_reruns_intake_even_with_profile(monkeypatch):
+    captured = _capture_turn(monkeypatch)
+    db = FakeDB({"profiles": [{"id": ELDER_A,
+                               "accessibility": {"medical_profile": "Has COPD."}}]})
+    registry = SessionRegistry(ELDER_A)
+    tg = FakeTelegram()
+
+    await telegram.handle_update(
+        {"message": {"chat": {"id": 111}, "text": "/setup"}},
+        anthropic=None, supabase=FakeSupabase(db=db), registry=registry, telegram=tg,
+    )
+    assert registry.get(111).intake_active is True
+    assert "set up or redo" in captured["text"]
+
+
+# --- Schedule commands -------------------------------------------------------
+async def test_week_command_renders_week_view(monkeypatch):
+    med_id = "00000000-0000-0000-0000-0000000000d1"
+    db = FakeDB({
+        "medications": [{"id": med_id, "name": "Metformin", "archived": False,
+                         "schedule": {"times": ["08:00"]}}],
+        "doses": [],
+    })
+    registry = SessionRegistry(ELDER_A)
+    tg = FakeTelegram()
+
+    await telegram.handle_update(
+        {"message": {"chat": {"id": 111}, "text": "/week"}},
+        anthropic=None, supabase=FakeSupabase(db=db), registry=registry, telegram=tg,
+    )
+    assert "This week:" in tg.sent[-1][1]
+    assert tg.markups[-1] is None  # week view carries no Took-it buttons
+
+
+# --- Language stickiness + voice policy (mirror the user) -------------------
+async def test_short_message_keeps_last_detected_language(monkeypatch):
+    """A follow-up too short to detect must not flip the conversation language."""
+    use_anthropic(monkeypatch)
+    detections = iter(["zlm", None])  # confident Malay, then an undetectable "ya"
+    monkeypatch.setattr(telegram, "detect_language", lambda text: next(detections))
+
+    db = FakeDB({"profiles": [{"id": ELDER_A, "dialect": "en"}], "conversation_turns": []})
+    registry = SessionRegistry(ELDER_A)
+    tg = FakeTelegram()
+    anthropic = FakeAnthropic([response("end_turn", [text_block("Baik!")])])
+    kwargs = dict(anthropic=anthropic, supabase=FakeSupabase(db=db),
+                  registry=registry, telegram=tg)
+
+    await telegram.handle_update(
+        {"message": {"chat": {"id": 111}, "text": "apa khabar semua"}}, **kwargs)
+    assert registry.get(111).last_lang_iso == "zlm"
+
+    await telegram.handle_update(
+        {"message": {"chat": {"id": 111}, "text": "ya"}}, **kwargs)
+    # Second turn still speaks Malay to the model.
+    system_text = "".join(b["text"] for b in anthropic.messages.calls[-1]["system"])
+    assert "Malay" in system_text
+
+
+async def test_typed_message_with_tts_opt_in_gets_audio(monkeypatch):
+    use_anthropic(monkeypatch)
+    monkeypatch.setattr(telegram, "detect_language", lambda text: "eng")
+
+    async def fake_synthesize(text, *, model=None):
+        return b"WAVDATA"
+
+    monkeypatch.setattr(telegram, "synthesize", fake_synthesize)
+    db = FakeDB({"profiles": [{"id": ELDER_A, "dialect": "en",
+                               "accessibility": {"tts": True}}],
+                 "conversation_turns": []})
+    registry = SessionRegistry(ELDER_A)
+    tg = FakeTelegram()
+    anthropic = FakeAnthropic([response("end_turn", [text_block("Sure!")])])
+
+    await telegram.handle_update(
+        {"message": {"chat": {"id": 111}, "text": "what are my meds?"}},
+        anthropic=anthropic, supabase=FakeSupabase(db=db), registry=registry, telegram=tg,
+    )
+    assert tg.audio_sent == [(111, b"WAVDATA")]  # opted in -> spoken even when typed
+
+
+async def test_voice_command_toggles_and_persists(monkeypatch):
+    db = FakeDB({"profiles": [{"id": ELDER_A, "accessibility": {"medical_profile": "x"}}]})
+    registry = SessionRegistry(ELDER_A)
+    tg = FakeTelegram()
+    kwargs = dict(anthropic=None, supabase=FakeSupabase(db=db),
+                  registry=registry, telegram=tg)
+
+    await telegram.handle_update(
+        {"message": {"chat": {"id": 111}, "text": "/voice on"}}, **kwargs)
+    state = registry.get(111)
+    assert state.voice_default is True and state.voice_loaded is True
+    table, patch, _ = db.updated[-1]
+    assert table == "profiles" and patch["accessibility"]["tts"] is True
+    assert patch["accessibility"]["medical_profile"] == "x"  # merged, not clobbered
+    assert "on" in tg.sent[-1][1].lower()
+
+    await telegram.handle_update(
+        {"message": {"chat": {"id": 111}, "text": "/voice off"}}, **kwargs)
+    assert state.voice_default is False
+    assert db.updated[-1][1]["accessibility"]["tts"] is False
+
+    await telegram.handle_update(
+        {"message": {"chat": {"id": 111}, "text": "/voice"}}, **kwargs)
+    assert "/voice on" in tg.sent[-1][1]  # bare command -> usage line
+
+
+async def test_spoken_turn_with_failed_tts_sends_notice(monkeypatch):
+    use_anthropic(monkeypatch)
+
+    async def fake_transcribe(audio, **_):
+        return "what are my meds"
+
+    async def failing_synthesize(text, *, model=None):
+        return None  # TTS down
+
+    monkeypatch.setattr(telegram, "transcribe", fake_transcribe)
+    monkeypatch.setattr(telegram, "synthesize", failing_synthesize)
+    monkeypatch.setattr(telegram, "detect_language", lambda text: "eng")
+    registry = SessionRegistry(ELDER_A)
+    tg = FakeTelegram()
+    anthropic = FakeAnthropic([response("end_turn", [text_block("Here they are.")])])
+
+    await telegram.handle_update(
+        {"message": {"chat": {"id": 111}, "voice": {"file_id": "v1"}}},
+        anthropic=anthropic, supabase=FakeSupabase(), registry=registry, telegram=tg,
+    )
+    assert tg.audio_sent == []
+    assert "voice reply" in tg.sent[-1][1]  # honest notice, not silence
+
+
+async def test_long_reply_is_spoken_in_chunks(monkeypatch):
+    use_anthropic(monkeypatch)
+
+    async def fake_transcribe(audio, **_):
+        return "tell me everything"
+
+    async def fake_synthesize(text, *, model=None):
+        return text.encode()  # echo the chunk so we can count
+
+    monkeypatch.setattr(telegram, "transcribe", fake_transcribe)
+    monkeypatch.setattr(telegram, "synthesize", fake_synthesize)
+    monkeypatch.setattr(telegram, "detect_language", lambda text: "eng")
+    long_reply = "This is one sentence. " * 100  # ~2200 chars -> 3 chunks
+    registry = SessionRegistry(ELDER_A)
+    tg = FakeTelegram()
+    anthropic = FakeAnthropic([response("end_turn", [text_block(long_reply)])])
+
+    await telegram.handle_update(
+        {"message": {"chat": {"id": 111}, "voice": {"file_id": "v1"}}},
+        anthropic=anthropic, supabase=FakeSupabase(), registry=registry, telegram=tg,
+    )
+    assert len(tg.audio_sent) == 3
+    assert all(len(audio) <= 1000 for _, audio in tg.audio_sent)
 
 
 async def test_dose_taken_callback_logs_the_dose():

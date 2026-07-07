@@ -30,6 +30,9 @@ class SessionState:
     # the agent loop can tailor its language without a per-turn DB read.
     dialect: str | None = None
     dialect_loaded: bool = False
+    # The last confidently-detected input language (ISO 639-3), kept so a short
+    # tap or "yes" that can't be detected doesn't flip the conversation language.
+    last_lang_iso: str | None = None
     # The elder's dialect slang glossary (from MongoDB), fetched once and cached.
     slang: list | None = None
     slang_loaded: bool = False
@@ -41,10 +44,11 @@ class SessionState:
     # A pending set_medication_reminder proposal ({"name", "times"}), held until the
     # elder confirms so the commit can only ever save the times it read back.
     pending_reminder: dict | None = None
-    # Whether the elder wants spoken replies (from profiles.accessibility.tts),
-    # fetched once and cached. Default True — seniors with low digital literacy get
-    # voice by default; turned off only if their profile opts out.
-    voice_default: bool = True
+    # Whether the elder wants spoken replies for typed messages too (from
+    # profiles.accessibility.tts, or the /voice command). Default False — voice
+    # mirrors the user: a voice note always gets a spoken reply, typed messages
+    # get text unless they opt in.
+    voice_default: bool = False
     voice_loaded: bool = False
     # Recent conversation_turns folded into the system prompt for cross-restart
     # continuity, loaded once per session (only when there's no live history yet).
@@ -58,6 +62,9 @@ class SessionState:
     # A pending update_medical_profile proposal ({"content", "replace"}), held until
     # the elder confirms so a profile write only ever saves what was read back.
     pending_profile: dict | None = None
+    # True while a /setup re-run forces guided-intake mode even though a profile
+    # already exists. Cleared when a profile update commits.
+    intake_active: bool = False
 
 
 class SessionRegistry:
@@ -82,17 +89,19 @@ class SessionRegistry:
         state.pending_image = None
         state.dialect = None
         state.dialect_loaded = False
+        state.last_lang_iso = None
         state.slang = None
         state.slang_loaded = False
         state.awaiting_confirmation = False
         state.pending_reminder = None
-        state.voice_default = True
+        state.voice_default = False
         state.voice_loaded = False
         state.memory_text = None
         state.memory_loaded = False
         state.medical_profile = None
         state.medical_profile_loaded = False
         state.pending_profile = None
+        state.intake_active = False
         self._profile_to_chat[elder_id] = chat_id
 
     def chat_for_profile(self, profile_id: str) -> int | None:

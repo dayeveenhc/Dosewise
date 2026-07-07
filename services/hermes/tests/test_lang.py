@@ -48,3 +48,34 @@ def test_detect_language_none_when_model_unavailable(monkeypatch):
 def test_detect_language_none_for_empty_text():
     assert lang.detect_language("") is None
     assert lang.detect_language(None) is None
+
+
+class _ConfidentLid:
+    def __init__(self, label="__label__zlm_Latn", prob=0.99):
+        self._label, self._prob = label, prob
+
+    def predict(self, text, k=1):
+        return ([self._label], [self._prob])
+
+
+def test_detect_language_skips_short_texts(monkeypatch):
+    """Tiny fragments ('ok', 'ya') are unclassifiable — never asked of the model."""
+    monkeypatch.setattr(lang, "_load_lid", lambda: _ConfidentLid())
+    assert lang.detect_language("ok") is None
+    assert lang.detect_language("ya") is None
+    assert lang.detect_language("a  b") is None  # spaces don't count toward the floor
+
+
+def test_detect_language_short_cjk_still_detects(monkeypatch):
+    monkeypatch.setattr(lang, "_load_lid", lambda: _ConfidentLid("__label__cmn_Hani"))
+    assert lang.detect_language("吃药了吗") == "cmn"  # 4 chars — at the floor
+
+
+def test_detect_language_rejects_low_confidence(monkeypatch):
+    monkeypatch.setattr(lang, "_load_lid", lambda: _ConfidentLid(prob=0.4))
+    assert lang.detect_language("hello there friend") is None
+
+
+def test_detect_language_accepts_confident_guess(monkeypatch):
+    monkeypatch.setattr(lang, "_load_lid", lambda: _ConfidentLid(prob=0.66))
+    assert lang.detect_language("apa khabar semua") == "zlm"

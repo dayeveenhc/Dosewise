@@ -25,6 +25,25 @@ try:
 except OSError:
     SYSTEM_PROMPT = _FALLBACK_PROMPT
 
+# Guided first-time setup, appended when the patient has no medical profile yet (or
+# asked to redo setup with /setup). Conversational, not a gate: the patient can ask
+# anything mid-intake and the agent answers, then gently returns to the questions.
+_INTAKE_BLOCK = """
+FIRST-TIME SETUP. This patient has no medical profile saved yet (or asked to redo \
+setup). Conduct a short, gentle intake — in their language, ONE question per \
+message, in this order:
+1. Any allergies to medicines?
+2. Any ongoing conditions (diabetes, blood pressure, heart, ...)?
+3. Anything important from their medical history?
+4. Which medicines do they take now?
+At any point, offer the shortcut: they can send a photo of a prescription or a PDF \
+of their records instead of typing. Save allergies/conditions/history with \
+`update_medical_profile` and medicines with `add_prescription` — the usual \
+propose->confirm rule applies to every save. If they want to skip or stop, respect \
+it immediately and mention they can run /setup anytime. Keep it to a few minutes; \
+when done, summarise what you saved in one short message.
+"""
+
 
 def system_prompt_for(
     dialect: str | None = None,
@@ -32,6 +51,7 @@ def system_prompt_for(
     reply_language: str | None = None,
     recent_memory: str | None = None,
     medical_profile: str | None = None,
+    onboarding: bool = False,
 ) -> str:
     """The system prompt, tailored to the elder's dialect, slang, and input language.
 
@@ -45,8 +65,12 @@ def system_prompt_for(
       restarts. Context only — it never overrides a grounded medication fact.
     - ``medical_profile``: the patient's saved allergies / conditions / history.
       Context to tailor caveats — never a source of drug facts, never a diagnosis.
+    - ``onboarding``: True when the patient has no medical profile yet (or ran
+      /setup) — appends the guided first-time intake instructions.
     """
     prompt = SYSTEM_PROMPT
+    if onboarding:
+        prompt += "\n" + _INTAKE_BLOCK
     if dialect and dialect.lower() != "en":
         prompt += (
             f"\nThe patient's preferred dialect is {dialect}. Where it feels natural, "

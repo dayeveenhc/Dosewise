@@ -92,6 +92,20 @@ class Settings(BaseSettings):
     # Elder A from supabase/seed/seed.sql
     dev_default_elder_id: str = "00000000-0000-0000-0000-00000000000a"
 
+    # --- Strict auth (production posture) ---
+    # When true, an agent turn must carry a verified Supabase JWT: the /agent/turn
+    # `elder_id` fallback is rejected and Telegram's /switch impersonation is
+    # disabled. Default false keeps the local/Telegram/CLI demo ergonomic.
+    hermes_strict_auth: bool = False
+
+    # --- Rate limiting (in-process; see ratelimit.py) ---
+    rate_limit_enabled: bool = True
+    # Per-user caps on expensive agent turns (keyed by elder_id / Telegram chat_id).
+    rate_limit_turns_per_minute: int = 12
+    rate_limit_turns_per_hour: int = 120
+    # Coarse per-IP ceiling on the POST endpoints (/agent/turn, /telegram/webhook).
+    rate_limit_http_per_minute: int = 60
+
     # --- Reminder scheduler (Telegram delivery; replaces Expo Push for the demo) ---
     reminders_enabled: bool = True
     reminder_poll_seconds: int = 60

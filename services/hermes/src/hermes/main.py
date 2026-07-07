@@ -15,6 +15,7 @@ from pathlib import Path
 
 import uvicorn
 from fastapi import FastAPI
+from fastapi.responses import JSONResponse
 
 from .agent import llm
 from .api.routes import router
@@ -22,6 +23,7 @@ from .channels.scheduler import reminder_loop
 from .channels.session import SessionRegistry
 from .channels.telegram import TelegramClient, poll_loop
 from .config import get_settings
+from .ratelimit import SlidingWindowLimiter, http_tiers
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(name)s %(levelname)s %(message)s")
 log = logging.getLogger("hermes")
@@ -48,6 +50,7 @@ async def lifespan(app: FastAPI):
     if not llm.api_key_present(settings):
         log.warning("%s is not set — agent turns will fail", llm.api_key_env_name(settings))
     app.state.supabase = Supabase()
+    app.state.rate_limiter = SlidingWindowLimiter()
     app.state.registry = SessionRegistry(settings.dev_default_elder_id)
     # Persistent per-elder sessions for the HTTP /agent/turn contract, so a
     # multi-step flow (propose -> confirm a prescription) and conversation history
@@ -77,6 +80,22 @@ async def lifespan(app: FastAPI):
         lid_task = asyncio.create_task(_warm_lid())
 
     if app.state.telegram is not None:
+        # Register the command menu (the ☰ button) so /schedule etc. are
+        # discoverable without memorising commands. Best-effort: a Telegram
+        # hiccup here must never stop the service.
+        try:
+            await app.state.telegram.set_my_commands(
+                [
+                    {"command": "schedule", "description": "Today's medicine plan"},
+                    {"command": "today", "description": "Same as /schedule"},
+                    {"command": "week", "description": "This week's medicines"},
+                    {"command": "voice", "description": "Voice replies on or off"},
+                    {"command": "setup", "description": "Set up or redo your profile"},
+                    {"command": "help", "description": "What I can do"},
+                ]
+            )
+        except Exception:
+            log.warning("setMyCommands failed; command menu not registered", exc_info=True)
         mode = settings.hermes_channel_mode.lower()
         if mode == "polling":
             poller_task = asyncio.create_task(
@@ -85,6 +104,7 @@ async def lifespan(app: FastAPI):
                     supabase=app.state.supabase,
                     registry=app.state.registry,
                     telegram=app.state.telegram,
+                    rate_limiter=app.state.rate_limiter,
                 )
             )
             log.info("telegram: long-polling mode")
@@ -126,8 +146,34 @@ async def lifespan(app: FastAPI):
         await slang_aclose()
 
 
+# POST endpoints that get the coarse per-IP ceiling (the per-user turn caps live
+# deeper, at the elder_id / chat_id boundary in routes.py / telegram.py).
+_RATE_LIMITED_PATHS = {"/agent/turn", "/telegram/webhook"}
+
+
 def create_app() -> FastAPI:
     app = FastAPI(title="Hermes", version="0.1.0", lifespan=lifespan)
+
+    @app.middleware("http")
+    async def _rate_limit_by_ip(request, call_next):
+        settings = get_settings()
+        limiter = getattr(request.app.state, "rate_limiter", None)
+        if (
+            settings.rate_limit_enabled
+            and limiter is not None
+            and request.method == "POST"
+            and request.url.path in _RATE_LIMITED_PATHS
+        ):
+            ip = request.client.host if request.client else "unknown"
+            allowed, retry_after = limiter.check(f"http:{ip}", http_tiers(settings))
+            if not allowed:
+                return JSONResponse(
+                    {"detail": "rate limit exceeded"},
+                    status_code=429,
+                    headers={"Retry-After": str(int(retry_after) + 1)},
+                )
+        return await call_next(request)
+
     app.include_router(router)
     return app
 

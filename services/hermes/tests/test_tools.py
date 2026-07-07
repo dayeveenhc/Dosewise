@@ -240,6 +240,37 @@ async def test_check_interactions_pair_no_mention(monkeypatch):
         _ctx(FakeDB({})), drug_a="Vitamin C", drug_b="Metformin"
     )
     assert "don't specifically mention" in out
+    # A clean check is an answer, not an escalation: one short caveat, no
+    # doctor-question offer, and a nudge to answer plainly.
+    assert "add_doctor_question" not in out
+    assert out.count("not a full clearance") == 1
+    assert "Tell the patient plainly" in out
+
+
+async def test_check_interactions_pair_matches_brand_via_generic(monkeypatch):
+    """A's label mentions B's *generic* ('acetaminophen') while the elder asked
+    about the brand ('Panadol') — the alias map must still flag it."""
+    async def _fake(ctx, name):
+        if name.lower() == "warfarin":
+            return "Concomitant use with acetaminophen may increase INR."
+        return ""
+
+    monkeypatch.setattr(interactions, "interaction_text", _fake)
+    out = await get_handler("check_drug_interactions")(
+        _ctx(FakeDB({})), drug_a="Warfarin", drug_b="Panadol"
+    )
+    assert "⚠" in out
+
+
+async def test_check_interactions_current_meds_no_mention_answers_plainly(monkeypatch):
+    async def _fake(ctx, name):
+        return "No known food interactions."
+
+    monkeypatch.setattr(interactions, "interaction_text", _fake)
+    db = FakeDB({"medications": [{"name": "Metformin", "archived": False}]})
+    out = await get_handler("check_drug_interactions")(_ctx(db), drug_a="Vitamin C")
+    assert "don't mention" in out
+    assert "add_doctor_question" not in out
 
 
 async def test_check_interactions_against_current_meds(monkeypatch):
@@ -261,6 +292,62 @@ async def test_check_interactions_no_data_offers_doctor(monkeypatch):
         _ctx(FakeDB({})), drug_a="Mystery", drug_b="Other"
     )
     assert "add_doctor_question" in out
+
+
+# --- name_forms / label_mentions (brand<->generic matching) ------------------
+def test_name_forms_brand_expands_to_generic_and_sibling_brands():
+    from hermes.tools.drug_info import name_forms
+
+    forms = name_forms("Panadol")
+    assert {"panadol", "paracetamol", "acetaminophen"} <= forms
+
+
+def test_name_forms_generic_includes_its_brands():
+    from hermes.tools.drug_info import name_forms
+
+    forms = name_forms("acetaminophen")
+    assert {"acetaminophen", "panadol", "paracetamol"} <= forms
+
+
+def test_name_forms_unknown_name_is_itself():
+    from hermes.tools.drug_info import name_forms
+
+    assert name_forms("Metoprolol") == {"metoprolol"}
+    assert name_forms("") == set()
+
+
+def test_label_mentions_cross_form_and_case_insensitive():
+    from hermes.tools.drug_info import label_mentions
+
+    label = "Do not combine with ACETAMINOPHEN products."
+    assert label_mentions(label, "Panadol")
+    assert label_mentions(label, "acetaminophen")
+    assert not label_mentions(label, "ibuprofen")
+    assert not label_mentions("", "Panadol")
+
+
+async def test_propose_time_warning_matches_brand_via_generic(monkeypatch):
+    """Elder takes Panadol; the new drug's label mentions acetaminophen — the
+    propose-time warning must still fire via the alias map."""
+    import hermes.tools.medications as medications
+
+    async def _fake(ctx, name):
+        return "May interact with acetaminophen."
+
+    monkeypatch.setattr(medications, "interaction_text", _fake)
+    db = FakeDB({"medications": [{"name": "Panadol", "archived": False}]})
+    out = await get_handler("add_prescription")(
+        _ctx(db), name="Warfarin", confirmed=False
+    )
+    assert "⚠ Possible interaction" in out and "Panadol" in out
+
+
+def test_soul_answers_fully_and_drops_unconditional_doctor_offer():
+    from hermes.agent.prompts import SYSTEM_PROMPT
+
+    assert "Answer fully from the label" in SYSTEM_PROMPT
+    # The old mandate to offer a doctor question on EVERY interaction answer is gone.
+    assert "offer to queue the question for their doctor" not in SYSTEM_PROMPT
 
 
 async def test_get_drug_info_unreachable_reports_transient(monkeypatch):
