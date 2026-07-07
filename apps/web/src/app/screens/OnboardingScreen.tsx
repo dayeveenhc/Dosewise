@@ -68,7 +68,7 @@ export function OnboardingScreen({ onSelect }: { onSelect: (mode: "caregiver" | 
           </div>
           <div>
             <p className="font-semibold text-foreground text-[15px] leading-snug mb-1">For Myself</p>
-            <p className="text-sm text-muted-foreground leading-relaxed">Manage my daily medicines and ask for help</p>
+            <p className="text-sm text-muted-foreground leading-relaxed">Manage my daily medications and ask for help</p>
           </div>
           <ChevronRight size={18} className="text-muted-foreground mt-1.5 ml-auto shrink-0" />
         </button>

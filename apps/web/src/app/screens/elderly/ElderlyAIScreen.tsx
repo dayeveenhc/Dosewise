@@ -1,14 +1,28 @@
-import { useState, useRef } from "react";
-import { Volume2, Mic, Send, AlertTriangle, Brain, Circle, Check, Trash2, Plus } from "lucide-react";
+import { useState, useRef, useEffect } from "react";
+import { Volume2, Mic, Send, AlertTriangle, Brain, Circle, Check, Trash2, Plus, Camera, FileText, Pill, Globe, Sparkles, ChevronDown, X, Plane } from "lucide-react";
 import type { Patient } from "../../types";
 import type { EMsg, ElderlyTab, DoctorQ } from "./types";
-import { aiRespond } from "./aiRespond";
+import { agentTurn } from "../../lib/hermes";
 import { VOICE_DEMOS } from "../../data/medications";
 
-export function ElderlyAIScreen({ patient, onLogDose, onNavigate, doctorQuestions, onAddDoctorQ, onMarkAnswered, onDeleteQuestion, autoMessage }: {
+const nowLabel = () => new Date().toLocaleTimeString("en-SG", { hour: "2-digit", minute: "2-digit" });
+
+// A single feature tile in the "Quick help" launcher.
+function FeatureBtn({ icon: Icon, label, onClick, "data-tour": dataTour }: { icon: any; label: string; onClick: () => void; "data-tour"?: string }) {
+  return (
+    <button onClick={onClick} data-tour={dataTour} className="flex items-center gap-2 bg-card border border-border rounded-xl p-2.5 text-left active:bg-muted transition-colors">
+      <div className="w-7 h-7 rounded-lg bg-primary/10 flex items-center justify-center shrink-0"><Icon size={14} className="text-primary" /></div>
+      <span className="text-[12px] font-bold text-foreground leading-tight">{label}</span>
+    </button>
+  );
+}
+
+export function ElderlyAIScreen({ patient, onLogDose, onNavigate, onAddRxPhoto, onOpenTravel, doctorQuestions, onAddDoctorQ, onMarkAnswered, onDeleteQuestion, autoMessage }: {
   patient: Patient;
   onLogDose: (id: number) => void;
   onNavigate: (tab: ElderlyTab) => void;
+  onAddRxPhoto: () => void;
+  onOpenTravel: () => void;
   doctorQuestions: DoctorQ[];
   onAddDoctorQ: (q: string) => void;
   onMarkAnswered: (id: number) => void;
@@ -19,36 +33,41 @@ export function ElderlyAIScreen({ patient, onLogDose, onNavigate, doctorQuestion
   const h = new Date().getHours();
   const g = h < 12 ? "morning" : h < 17 ? "afternoon" : "evening";
   const next = patient.medications.find(m => m.status === "upcoming");
-  const now = new Date().toLocaleTimeString("en-SG", { hour: "2-digit", minute: "2-digit" });
   const greeting: EMsg = {
     id: 1, role: "agent",
-    text: `Good ${g}, ${nick}! 😊\n\nI'm Mei, your medicine helper. ${next ? `Your next medicine is ${next.name} (${next.dose}) at ${next.time}.` : "You've taken all your medicines today — well done! 🌟"}\n\nHow can I help you? Tap the microphone to speak, or type below.`,
-    time: now,
+    text: `Good ${g}, ${nick}! 😊\n\nI'm Mei, your medication helper. ${next ? `Your next medication is ${next.name} (${next.dose}) at ${next.time}.` : "You've taken all your medications today — well done! 🌟"}\n\nTap a button above for quick help, or just type your question below.`,
+    time: nowLabel(),
   };
-  const [messages, setMessages] = useState<EMsg[]>(() => {
-    if (!autoMessage) return [greeting];
-    const response = aiRespond(autoMessage, patient);
-    return [
-      greeting,
-      { id: 2, role: "user",  text: autoMessage,    time: now },
-      { id: 3, role: "agent", text: response.text,  time: now, isClinic: response.isClinic },
-    ];
-  });
+  const [messages, setMessages] = useState<EMsg[]>([greeting]);
   const [input, setInput] = useState("");
+  const [sending, setSending] = useState(false);
   const [isListening, setIsListening] = useState(false);
   const [isSpeaking, setIsSpeaking] = useState(false);
   const [language, setLanguage] = useState<"en" | "zh" | "hokkien">("en");
+  const [voiceOutput, setVoiceOutput] = useState(true);
   const [screenTab, setScreenTab] = useState<"chat" | "doctor">("chat");
   const [newQ, setNewQ] = useState("");
   const [showInput, setShowInput] = useState(false);
+  const [quickOpen, setQuickOpen] = useState(true);
+  const [showMedPicker, setShowMedPicker] = useState(false);
+  const [showLangSheet, setShowLangSheet] = useState(false);
   const scrollRef = useRef<HTMLDivElement>(null);
+  const reportRef = useRef<HTMLInputElement>(null);
 
   const flagged  = doctorQuestions.filter(q => !q.answered && q.addedAt.includes("Mei"));
   const manual   = doctorQuestions.filter(q => !q.answered && !q.addedAt.includes("Mei"));
   const answered = doctorQuestions.filter(q => q.answered);
   const unasked  = flagged.length + manual.length;
+  const uniqueMeds = [...new Set(patient.medications.map(m => m.name))];
 
   const scrollToBottom = () => setTimeout(() => { if (scrollRef.current) scrollRef.current.scrollTop = scrollRef.current.scrollHeight; }, 60);
+  const speak = () => { if (voiceOutput) { setIsSpeaking(true); setTimeout(() => setIsSpeaking(false), 2500); } };
+
+  const pushAgent = (text: string, isClinic?: boolean) => {
+    setMessages(prev => [...prev, { id: Date.now(), role: "agent", text, time: nowLabel(), isClinic }]);
+    scrollToBottom();
+    speak();
+  };
 
   const handleMic = () => {
     if (isListening) return;
@@ -59,29 +78,49 @@ export function ElderlyAIScreen({ patient, onLogDose, onNavigate, doctorQuestion
     }, 1800);
   };
 
+  const send = async (text: string) => {
+    const t = text.trim();
+    if (!t || sending) return;
+    setMessages(prev => [...prev, { id: Date.now(), role: "user", text: t, time: nowLabel() }]);
+    scrollToBottom();
+    setSending(true);
+    const { reply } = await agentTurn(t);
+    setMessages(prev => [...prev, { id: Date.now() + 1, role: "agent", text: reply, time: nowLabel() }]);
+    setSending(false);
+    scrollToBottom();
+    speak();
+  };
+
   const handleSend = () => {
     const text = input.trim();
     if (!text) return;
-    const now = new Date().toLocaleTimeString("en-SG", { hour: "2-digit", minute: "2-digit" });
-    const response = aiRespond(text, patient);
-    setMessages(prev => [...prev,
-      { id: Date.now(),     role: "user",  text,              time: now },
-      { id: Date.now() + 1, role: "agent", text: response.text, time: now, isClinic: response.isClinic },
-    ]);
     setInput("");
-    scrollToBottom();
-    if (response.action === "logDose"     && response.actionPayload) onLogDose(response.actionPayload);
-    if (response.action === "navigate"    && response.actionPayload) setTimeout(() => onNavigate(response.actionPayload), 900);
-    if (response.action === "openDoctorTab") setTimeout(() => setScreenTab("doctor"), 900);
-    if (response.doctorQ) onAddDoctorQ(response.doctorQ);
-    setIsSpeaking(true);
-    setTimeout(() => setIsSpeaking(false), 2500);
+    send(text);
   };
+
+  useEffect(() => {
+    if (autoMessage) send(autoMessage);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  // Quick-help feature actions ----------------------------------------------
+  const handleSetup = () => {
+    setQuickOpen(false);
+    pushAgent(`Let's get you set up, ${nick}! Here's what I can do:\n\n📷 Add a medication — tap “Add prescription” and snap a photo of the box.\n📄 Update your health profile — upload a clinic report and I'll read it.\n💊 Ask about a medication — tap “Ask a medication” and pick one.\n🌐 Change language or turn my voice on/off.\n\nWhat would you like to do first?`);
+  };
+
+  const runReport = () => {
+    pushAgent("📄 Reading your report…");
+    setTimeout(() => {
+      pushAgent(`All done! I've updated ${nick}'s medical profile from the report:\n\n• Blood pressure: 128/80\n• HbA1c (sugar): 6.9%\n• Kidney function: normal\n\nYour caregiver can see these updates too. ✅`);
+    }, 1400);
+  };
+  const onReportFile = () => runReport();
 
   const LANGS = [{ id: "en" as const, label: "English" }, { id: "zh" as const, label: "华语" }, { id: "hokkien" as const, label: "闽南话" }];
 
   return (
-    <div className="flex flex-col flex-1 overflow-hidden">
+    <div className="flex flex-col flex-1 overflow-hidden relative">
       <div className="px-4 pt-2 pb-0 shrink-0">
         <div className="flex gap-2 bg-muted rounded-xl p-1">
           <button onClick={() => setScreenTab("chat")} className={`flex-1 py-2.5 rounded-lg text-sm font-semibold transition-colors ${screenTab === "chat" ? "bg-card text-foreground shadow-sm" : "text-muted-foreground"}`}>
@@ -98,15 +137,15 @@ export function ElderlyAIScreen({ patient, onLogDose, onNavigate, doctorQuestion
         <div className="flex-1 overflow-y-auto scrollbar-none px-4 pb-28 pt-3 space-y-3">
           {/* Flagged by Mei — AI couldn't answer */}
           {flagged.length > 0 && (
-            <div className="bg-amber-50 border border-amber-200 rounded-2xl overflow-hidden">
-              <div className="flex items-center gap-2 px-4 pt-3 pb-2">
+            <div>
+              <div className="flex items-center gap-2 px-1 pb-2">
                 <AlertTriangle size={14} className="text-amber-600 shrink-0" />
                 <p className="text-sm font-bold text-amber-900">Mei wasn't sure — ask your doctor</p>
                 <span className="ml-auto text-xs font-bold text-amber-700 bg-amber-100 px-2 py-0.5 rounded-full">{flagged.length}</span>
               </div>
-              <div className="divide-y divide-amber-100">
+              <div className="space-y-2">
                 {flagged.map(q => (
-                  <div key={q.id} className="px-4 py-3 flex items-start gap-3">
+                  <div key={q.id} className="bg-amber-50 border border-amber-200 rounded-2xl px-4 py-3 flex items-start gap-3">
                     <div className="flex-1">
                       <div className="flex items-center gap-1.5 mb-1">
                         <Brain size={11} className="text-amber-600" />
@@ -185,23 +224,52 @@ export function ElderlyAIScreen({ patient, onLogDose, onNavigate, doctorQuestion
         </div>
       ) : (
         <>
-          <div className="px-4 py-2.5 border-b border-border flex items-center justify-between shrink-0">
-            <div className="flex gap-1.5">
-              {LANGS.map(l => (
-                <button key={l.id} onClick={() => setLanguage(l.id)} className={`px-3 py-1.5 rounded-full text-xs font-semibold transition-colors ${language === l.id ? "bg-primary text-white" : "bg-muted text-muted-foreground"}`}>
-                  {l.label}
+          {/* Quick help feature launcher */}
+          <div className="px-4 pt-2.5 shrink-0" data-tour="elder-quickhelp">
+            <button onClick={() => setQuickOpen(o => !o)} className="w-full flex items-center gap-1.5 mb-2">
+              <Sparkles size={15} className="text-primary" />
+              <span className="text-sm font-bold text-foreground">Quick help</span>
+              <ChevronDown size={16} className={`ml-auto text-muted-foreground transition-transform ${quickOpen ? "rotate-180" : ""}`} />
+            </button>
+            {quickOpen && (
+              <div className="space-y-2 pb-1">
+                <button onClick={handleSetup} className="w-full flex items-center gap-2 bg-primary/10 text-primary rounded-xl px-3 py-2.5 text-sm font-bold active:scale-[0.99] transition-transform">
+                  <Sparkles size={16} />Help me set up
                 </button>
-              ))}
-            </div>
-            {isSpeaking && (
-              <div className="flex items-center gap-1.5 text-primary">
-                <Volume2 size={13} />
-                <span className="text-xs font-semibold">Speaking...</span>
+                <div className="grid grid-cols-2 gap-1.5">
+                  <FeatureBtn icon={Camera}   label="Add prescription" onClick={onAddRxPhoto} />
+                  <FeatureBtn icon={FileText} label="Update profile"   onClick={() => reportRef.current?.click()} />
+                  <FeatureBtn icon={Pill}     label="Ask a medication" onClick={() => setShowMedPicker(v => !v)} />
+                  <FeatureBtn icon={Globe}    label="Language & voice" onClick={() => setShowLangSheet(true)} />
+                  <FeatureBtn icon={Plane}    label="Travel Mode"      onClick={onOpenTravel} />
+                </div>
+                {showMedPicker && (
+                  <div className="bg-card border border-border rounded-xl p-2.5">
+                    <p className="text-[11px] text-muted-foreground font-semibold px-0.5 pb-1.5">Which medication would you like to know about?</p>
+                    <div className="flex flex-wrap gap-1.5">
+                      {uniqueMeds.map(n => (
+                        <button key={n} onClick={() => { setShowMedPicker(false); send(`What is ${n} for?`); }} className="text-xs font-semibold bg-muted text-foreground rounded-full px-3 py-1.5 active:bg-primary/10 active:text-primary transition-colors">
+                          {n}
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+                )}
               </div>
             )}
           </div>
 
-          <div ref={scrollRef} className="flex-1 overflow-y-auto scrollbar-none px-4 py-3 space-y-3">
+          {/* Speaking indicator */}
+          {isSpeaking && (
+            <div className="px-4 pb-1 shrink-0">
+              <div className="flex items-center gap-1.5 text-primary">
+                <Volume2 size={13} />
+                <span className="text-xs font-semibold">Speaking{language !== "en" ? ` in ${language === "zh" ? "华语" : "闽南话"}` : ""}…</span>
+              </div>
+            </div>
+          )}
+
+          <div ref={scrollRef} className="flex-1 overflow-y-auto scrollbar-none px-4 py-3 space-y-3 border-t border-border">
             {messages.map(msg => (
               <div key={msg.id} className={`flex ${msg.role === "user" ? "justify-end" : "justify-start"} gap-2`}>
                 {msg.role === "agent" && (
@@ -230,7 +298,7 @@ export function ElderlyAIScreen({ patient, onLogDose, onNavigate, doctorQuestion
 
           <div className="px-4 pb-2 shrink-0">
             <div className="flex gap-2 overflow-x-auto scrollbar-none pb-1">
-              {["I took my medicine", "What do I take?", "Check refills", "Help"].map(s => (
+              {["I took my medication", "What do I take?", "Check refills", "Help"].map(s => (
                 <button key={s} onClick={() => setInput(s)} className="shrink-0 bg-muted text-muted-foreground rounded-full px-3 py-1.5 text-xs font-semibold whitespace-nowrap active:bg-primary/10 active:text-primary transition-colors">
                   {s}
                 </button>
@@ -240,10 +308,10 @@ export function ElderlyAIScreen({ patient, onLogDose, onNavigate, doctorQuestion
 
           <div className="px-4 pb-4 pt-1 border-t border-border shrink-0">
             <div className="flex gap-2 items-end">
-              <button onClick={handleMic} className={`w-12 h-12 rounded-full flex items-center justify-center shrink-0 transition-colors ${isListening ? "bg-red-500 text-white" : "bg-muted text-foreground"}`}>
-                <Mic size={20} />
+              <button onClick={handleMic} className={`w-10 h-10 rounded-full flex items-center justify-center shrink-0 transition-colors ${isListening ? "bg-red-500 text-white" : "bg-muted text-foreground"}`}>
+                <Mic size={17} />
               </button>
-              <div className="flex-1 bg-input-background rounded-2xl px-4 py-3">
+              <div className="flex-1 bg-input-background rounded-2xl px-3.5 py-2">
                 <textarea
                   value={input}
                   onChange={e => setInput(e.target.value)}
@@ -253,14 +321,45 @@ export function ElderlyAIScreen({ patient, onLogDose, onNavigate, doctorQuestion
                   rows={1}
                 />
               </div>
-              <button onClick={handleSend} disabled={!input.trim()} className="w-12 h-12 rounded-full bg-primary text-primary-foreground flex items-center justify-center shrink-0 disabled:opacity-30 active:scale-95 transition-transform">
-                <Send size={18} />
+              <button onClick={handleSend} disabled={!input.trim() || sending} className="w-10 h-10 rounded-full bg-primary text-primary-foreground flex items-center justify-center shrink-0 disabled:opacity-30 active:scale-95 transition-transform">
+                <Send size={16} />
               </button>
             </div>
             <p className="text-center text-[10px] text-muted-foreground mt-2">Mei is an AI helper. Always check with a doctor or pharmacist for medical advice.</p>
           </div>
+
+          {/* hidden input used by "Update profile" */}
+          <input ref={reportRef} type="file" accept="image/*,application/pdf" className="hidden" onChange={onReportFile} />
+
+          {/* Language & voice sheet */}
+          {showLangSheet && (
+            <div className="absolute inset-0 z-50 flex items-end bg-black/40" onClick={() => setShowLangSheet(false)}>
+              <div className="w-full bg-background rounded-t-3xl p-5 pb-7 animate-in slide-in-from-bottom duration-200" onClick={e => e.stopPropagation()}>
+                <div className="flex items-center justify-between mb-4">
+                  <h3 className="font-['Fraunces'] text-xl font-semibold text-foreground">Language & voice</h3>
+                  <button onClick={() => setShowLangSheet(false)} className="w-8 h-8 rounded-full bg-muted flex items-center justify-center"><X size={16} className="text-muted-foreground" /></button>
+                </div>
+                <p className="text-sm font-semibold text-foreground mb-2">Language</p>
+                <div className="flex gap-2 mb-5">
+                  {LANGS.map(l => (
+                    <button key={l.id} onClick={() => setLanguage(l.id)} className={`flex-1 py-3 rounded-xl text-[15px] font-bold border transition-colors ${language === l.id ? "bg-primary text-white border-primary" : "bg-card text-foreground border-border"}`}>
+                      {l.label}
+                    </button>
+                  ))}
+                </div>
+                <button onClick={() => setVoiceOutput(v => !v)} className="w-full flex items-center justify-between bg-card border border-border rounded-xl px-4 py-3.5">
+                  <div className="flex items-center gap-2"><Volume2 size={18} className="text-primary" /><span className="text-[15px] font-semibold text-foreground">Voice replies</span></div>
+                  <div className={`w-12 h-7 rounded-full transition-colors relative ${voiceOutput ? "bg-primary" : "bg-muted"}`}>
+                    <div className={`absolute top-0.5 w-6 h-6 rounded-full bg-white shadow transition-all ${voiceOutput ? "left-[22px]" : "left-0.5"}`} />
+                  </div>
+                </button>
+                <p className="text-xs text-muted-foreground mt-3">Mei can read her replies aloud in your chosen language.</p>
+              </div>
+            </div>
+          )}
         </>
       )}
+
     </div>
   );
 }

@@ -4,6 +4,7 @@ export type AppMode = "onboarding" | "caregiver" | "elderly";
 
 export interface Medication {
   id: number;
+  medicationId?: string; // real Supabase medications.id (uuid), when backed by real data
   name: string;
   dose: string;
   time: string;
@@ -36,6 +37,15 @@ export interface Patient {
   adherenceToday: number;
   adherenceWeek: number;
   lastChecked: string;
+  // Extended profile fields collected by the guided setup wizard — optional
+  // since mock/caregiver-created patients won't have them.
+  gender?: string;
+  weightKg?: number;
+  heightCm?: number;
+  mealTimes?: { breakfast?: string; lunch?: string; dinner?: string };
+  sleepTime?: string;
+  pastMedications?: { id: string; name: string; dose: string; purpose: string }[];
+  travelPlan?: { startDate: string; endDate: string; timezone: string };
 }
 
 export interface Notification {

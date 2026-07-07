@@ -1,290 +1,421 @@
-import { useState, useEffect } from "react";
-import { RefreshCw, CheckCircle2, ChevronLeft, ChevronRight, Clock, AlertTriangle, Check, Eye } from "lucide-react";
+import { useState, useEffect, useRef, useMemo } from "react";
+import { RefreshCw, CheckCircle2, ChevronLeft, ChevronRight, Clock, AlertTriangle, Check, LocateFixed, X, Plane } from "lucide-react";
 import { useAccessibility } from "../../accessibility.tsx";
 import type { Patient, Medication, MedStatus } from "../../types";
-import type { ElderlyTab } from "./types";
-import { MED_PHOTOS, MED_SIMPLE, MED_SHAPES } from "../../data/medications";
+import { MED_PHOTOS, MED_SIMPLE, MED_SHAPES, MEAL_TIMES } from "../../data/medications";
 
-export function ElderlyHomeScreen({ patient, onLogDose, onNavigate }: {
+// --- timeline window: morning (6 AM) to night (11 PM) ----------------------
+const START_HOUR = 6;
+const END_HOUR = 23;
+const HOUR_PX = 72;                       // vertical px per hour
+const PX_PER_MIN = HOUR_PX / 60;
+const START_MIN = START_HOUR * 60;
+const END_MIN = END_HOUR * 60;
+const TOP_PAD = 18;                        // keeps the first row off the top edge
+const BOTTOM_PAD = 140;                    // clears the bottom nav
+const TIMELINE_PX = (END_HOUR - START_HOUR) * HOUR_PX;
+const topFor = (minutes: number) => (Math.max(START_MIN, Math.min(END_MIN, minutes)) - START_MIN) * PX_PER_MIN + TOP_PAD;
+
+// DEMO ONLY: pretend "now" is this clock time so missed/upcoming states are
+// visible regardless of the real clock. Set to null to use the real time.
+const DEMO_NOW: string | null = null;
+
+// Parse a "7:00 AM" clock string to minutes-since-midnight, or null if it isn't
+// a concrete clock time.
+function clockToMinutes(clock: string): number | null {
+  const m = clock.trim().match(/^(\d{1,2}):(\d{2})\s*(AM|PM)$/i);
+  if (!m) return null;
+  let h = Number(m[1]);
+  const mm = Number(m[2]);
+  const p = m[3].toUpperCase();
+  if (p === "PM" && h !== 12) h += 12;
+  if (p === "AM" && h === 12) h = 0;
+  return h * 60 + mm;
+}
+
+function minutesToClock(minutes: number): string {
+  const h = Math.floor(minutes / 60);
+  const mm = minutes % 60;
+  const period = h >= 12 ? "PM" : "AM";
+  const h12 = h % 12 === 0 ? 12 : h % 12;
+  return `${h12}:${String(mm).padStart(2, "0")} ${period}`;
+}
+
+// Resolve a dose's time to a concrete clock time. Concrete times pass through;
+// vague / meal-relative ones ("after breakfast") fall back to the caregiver /
+// national-average meal times in MEAL_TIMES.
+function resolveDose(m: Medication): { minutes: number; clock: string; vague: boolean; note?: string } {
+  const direct = clockToMinutes(m.time);
+  if (direct !== null) return { minutes: direct, clock: m.time, vague: false };
+  const hay = `${m.time} ${MED_SIMPLE[m.name] ?? ""}`.toLowerCase();
+  const key = Object.keys(MEAL_TIMES).sort((a, b) => b.length - a.length).find(k => hay.includes(k));
+  const clock = key ? MEAL_TIMES[key] : "12:00 PM";
+  return { minutes: clockToMinutes(clock)!, clock, vague: true, note: m.time };
+}
+
+// Real clock, or the DEMO_NOW override pinned onto today's date.
+function makeNow(): Date {
+  const mins = DEMO_NOW ? clockToMinutes(DEMO_NOW) : null;
+  if (mins == null) return new Date();
+  const d = new Date();
+  d.setHours(Math.floor(mins / 60), mins % 60, 0, 0);
+  return d;
+}
+
+const to24hInput = (d: Date) => `${String(d.getHours()).padStart(2, "0")}:${String(d.getMinutes()).padStart(2, "0")}`;
+const input24hTo12h = (v: string) => {
+  const [hh, mm] = v.split(":").map(Number);
+  return minutesToClock(hh * 60 + mm);
+};
+
+export function ElderlyHomeScreen({ patient, onLogDose, onOpenTravel }: {
   patient: Patient;
-  onLogDose: (id: number) => void;
-  onNavigate: (tab: ElderlyTab) => void;
+  onLogDose: (id: number, takenAt?: string) => void;
+  onOpenTravel: () => void;
 }) {
   const { colourBlind } = useAccessibility();
+  const [now, setNow] = useState(makeNow());
+  const [selectedDay, setSelectedDay] = useState<Date>(new Date());
   const [confirmedId, setConfirmedId] = useState<number | null>(null);
-  const [now, setNow] = useState(new Date());
-  const [weekOffset, setWeekOffset] = useState(0);
+  const [toastVisible, setToastVisible] = useState(false);
+  const [pendingDose, setPendingDose] = useState<Medication | null>(null);
+  const [takenInput, setTakenInput] = useState("");
+  const [showJump, setShowJump] = useState(false);
+  const scrollRef = useRef<HTMLDivElement>(null);
+
   useEffect(() => {
-    const id = setInterval(() => setNow(new Date()), 30000);
+    const id = setInterval(() => setNow(makeNow()), 30000);
     return () => clearInterval(id);
   }, []);
+
   const today = now;
-  const [selectedDay, setSelectedDay] = useState<Date>(new Date());
-
-  const DAYS     = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
-  const DAYS_SHORT = ["S", "M", "T", "W", "T", "F", "S"];
-  const weekDays = Array.from({ length: 7 }, (_, i) => {
-    const d = new Date(today);
-    d.setDate(today.getDate() - today.getDay() + i + weekOffset * 7);
-    return d;
-  });
-  const weekLabel = weekDays[3].toLocaleDateString("en-SG", { month: "long", year: "numeric" });
-  // deterministic past-day adherence per day-of-week
-  const WEEK_AD  = [true, true, false, true, true, true, false];
-
-  const isToday  = (d: Date) => d.toDateString() === today.toDateString();
-  const isPast   = (d: Date) => d < today && !isToday(d);
+  const isToday = (d: Date) => d.toDateString() === today.toDateString();
+  const isPast = (d: Date) => d < today && !isToday(d);
   const isFuture = (d: Date) => d > today && !isToday(d);
   const isSelectedToday = isToday(selectedDay);
 
-  // Resolve medication status for an arbitrary day
+  const nowMinutes = today.getHours() * 60 + today.getMinutes();
+  const nowInWindow = nowMinutes >= START_MIN && nowMinutes <= END_MIN;
+
+  // --- status for the selected day -----------------------------------------
+  // On today, derive the status from the real clock: a dose already logged stays
+  // "taken"; anything still ahead of now is "upcoming" (coming up); anything whose
+  // time has passed without being taken is "missed".
   const statusForDay = (m: Medication, day: Date): MedStatus => {
-    if (isToday(day)) return m.status;
-    if (isPast(day))  return (day.getDate() * 3 + m.id) % 10 > 2 ? "taken" : "missed";
+    if (isToday(day)) {
+      if (m.status === "taken") return "taken";
+      return resolveDose(m).minutes > nowMinutes ? "upcoming" : "missed";
+    }
+    if (isPast(day)) return (day.getDate() * 3 + m.id) % 10 > 2 ? "taken" : "missed";
     return "upcoming";
   };
 
-  const dayMeds   = patient.medications.map(m => ({ ...m, status: statusForDay(m, selectedDay) as MedStatus }));
+  const dayMeds = patient.medications.map(m => ({ ...m, status: statusForDay(m, selectedDay) as MedStatus }));
   const takenCount = dayMeds.filter(m => m.status === "taken").length;
-  const total      = patient.medications.length;
+  const total = patient.medications.length;
   const refillAlerts = patient.medications.filter(m => m.refillDaysLeft !== undefined && m.refillDaysLeft <= 5);
+  const nextMedId = isSelectedToday ? dayMeds.find(m => m.status === "upcoming")?.id : undefined;
 
-  // "Take now" only applies on today
-  const nextMedId  = isSelectedToday
-    ? patient.medications.find(m => m.status === "upcoming")?.id
-    : undefined;
+  // --- group meds by resolved time slot ------------------------------------
+  const slots = useMemo(() => {
+    const byMinute = new Map<number, { minutes: number; clock: string; vague: boolean; note?: string; meds: (Medication & { status: MedStatus })[] }>();
+    for (const m of dayMeds) {
+      const r = resolveDose(m);
+      const g = byMinute.get(r.minutes) ?? { minutes: r.minutes, clock: r.clock, vague: r.vague, note: r.note, meds: [] };
+      g.meds.push(m);
+      byMinute.set(r.minutes, g);
+    }
+    return [...byMinute.values()].sort((a, b) => a.minutes - b.minutes);
+  }, [dayMeds]);
 
-  const handleLogDose = (id: number) => {
-    onLogDose(id);
-    setConfirmedId(id);
-    setTimeout(() => setConfirmedId(null), 2500);
+  // --- scroll: snap to now on load / day change ----------------------------
+  const jumpToNow = (behavior: ScrollBehavior = "smooth") => {
+    const el = scrollRef.current;
+    if (!el) return;
+    const target = topFor(nowInWindow ? nowMinutes : START_MIN) - el.clientHeight * 0.35;
+    el.scrollTo({ top: Math.max(0, target), behavior });
   };
 
-  const parseTime = (t: string) => {
-    const [time, period] = t.split(" ");
-    const [hh, mm] = time.split(":").map(Number);
-    const h24 = period === "PM" && hh !== 12 ? hh + 12 : period === "AM" && hh === 12 ? 0 : hh;
-    return h24 * 60 + mm;
+  useEffect(() => {
+    const el = scrollRef.current;
+    if (!el) return;
+    if (isSelectedToday) jumpToNow("auto");
+    else el.scrollTo({ top: 0 });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [selectedDay]);
+
+  const onTimelineScroll = () => {
+    const el = scrollRef.current;
+    if (!el || !isSelectedToday) { setShowJump(false); return; }
+    const nowTop = topFor(nowInWindow ? nowMinutes : START_MIN) - el.clientHeight * 0.35;
+    setShowJump(Math.abs(el.scrollTop - Math.max(0, nowTop)) > 120);
   };
 
-  const h = today.getHours();
-  const greeting = h < 12 ? "Good morning" : h < 17 ? "Good afternoon" : "Good evening";
+  // --- dose logging via the time-adjust popup ------------------------------
+  const openTakeDialog = (m: Medication) => {
+    setTakenInput(to24hInput(new Date()));
+    setPendingDose(m);
+  };
+  const confirmTake = () => {
+    if (!pendingDose) return;
+    onLogDose(pendingDose.id, input24hTo12h(takenInput));
+    setConfirmedId(pendingDose.id);
+    setToastVisible(true);
+    setPendingDose(null);
+    setTimeout(() => setToastVisible(false), 1600); // start fade
+    setTimeout(() => setConfirmedId(null), 2100);   // unmount after the fade finishes
+  };
+
+  const changeDay = (delta: number) => {
+    const d = new Date(selectedDay);
+    d.setDate(d.getDate() + delta);
+    setSelectedDay(d);
+  };
+
+  const hourTicks = Array.from({ length: END_HOUR - START_HOUR + 1 }, (_, i) => START_HOUR + i);
+
+  // --- one medication card (keeps the original card design) ----------------
+  const renderCard = (m: Medication & { status: MedStatus }, vague: boolean, note?: string) => {
+    const isNext = m.id === nextMedId && confirmedId === null;
+    const isTaken = m.status === "taken";
+    const isMissed = m.status === "missed";
+    const photo = MED_PHOTOS[m.name] ?? "https://images.unsplash.com/photo-1584308666744-24d5c474f2ae?w=120&h=120&fit=crop&auto=format";
+    const direction = MED_SIMPLE[m.name] ?? "Take as directed by your doctor.";
+    const shape = MED_SHAPES[m.name];
+    const clock = resolveDose(m).clock;
+    const timeCls = isNext ? "bg-primary text-white" : isMissed ? "bg-orange-100 text-orange-700" : "bg-muted text-muted-foreground";
+
+    if (isTaken) {
+      return (
+        <div key={m.id} className="rounded-xl border border-border bg-card flex items-center gap-3 px-3 py-2.5 opacity-60">
+          <div className="w-9 h-9 rounded-lg overflow-hidden shrink-0 bg-muted">
+            <img src={photo} alt={m.name} className="w-full h-full object-cover" />
+          </div>
+          <div className="flex-1 min-w-0">
+            <p className="text-sm font-semibold text-muted-foreground line-through leading-snug">{m.name}</p>
+            <p className="text-xs text-muted-foreground/70">{m.takenAt ? `Taken at ${m.takenAt}` : "Taken"}</p>
+            {colourBlind && shape && <p className="text-xs text-muted-foreground/70">{shape.shape} · {shape.marking}</p>}
+          </div>
+          <div className="flex flex-col items-end gap-1 shrink-0">
+            <span className="text-xs font-semibold text-muted-foreground bg-muted px-2 py-0.5 rounded-lg whitespace-nowrap">{clock}</span>
+            <CheckCircle2 size={18} className="text-emerald-500" />
+          </div>
+        </div>
+      );
+    }
+
+    const cardCls = isNext ? "border-2 border-primary bg-sky-50/60 shadow-sm"
+                  : isMissed ? "border-2 border-orange-400 bg-orange-50 shadow-sm"
+                  : "border border-border bg-card";
+
+    return (
+      <div key={m.id} className={`rounded-2xl overflow-hidden ${cardCls}`}>
+        <div className="p-4">
+          <div className="flex items-start gap-3">
+            <div className="w-[62px] h-[62px] rounded-xl overflow-hidden shrink-0 bg-muted">
+              <img src={photo} alt={m.name} className="w-full h-full object-cover" />
+            </div>
+            <div className="flex-1 min-w-0">
+              <div className="flex items-start justify-between gap-2">
+                <div className="flex items-center gap-1.5 flex-wrap">
+                  <p className="font-bold text-[17px] text-foreground leading-snug">{m.name}</p>
+                  {isMissed && (
+                    <span className="flex items-center gap-1 bg-orange-100 text-orange-700 text-[10px] font-bold px-2 py-0.5 rounded-full">
+                      <AlertTriangle size={9} />Missed
+                    </span>
+                  )}
+                </div>
+                <span className={`text-base font-bold px-2.5 py-0.5 rounded-xl shrink-0 whitespace-nowrap ${timeCls}`}>{clock}</span>
+              </div>
+              <p className="text-sm text-muted-foreground mt-1.5">{direction}</p>
+              {vague && <p className="text-xs text-primary/80 mt-1">🕒 {note} · around {minutesToClock(resolveDose(m).minutes)}</p>}
+              {colourBlind && shape && <p className="text-xs text-muted-foreground mt-1">{shape.shape} · {shape.marking}</p>}
+            </div>
+          </div>
+        </div>
+
+        {isSelectedToday && (isNext || isMissed) ? (
+          <button
+            onClick={() => openTakeDialog(m)}
+            className={`w-full flex items-center justify-center gap-2.5 py-3.5 border-t font-bold text-[15px] active:opacity-80 transition-opacity ${
+              isNext ? "border-primary/20 bg-primary/10 text-primary" : "border-orange-200 bg-orange-100/60 text-orange-700"
+            }`}
+          >
+            <div className={`w-6 h-6 rounded-full border-2 flex items-center justify-center ${isNext ? "border-primary" : "border-orange-500"}`}>
+              <Check size={12} strokeWidth={3} className={isNext ? "text-primary" : "text-orange-600"} />
+            </div>
+            I Took It ✓
+          </button>
+        ) : (
+          <div className="w-full flex items-center justify-center gap-2 py-2.5 border-t border-border/40">
+            <Clock size={13} className="text-muted-foreground" />
+            <p className="text-xs text-muted-foreground font-medium">{isFuture(selectedDay) ? "Scheduled" : "Coming up"}</p>
+          </div>
+        )}
+      </div>
+    );
+  };
+
+  const travelPlan = patient.travelPlan;
+  // Still show the banner through the last day of the trip, not just before it starts.
+  const travelActive = travelPlan && new Date(`${travelPlan.endDate}T23:59:59`) >= new Date();
+  const formatTravelDate = (d: string) => new Date(d).toLocaleDateString("en-SG", { day: "numeric", month: "short" });
 
   return (
-    <div className="flex-1 overflow-y-auto scrollbar-none">
-      <div className="px-4 pt-2 pb-28 space-y-4">
+    <div className="flex flex-col flex-1 overflow-hidden relative">
+      {/* Travel Mode indicator — display only; the schedule below still runs on
+          local time, it doesn't actually shift to the destination timezone. */}
+      {travelActive && travelPlan && (
+        <button
+          onClick={onOpenTravel}
+          className="mx-4 mt-2 shrink-0 flex flex-col items-center gap-0.5 bg-primary/10 border border-primary/20 rounded-xl px-3 py-2 text-center active:bg-primary/15 transition-colors"
+        >
+          <p className="flex items-center gap-1.5 text-xs font-semibold text-primary">
+            <Plane size={13} className="shrink-0" />
+            Travel Mode · {formatTravelDate(travelPlan.startDate)}–{formatTravelDate(travelPlan.endDate)}
+          </p>
+          <p className="text-[11px] text-primary/80">Times shown in {travelPlan.timezone}</p>
+        </button>
+      )}
 
-        {/* Greeting + live time */}
-        <div className="pt-2 pb-1">
-          <div className="flex items-end justify-between">
-            <div>
-              <p className="text-xs text-muted-foreground uppercase tracking-wide">
-                {now.toLocaleDateString("en-SG", { weekday: "long", day: "numeric", month: "long" })}
-              </p>
-              <h2 className="font-['Fraunces'] text-2xl font-semibold text-foreground">
-                Hello, {patient.nickname}! 👋
-              </h2>
-            </div>
-            <div className="shrink-0 ml-3 bg-card border border-border rounded-xl px-3 py-2 flex items-baseline gap-1">
-              <p className="text-[26px] font-bold text-foreground font-mono leading-none tracking-tight">
-                {now.toLocaleTimeString("en-SG", { hour: "numeric", minute: "2-digit", hour12: true }).split(" ")[0]}
-              </p>
-              <p className="text-[11px] font-semibold text-muted-foreground">
-                {now.toLocaleTimeString("en-SG", { hour: "numeric", minute: "2-digit", hour12: true }).split(" ")[1]?.toUpperCase()}
-              </p>
-            </div>
+      {/* Day navigation — single day with arrows (no week strip) */}
+      <div className="px-4 pt-2.5 pb-2 shrink-0 relative z-20 bg-background">
+        <div className="flex items-center gap-2">
+          <button onClick={() => changeDay(-1)} className="w-9 h-9 rounded-xl bg-card border border-border flex items-center justify-center active:bg-muted transition-colors">
+            <ChevronLeft size={18} className="text-foreground" />
+          </button>
+          <div className="flex-1 text-center">
+            <p className={`text-sm font-bold leading-tight ${isSelectedToday ? "text-primary" : "text-foreground"}`}>
+              {isSelectedToday ? "Today" : selectedDay.toLocaleDateString("en-SG", { weekday: "long" })}
+            </p>
+            <p className="text-xs text-muted-foreground">{selectedDay.toLocaleDateString("en-SG", { day: "numeric", month: "long" })}</p>
+          </div>
+          <button onClick={() => changeDay(1)} className="w-9 h-9 rounded-xl bg-card border border-border flex items-center justify-center active:bg-muted transition-colors">
+            <ChevronRight size={18} className="text-foreground" />
+          </button>
+          {!isSelectedToday && (
+            <button onClick={() => setSelectedDay(new Date())} className="ml-1 text-xs font-bold px-3 h-9 rounded-xl bg-primary text-primary-foreground active:opacity-80">
+              Today
+            </button>
+          )}
+        </div>
+        <div className="mt-2 flex items-center gap-2">
+          <div className="flex-1 h-1.5 bg-muted rounded-full overflow-hidden">
+            <div className="h-full bg-emerald-500 rounded-full transition-all" style={{ width: `${total ? (takenCount / total) * 100 : 0}%` }} />
+          </div>
+          <p className="text-xs font-semibold text-muted-foreground shrink-0">{takenCount}/{total} taken</p>
+        </div>
+      </div>
+
+      {/* Refill reminder */}
+      {refillAlerts.length > 0 && (
+        <div className="mx-4 mb-1 bg-amber-50 border border-amber-200 rounded-xl px-3 py-2 shrink-0 relative z-20">
+          <div className="flex items-center gap-2">
+            <RefreshCw size={13} className="text-amber-600 shrink-0" />
+            <p className="text-sm font-semibold text-amber-900">Refill needed soon</p>
+            <p className="text-xs text-amber-700 ml-auto font-medium">{refillAlerts.map(m => m.name).join(", ")}</p>
           </div>
         </div>
+      )}
 
-        {/* Refill reminder — below greeting */}
-        {refillAlerts.length > 0 && (
-          <div className="bg-amber-50 border border-amber-200 rounded-xl px-3 py-2.5">
-            <div className="flex items-center gap-2 mb-1.5">
-              <RefreshCw size={13} className="text-amber-600 shrink-0" />
-              <p className="text-sm font-semibold text-amber-900">Refill needed</p>
-              <p className="text-xs text-amber-600 ml-auto">Caregiver notified</p>
+      {/* Timeline */}
+      <div ref={scrollRef} data-tour="elder-schedule" onScroll={onTimelineScroll} className="relative flex-1 overflow-y-auto scrollbar-none border-t border-border">
+        <div className="relative" style={{ height: TIMELINE_PX + TOP_PAD + BOTTOM_PAD }}>
+          {/* hour grid */}
+          {hourTicks.map(hr => (
+            <div key={hr} className="absolute left-0 right-0 flex items-start" style={{ top: topFor(hr * 60) }}>
+              <span className="w-14 shrink-0 pl-3 -mt-2 text-xs font-semibold text-muted-foreground/70 font-mono">
+                {minutesToClock(hr * 60).replace(":00", "")}
+              </span>
+              <div className="flex-1 h-px bg-border/50 mt-0.5" />
             </div>
-            {refillAlerts.map(m => (
-              <div key={m.id} className="flex items-center justify-between py-0.5">
-                <p className="text-sm text-amber-800">{m.name}</p>
-                <p className="text-sm font-bold text-amber-700">{m.refillDaysLeft} left</p>
-              </div>
-            ))}
-          </div>
-        )}
+          ))}
 
-        {/* Confirmed toast */}
-        {confirmedId !== null && (
-          <div className="bg-emerald-500 text-white rounded-2xl p-4 flex items-center gap-3">
-            <CheckCircle2 size={22} />
-            <div>
-              <p className="font-semibold text-base">Recorded! Well done 🌟</p>
-              <p className="text-sm opacity-90">Your caregiver has been notified</p>
+          {/* now line (today only) */}
+          {isSelectedToday && nowInWindow && (
+            <div className="absolute left-0 right-0 z-20 flex items-center pointer-events-none" style={{ top: topFor(nowMinutes) }}>
+              <span className="ml-2 shrink-0 text-[11px] font-bold text-white bg-red-500 rounded-full px-2 py-0.5 leading-none">
+                {now.toLocaleTimeString("en-SG", { hour: "numeric", minute: "2-digit", hour12: true })}
+              </span>
+              <div className="flex-1 h-0.5 bg-red-500/80" />
             </div>
-          </div>
-        )}
+          )}
 
-        {/* Week strip + progress */}
-        <div className="bg-card rounded-2xl border border-border overflow-hidden">
-          {/* Week day selector */}
-          <div className="px-3 pt-3 pb-2">
-            <div className="flex items-center justify-between mb-2">
-              <div className="flex items-center gap-1">
-                <button onClick={() => setWeekOffset(o => o - 1)} className="w-7 h-7 rounded-lg bg-muted flex items-center justify-center active:bg-muted/70 transition-colors">
-                  <ChevronLeft size={14} className="text-foreground" />
-                </button>
-                <span className="text-xs font-semibold text-foreground px-1">{weekLabel}</span>
-                <button onClick={() => setWeekOffset(o => o + 1)} className="w-7 h-7 rounded-lg bg-muted flex items-center justify-center active:bg-muted/70 transition-colors">
-                  <ChevronRight size={14} className="text-foreground" />
-                </button>
-              </div>
-              <button
-                onClick={() => { setSelectedDay(new Date()); setWeekOffset(0); }}
-                className={`flex items-center gap-1.5 text-xs font-bold px-3 py-1.5 rounded-full transition-all ${
-                  isSelectedToday && weekOffset === 0
-                    ? "bg-primary/10 text-primary cursor-default"
-                    : "bg-primary text-primary-foreground active:opacity-80"
-                }`}
-              >
-                <Clock size={11} />
-                Today
+          {/* dose slots, anchored at their time */}
+          {slots.map(slot => (
+            <div key={slot.minutes} className="absolute left-14 right-3 z-10 space-y-2" style={{ top: topFor(slot.minutes) }}>
+              {slot.meds.map(m => renderCard(m, slot.vague, slot.note))}
+            </div>
+          ))}
+
+          {slots.length === 0 && (
+            <div className="absolute left-14 right-3 top-8 text-center text-sm text-muted-foreground">No medications scheduled.</div>
+          )}
+        </div>
+      </div>
+
+      {/* Snap-to-now button */}
+      {isSelectedToday && showJump && (
+        <button
+          onClick={() => jumpToNow("smooth")}
+          className="absolute bottom-4 right-4 z-30 flex items-center gap-1.5 bg-primary text-primary-foreground rounded-full pl-3 pr-4 py-2.5 shadow-lg active:scale-95 transition-transform"
+        >
+          <LocateFixed size={16} />
+          <span className="text-sm font-bold">Now</span>
+        </button>
+      )}
+
+      {/* Confirmation toast — centred, fades out rather than vanishing abruptly */}
+      {confirmedId !== null && (
+        <div className={`absolute inset-0 z-40 flex items-center justify-center pointer-events-none transition-opacity duration-500 ${toastVisible ? "opacity-100" : "opacity-0"}`}>
+          <div className="bg-emerald-500 text-white rounded-2xl px-6 py-5 flex items-center gap-3 shadow-xl">
+            <CheckCircle2 size={24} />
+            <p className="font-semibold text-base">Recorded! Well done 🌟</p>
+          </div>
+        </div>
+      )}
+
+      {/* "I Took It" — adjust time popup */}
+      {pendingDose && (
+        <div className="absolute inset-0 z-50 flex items-end justify-center bg-black/40" onClick={() => setPendingDose(null)}>
+          <div className="w-full bg-background rounded-t-3xl p-5 pb-7 animate-in slide-in-from-bottom duration-200" onClick={e => e.stopPropagation()}>
+            <div className="flex items-center justify-between mb-4">
+              <h3 className="font-['Fraunces'] text-xl font-semibold text-foreground">Mark as taken</h3>
+              <button onClick={() => setPendingDose(null)} className="w-8 h-8 rounded-full bg-muted flex items-center justify-center">
+                <X size={16} className="text-muted-foreground" />
               </button>
             </div>
-            <div className="flex gap-1">
-              {weekDays.map((d, i) => {
-                const todayDay    = isToday(d);
-                const selectedDay_ = d.toDateString() === selectedDay.toDateString();
-                const pastDay     = isPast(d);
-                const adherenceDot = pastDay
-                  ? ((d.getDate() * 3 + 5) % 10 > 2 ? "bg-emerald-400" : "bg-red-400")
-                  : todayDay ? "bg-primary" : "bg-muted-foreground/20";
 
-                return (
-                  <button
-                    key={i}
-                    onClick={() => setSelectedDay(d)}
-                    className={`flex-1 flex flex-col items-center gap-1 py-2 rounded-xl transition-colors
-                      ${selectedDay_ && !todayDay ? "bg-primary/10 ring-2 ring-primary/40" : ""}
-                      ${todayDay && selectedDay_ ? "bg-primary/10 ring-2 ring-primary" : ""}
-                      ${todayDay && !selectedDay_ ? "bg-primary/5" : ""}
-                      ${!todayDay && !selectedDay_ ? "active:bg-muted/50" : ""}
-                    `}
-                  >
-                    <p className={`text-[10px] font-semibold ${todayDay ? "text-primary" : selectedDay_ ? "text-primary" : "text-muted-foreground"}`}>
-                      {DAYS[d.getDay()]}
-                    </p>
-                    <p className={`text-sm font-bold ${todayDay || selectedDay_ ? "text-primary" : "text-foreground"}`}>
-                      {d.getDate()}
-                    </p>
-                    <div className={`w-1.5 h-1.5 rounded-full ${adherenceDot}`} />
-                  </button>
-                );
-              })}
-            </div>
-          </div>
-
-        </div>
-
-        {/* Medication cards — chronological, compact for taken */}
-        <div className="space-y-2.5">
-          {[...dayMeds].sort((a, b) => parseTime(a.time) - parseTime(b.time)).map(m => {
-            const isNext   = m.id === nextMedId && confirmedId === null;
-            const isTaken  = m.status === "taken";
-            const isMissed = m.status === "missed";
-            const photo    = MED_PHOTOS[m.name] ?? "https://images.unsplash.com/photo-1584308666744-24d5c474f2ae?w=120&h=120&fit=crop&auto=format";
-            const direction = MED_SIMPLE[m.name] ?? "Take as directed by your doctor.";
-            const shape    = MED_SHAPES[m.name];
-
-            /* Taken — compact row */
-            if (isTaken) {
-              return (
-                <div key={m.id} className="rounded-xl border border-border bg-card flex items-center gap-3 px-3 py-2.5 opacity-55">
-                  <div className="w-9 h-9 rounded-lg overflow-hidden shrink-0 bg-muted">
-                    <img src={photo} alt={m.name} className="w-full h-full object-cover" />
-                  </div>
-                  <div className="flex-1 min-w-0">
-                    <p className="text-sm font-semibold text-muted-foreground line-through leading-snug">{m.name}</p>
-                    <p className="text-xs text-muted-foreground/70">{m.takenAt ? `Taken at ${m.takenAt}` : "Taken"}</p>
-                    {colourBlind && shape && (
-                      <p className="text-xs text-muted-foreground/70">{shape.shape} · {shape.marking}</p>
-                    )}
-                  </div>
-                  <div className="flex items-center gap-1.5 shrink-0">
-                    <span className="text-xs font-semibold text-muted-foreground bg-muted px-2 py-0.5 rounded-lg">{m.time}</span>
-                    <CheckCircle2 size={16} className="text-emerald-500" />
-                  </div>
-                </div>
-              );
-            }
-
-            /* Missed / Current / Upcoming — full card */
-            const cardCls = isNext   ? "border-2 border-primary bg-sky-50/60 shadow-sm"
-                          : isMissed ? "border-2 border-orange-400 bg-orange-50 shadow-sm"
-                          :            "border border-border bg-card";
-            const timeCls = isNext   ? "bg-primary text-white"
-                          : isMissed ? "bg-orange-100 text-orange-700"
-                          :            "bg-muted text-muted-foreground";
-
-            return (
-              <div key={m.id} className={`rounded-2xl overflow-hidden ${cardCls}`}>
-                <div className="p-4">
-                  <div className="flex items-start gap-3">
-                    <div className="w-[62px] h-[62px] rounded-xl overflow-hidden shrink-0 bg-muted">
-                      <img src={photo} alt={m.name} className="w-full h-full object-cover" />
-                    </div>
-                    <div className="flex-1 min-w-0">
-                      <div className="flex items-start justify-between gap-2">
-                        <div className="flex items-center gap-1.5 flex-wrap">
-                          <p className="font-bold text-[17px] text-foreground leading-snug">{m.name}</p>
-                          {isMissed && (
-                            <span className="flex items-center gap-1 bg-orange-100 text-orange-700 text-[10px] font-bold px-2 py-0.5 rounded-full">
-                              <AlertTriangle size={9} />Missed
-                            </span>
-                          )}
-                        </div>
-                        <span className={`text-base font-bold px-2.5 py-0.5 rounded-xl shrink-0 whitespace-nowrap ${timeCls}`}>{m.time}</span>
-                      </div>
-                      <p className="text-sm text-muted-foreground mt-1.5">{direction}</p>
-                      {colourBlind && shape && (
-                        <p className="text-xs text-muted-foreground mt-1">{shape.shape} · {shape.marking}</p>
-                      )}
-                    </div>
-                  </div>
-                </div>
-
-                {isSelectedToday && (isNext || isMissed) ? (
-                  <button
-                    onClick={() => handleLogDose(m.id)}
-                    className={`w-full flex items-center justify-center gap-2.5 py-3.5 border-t font-bold text-[15px] active:opacity-80 transition-opacity ${
-                      isNext ? "border-primary/20 bg-primary/10 text-primary" : "border-orange-200 bg-orange-100/60 text-orange-700"
-                    }`}
-                  >
-                    <div className={`w-6 h-6 rounded-full border-2 flex items-center justify-center ${isNext ? "border-primary" : "border-orange-500"}`}>
-                      <Check size={12} strokeWidth={3} className={isNext ? "text-primary" : "text-orange-600"} />
-                    </div>
-                    I Took It ✓
-                  </button>
-                ) : (
-                  <div className="w-full flex items-center justify-center gap-2 py-2.5 border-t border-border/40">
-                    <Clock size={13} className="text-muted-foreground" />
-                    <p className="text-xs text-muted-foreground font-medium">
-                      {isFuture(selectedDay) ? "Scheduled" : "Coming up"}
-                    </p>
-                  </div>
-                )}
+            <div className="flex items-center gap-3 mb-5">
+              <div className="w-12 h-12 rounded-xl overflow-hidden bg-muted shrink-0">
+                <img src={MED_PHOTOS[pendingDose.name] ?? ""} alt={pendingDose.name} className="w-full h-full object-cover" />
               </div>
-            );
-          })}
-        </div>
+              <div>
+                <p className="font-bold text-[17px] text-foreground">{pendingDose.name}</p>
+                <p className="text-sm text-muted-foreground">Scheduled for {resolveDose(pendingDose).clock}</p>
+              </div>
+            </div>
 
-        {/* End line */}
-        <div className="flex items-center gap-3 py-2">
-          <div className="flex-1 h-px bg-border" />
-          <p className="text-[10px] text-muted-foreground uppercase tracking-widest font-medium">End of today</p>
-          <div className="flex-1 h-px bg-border" />
-        </div>
+            <label className="block text-sm font-semibold text-foreground mb-2">What time did you take it?</label>
+            <div className="flex items-center gap-2 mb-3">
+              <input
+                type="time"
+                value={takenInput}
+                onChange={e => setTakenInput(e.target.value)}
+                className="flex-1 bg-input-background border border-border rounded-xl px-4 py-3 text-lg font-bold text-foreground outline-none focus:border-primary"
+              />
+              <button onClick={() => setTakenInput(to24hInput(new Date()))} className="px-4 py-3 rounded-xl bg-muted text-sm font-bold text-foreground active:bg-muted/70">
+                Just now
+              </button>
+            </div>
+            <p className="text-xs text-muted-foreground mb-5">You'll log it as <span className="font-semibold text-foreground">{takenInput ? input24hTo12h(takenInput) : "—"}</span></p>
 
-      </div>
+            <button onClick={confirmTake} className="w-full h-13 py-4 rounded-2xl bg-primary text-primary-foreground text-base font-bold active:scale-[0.98] transition-transform flex items-center justify-center gap-2">
+              <Check size={18} strokeWidth={3} />Confirm
+            </button>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
