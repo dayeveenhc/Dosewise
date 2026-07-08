@@ -16,9 +16,17 @@ const BOTTOM_PAD = 140;                    // clears the bottom nav
 const TIMELINE_PX = (END_HOUR - START_HOUR) * HOUR_PX;
 const topFor = (minutes: number) => (Math.max(START_MIN, Math.min(END_MIN, minutes)) - START_MIN) * PX_PER_MIN + TOP_PAD;
 
-// DEMO ONLY: pretend "now" is this clock time so missed/upcoming states are
-// visible regardless of the real clock. Set to null to use the real time.
+// Keep the timeline tied to the actual device clock so the "Now" marker and
+// medication statuses follow real time while the screen is open.
 const DEMO_NOW: string | null = null;
+
+function getLiveNow(): Date {
+  const mins = DEMO_NOW ? clockToMinutes(DEMO_NOW) : null;
+  if (mins == null) return new Date();
+  const d = new Date();
+  d.setHours(Math.floor(mins / 60), mins % 60, 0, 0);
+  return d;
+}
 
 // Parse a "7:00 AM" clock string to minutes-since-midnight, or null if it isn't
 // a concrete clock time.
@@ -41,6 +49,14 @@ function minutesToClock(minutes: number): string {
   return `${h12}:${String(mm).padStart(2, "0")} ${period}`;
 }
 
+function formatSlotTime(minutes: number): string {
+  const clock = minutesToClock(minutes);
+  if (minutes % 60 === 0) {
+    return clock.replace(/:00\s*/, " ");
+  }
+  return clock;
+}
+
 // Resolve a dose's time to a concrete clock time. Concrete times pass through;
 // vague / meal-relative ones ("after breakfast") fall back to the caregiver /
 // national-average meal times in MEAL_TIMES.
@@ -51,15 +67,6 @@ function resolveDose(m: Medication): { minutes: number; clock: string; vague: bo
   const key = Object.keys(MEAL_TIMES).sort((a, b) => b.length - a.length).find(k => hay.includes(k));
   const clock = key ? MEAL_TIMES[key] : "12:00 PM";
   return { minutes: clockToMinutes(clock)!, clock, vague: true, note: m.time };
-}
-
-// Real clock, or the DEMO_NOW override pinned onto today's date.
-function makeNow(): Date {
-  const mins = DEMO_NOW ? clockToMinutes(DEMO_NOW) : null;
-  if (mins == null) return new Date();
-  const d = new Date();
-  d.setHours(Math.floor(mins / 60), mins % 60, 0, 0);
-  return d;
 }
 
 const to24hInput = (d: Date) => `${String(d.getHours()).padStart(2, "0")}:${String(d.getMinutes()).padStart(2, "0")}`;
@@ -74,18 +81,27 @@ export function ElderlyHomeScreen({ patient, onLogDose, onOpenTravel }: {
   onOpenTravel: () => void;
 }) {
   const { colourBlind } = useAccessibility();
-  const [now, setNow] = useState(makeNow());
+  const [now, setNow] = useState<Date>(() => getLiveNow());
   const [selectedDay, setSelectedDay] = useState<Date>(new Date());
   const [confirmedId, setConfirmedId] = useState<number | null>(null);
   const [toastVisible, setToastVisible] = useState(false);
   const [pendingDose, setPendingDose] = useState<Medication | null>(null);
   const [takenInput, setTakenInput] = useState("");
   const [showJump, setShowJump] = useState(false);
+  const [expandedSlots, setExpandedSlots] = useState<Record<number, boolean>>({});
   const scrollRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
-    const id = setInterval(() => setNow(makeNow()), 30000);
-    return () => clearInterval(id);
+    const syncNow = () => setNow(getLiveNow());
+    const id = window.setInterval(syncNow, 30000);
+    window.addEventListener("focus", syncNow);
+    document.addEventListener("visibilitychange", syncNow);
+
+    return () => {
+      window.clearInterval(id);
+      window.removeEventListener("focus", syncNow);
+      document.removeEventListener("visibilitychange", syncNow);
+    };
   }, []);
 
   const today = now;
@@ -127,6 +143,27 @@ export function ElderlyHomeScreen({ patient, onLogDose, onOpenTravel }: {
     }
     return [...byMinute.values()].sort((a, b) => a.minutes - b.minutes);
   }, [dayMeds]);
+
+  const getSlotHeightPx = (slot: { minutes: number; clock: string; vague: boolean; note?: string; meds: (Medication & { status: MedStatus })[] }, expanded: boolean) => {
+    if (slot.meds.length > 1) {
+      return expanded ? Math.min(340, 54 + slot.meds.length * 86) : 54;
+    }
+    return 126;
+  };
+
+  const slotLayout = useMemo(() => {
+    let cursorTop = TOP_PAD;
+
+    return slots.reduce<Array<{ minutes: number; clock: string; vague: boolean; note?: string; meds: (Medication & { status: MedStatus })[]; top: number; height: number }>>((acc, slot) => {
+      const expanded = expandedSlots[slot.minutes] ?? false;
+      const baseTop = topFor(slot.minutes);
+      const height = getSlotHeightPx(slot, expanded);
+      const top = Math.max(baseTop, cursorTop);
+      acc.push({ ...slot, top, height });
+      cursorTop = top + height + 12;
+      return acc;
+    }, []);
+  }, [slots, expandedSlots]);
 
   // --- scroll: snap to now on load / day change ----------------------------
   const jumpToNow = (behavior: ScrollBehavior = "smooth") => {
@@ -170,6 +207,10 @@ export function ElderlyHomeScreen({ patient, onLogDose, onOpenTravel }: {
     const d = new Date(selectedDay);
     d.setDate(d.getDate() + delta);
     setSelectedDay(d);
+  };
+
+  const toggleSlot = (minutes: number) => {
+    setExpandedSlots(prev => ({ ...prev, [minutes]: !prev[minutes] }));
   };
 
   const hourTicks = Array.from({ length: END_HOUR - START_HOUR + 1 }, (_, i) => START_HOUR + i);
@@ -320,13 +361,11 @@ export function ElderlyHomeScreen({ patient, onLogDose, onOpenTravel }: {
 
       {/* Timeline */}
       <div ref={scrollRef} data-tour="elder-schedule" onScroll={onTimelineScroll} className="relative flex-1 overflow-y-auto scrollbar-none border-t border-border">
-        <div className="relative" style={{ height: TIMELINE_PX + TOP_PAD + BOTTOM_PAD }}>
+        <div className="relative" style={{ height: Math.max(TIMELINE_PX + TOP_PAD + BOTTOM_PAD, (slotLayout[slotLayout.length - 1]?.top ?? TOP_PAD) + (slotLayout[slotLayout.length - 1]?.height ?? 0) + BOTTOM_PAD + 24) }}>
           {/* hour grid */}
           {hourTicks.map(hr => (
             <div key={hr} className="absolute left-0 right-0 flex items-start" style={{ top: topFor(hr * 60) }}>
-              <span className="w-14 shrink-0 pl-3 -mt-2 text-xs font-semibold text-muted-foreground/70 font-mono">
-                {minutesToClock(hr * 60).replace(":00", "")}
-              </span>
+              <div className="w-14 shrink-0" />
               <div className="flex-1 h-px bg-border/50 mt-0.5" />
             </div>
           ))}
@@ -342,11 +381,44 @@ export function ElderlyHomeScreen({ patient, onLogDose, onOpenTravel }: {
           )}
 
           {/* dose slots, anchored at their time */}
-          {slots.map(slot => (
-            <div key={slot.minutes} className="absolute left-14 right-3 z-10 space-y-2" style={{ top: topFor(slot.minutes) }}>
-              {slot.meds.map(m => renderCard(m, slot.vague, slot.note))}
-            </div>
-          ))}
+          {slotLayout.map(slot => {
+            const isExpanded = expandedSlots[slot.minutes] ?? false;
+            const isMulti = slot.meds.length > 1;
+
+            return (
+              <div key={slot.minutes} className="absolute left-0 right-0 z-10" style={{ top: slot.top }}>
+                <div className="absolute left-0 w-14 pr-2.5 z-20" style={{ top: 6 }}>
+                  <p className="text-right text-[11px] font-semibold leading-none text-muted-foreground/80">
+                    {formatSlotTime(slot.minutes)}
+                  </p>
+                </div>
+                <div className="absolute left-14 right-3">
+                {isMulti && (
+                  <button
+                    type="button"
+                    onClick={() => toggleSlot(slot.minutes)}
+                    className="mb-2 flex w-full items-center justify-between rounded-xl border border-border/70 bg-background/90 px-3 py-2 text-left shadow-sm"
+                    aria-expanded={isExpanded}
+                  >
+                    <div className="min-w-0">
+                      <p className="text-[12px] font-semibold text-foreground">{slot.meds.length} medications</p>
+                      <p className="truncate text-[11px] text-muted-foreground">
+                        {slot.meds.slice(0, 2).map(m => m.name).join(", ")} {slot.meds.length > 2 ? "…" : ""}
+                      </p>
+                    </div>
+                    <span className="text-[11px] font-semibold text-primary">{isExpanded ? "Hide" : "Tap to view"}</span>
+                  </button>
+                )}
+
+                {(!isMulti || isExpanded) && (
+                  <div className={`flex flex-col gap-2 ${isMulti ? "max-h-[320px] overflow-y-auto pr-1 scrollbar-none" : ""}`}>
+                    {slot.meds.map(m => renderCard(m, slot.vague, slot.note))}
+                  </div>
+                )}
+                </div>
+              </div>
+            );
+          })}
 
           {slots.length === 0 && (
             <div className="absolute left-14 right-3 top-8 text-center text-sm text-muted-foreground">No medications scheduled.</div>

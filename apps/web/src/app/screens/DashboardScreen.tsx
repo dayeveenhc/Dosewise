@@ -4,6 +4,8 @@ import {
 } from "lucide-react";
 import type { Patient, Screen } from "../types";
 import { Card, SectionHeader, QuickAction } from "../components/shared";
+import { useLanguage } from "../lib/languageContext";
+import { t } from "../lib/language";
 
 function AdherenceRing({ value }: { value: number }) {
   const size = 112;
@@ -30,6 +32,7 @@ function AdherenceRing({ value }: { value: number }) {
 }
 
 export function DashboardScreen({ patient, onNavigate }: { patient: Patient; onNavigate: (s: Screen) => void }) {
+  const { language } = useLanguage();
   const taken = patient.medications.filter(m => m.status === "taken").length;
   const missed = patient.medications.filter(m => m.status === "missed").length;
   const upcoming = patient.medications.filter(m => m.status === "upcoming").length;
@@ -41,13 +44,13 @@ export function DashboardScreen({ patient, onNavigate }: { patient: Patient; onN
       {/* Adherence overview */}
       <Card className="p-3.5" data-tour="cg-dashboard">
         <div className="flex items-start justify-between gap-3">
-          <p className="text-[10px] text-muted-foreground uppercase tracking-widest font-medium mb-0.5">Today's Adherence</p>
+          <p className="text-[10px] text-muted-foreground uppercase tracking-widest font-medium mb-0.5">{t(language, "home.today")} {t(language, "nav.medications")}</p>
           <button
             onClick={() => onNavigate("timeline")}
             className="shrink-0 flex items-center gap-1 text-xs font-semibold text-primary bg-secondary rounded-full px-3 py-1.5 active:opacity-80 transition-opacity whitespace-nowrap -mt-1"
           >
             <ClipboardList size={12} />
-            View Schedule
+            {t(language, "common.viewSchedule")}
           </button>
         </div>
         <p className="font-['Fraunces'] text-4xl font-semibold text-foreground leading-none">
@@ -75,12 +78,12 @@ export function DashboardScreen({ patient, onNavigate }: { patient: Patient; onN
           <div className="flex items-start gap-3">
             <AlertTriangle size={18} className="text-orange-600 shrink-0 mt-0.5" />
             <div className="flex-1 min-w-0">
-              <p className="text-sm font-semibold text-orange-800">Missed dose alert</p>
+              <p className="text-sm font-semibold text-orange-800">{t(language, "common.missed")} dose alert</p>
               {patient.medications.filter(m => m.status === "missed").map(m => (
                 <p key={m.id} className="text-xs text-orange-700 mt-0.5">{m.name} {m.dose} — was due at {m.time}</p>
               ))}
             </div>
-            <button className="shrink-0 bg-orange-600 text-white text-xs font-semibold rounded-xl px-3 py-1.5 flex items-center gap-1">
+            <button onClick={() => onNavigate("messages")} className="shrink-0 bg-orange-600 text-white text-xs font-semibold rounded-xl px-3 py-1.5 flex items-center gap-1">
               <Send size={11} /> Remind
             </button>
           </div>
@@ -90,7 +93,7 @@ export function DashboardScreen({ patient, onNavigate }: { patient: Patient; onN
       {/* Refill alerts */}
       {refillAlerts.length > 0 && (
         <div>
-          <SectionHeader title="Refill Alerts" />
+          <SectionHeader title={t(language, "home.refillNeeded")} />
           <div className="space-y-2">
             {refillAlerts.map(m => (
               <div key={m.id} className="bg-amber-50 border border-amber-200 rounded-2xl px-4 py-3 flex items-center gap-3">
@@ -112,24 +115,25 @@ export function DashboardScreen({ patient, onNavigate }: { patient: Patient; onN
         <div className="flex gap-2">
           <QuickAction
             icon={<Clock size={20} className="text-emerald-700" />}
-            label="Check Schedule"
+            label={t(language, "common.checkSchedule")}
             colour="bg-emerald-50"
             onClick={() => onNavigate("timeline")}
           />
           <QuickAction
             icon={<Send size={20} className="text-primary" />}
-            label="Send Reminder"
+            label={t(language, "common.sendReminder")}
             colour="bg-secondary"
+            onClick={() => onNavigate("messages")}
           />
           <QuickAction
             icon={<MessageSquare size={20} className="text-accent" />}
-            label="Leave Note"
+            label={t(language, "common.leaveNote")}
             colour="bg-orange-50"
             onClick={() => onNavigate("messages")}
           />
           <QuickAction
             icon={<AlertTriangle size={20} className="text-red-600" />}
-            label="Emergency"
+            label={t(language, "common.emergency")}
             colour="bg-red-50"
           />
         </div>

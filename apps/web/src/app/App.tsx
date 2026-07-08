@@ -1,10 +1,10 @@
 import { useEffect, useState } from "react";
 import type { Session } from "@supabase/supabase-js";
-import { Droplets, ArrowLeft, Bell, MessageSquare, HelpCircle } from "lucide-react";
+import { Droplets, ArrowLeft, Bell, MessageSquare, HelpCircle, UserRound } from "lucide-react";
 import type { AppMode, Screen, Patient, Medication } from "./types";
 import { PATIENTS, NOTIFICATIONS } from "./data/patients";
 import { NAV_ITEMS } from "./nav";
-import { PatientSwitcher } from "./components/shared";
+import { LiveStatusBar, PatientSwitcher } from "./components/shared";
 import { supabase } from "./lib/supabase";
 import { ensureProfile, fetchElderMedications, fetchArchivedMedications, addMedication, archiveMedication, to24h } from "./lib/medications";
 import { fetchProfileRole, fetchProfile } from "./lib/profile";
@@ -27,6 +27,7 @@ import { AccessibilityProvider } from "./accessibility.tsx";
 import { GuidedTour } from "./components/GuidedTour";
 import type { TourStep } from "./components/GuidedTour";
 import { ConfirmDialog } from "./components/ConfirmDialog";
+import { LanguageProvider } from "./lib/languageContext";
 
 export default function App() {
   const [session, setSession] = useState<Session | null>(null);
@@ -174,11 +175,12 @@ export default function App() {
   const patient = patients[selectedPatient];
   let nextMedId = patients.flatMap(p => p.medications).reduce((max, m) => Math.max(max, m.id), 0) + 1;
 
-  const handleAddPrescription = async (med: Omit<Medication, "id" | "status">) => {
+  const handleAddPrescription = async (med: Omit<Medication, "id" | "status"> & { times?: string[] }) => {
     if (!elderId) return;
+    const timeHHMMs = (med.times && med.times.length ? med.times : [med.time]).map(t => to24h(t));
     const medicationId = await addMedication(elderId, {
       name: med.name, dosage: med.dose, purpose: med.purpose,
-      timeHHMM: to24h(med.time), refillDays: med.refillDaysLeft,
+      timeHHMMs, refillDays: med.refillDaysLeft,
     });
     setPatients(prev => prev.map((p, i) => i !== selectedPatient ? p : {
       ...p,
@@ -212,19 +214,22 @@ export default function App() {
 
   if (authLoading) {
     return (
-      <div className="min-h-screen bg-stone-300 flex items-center justify-center p-4" style={{ fontFamily: "'DM Sans', system-ui, sans-serif" }}>
-        <div className="w-[390px] h-[844px] bg-background relative overflow-hidden rounded-[3rem] shadow-2xl border-[6px] border-stone-800 flex flex-col" />
-      </div>
+      <LanguageProvider>
+        <div className="min-h-screen bg-stone-300 flex items-center justify-center p-4" style={{ fontFamily: "'DM Sans', system-ui, sans-serif" }}>
+          <div className="w-[390px] h-[844px] bg-background relative overflow-hidden rounded-[3rem] shadow-2xl border-[6px] border-stone-800 flex flex-col" />
+        </div>
+      </LanguageProvider>
     );
   }
 
   if (appMode === "onboarding") {
     return (
-      <div className="min-h-screen bg-stone-300 flex items-center justify-center p-4" style={{ fontFamily: "'DM Sans', system-ui, sans-serif" }}>
-        <div className="w-[390px] h-[844px] bg-background relative overflow-hidden rounded-[3rem] shadow-2xl border-[6px] border-stone-800 flex flex-col">
-          {preAuthStage === "welcome" && (
-            <WelcomeScreen onSignIn={() => setPreAuthStage("signin")} onGetStarted={() => setPreAuthStage("mode")} />
-          )}
+      <LanguageProvider>
+        <div className="min-h-screen bg-stone-300 flex items-center justify-center p-4" style={{ fontFamily: "'DM Sans', system-ui, sans-serif" }}>
+          <div className="w-[390px] h-[844px] bg-background relative overflow-hidden rounded-[3rem] shadow-2xl border-[6px] border-stone-800 flex flex-col">
+            {preAuthStage === "welcome" && (
+              <WelcomeScreen onSignIn={() => setPreAuthStage("signin")} onGetStarted={() => setPreAuthStage("mode")} />
+            )}
           {preAuthStage === "signin" && (
             <LoginScreen onBack={() => setPreAuthStage("welcome")} onGetStarted={() => setPreAuthStage("mode")} />
           )}
@@ -248,43 +253,38 @@ export default function App() {
           )}
         </div>
       </div>
+      </LanguageProvider>
     );
   }
 
   if (appMode === "elderly") {
     return (
-      <div className="min-h-screen bg-stone-300 flex items-center justify-center p-4" style={{ fontFamily: "'DM Sans', system-ui, sans-serif" }}>
-        <div className="w-[390px] h-[844px] bg-background relative overflow-hidden rounded-[3rem] shadow-2xl border-[6px] border-stone-800 flex flex-col">
-          <AccessibilityProvider>
-            <ElderlyApp
-              patient={patients[0]}
-              elderId={elderId}
-              onUpdatePatient={(p) => setPatients(prev => [p, ...prev.slice(1)])}
-              onBack={openModeSwitch}
-              onSignOut={() => supabase.auth.signOut()}
-              startTour={justOnboarded}
-            />
-          </AccessibilityProvider>
+      <LanguageProvider>
+        <div className="min-h-screen bg-stone-300 flex items-center justify-center p-4" style={{ fontFamily: "'DM Sans', system-ui, sans-serif" }}>
+          <div className="w-[390px] h-[844px] bg-background relative overflow-hidden rounded-[3rem] shadow-2xl border-[6px] border-stone-800 flex flex-col">
+            <AccessibilityProvider>
+              <ElderlyApp
+                patient={patients[0]}
+                elderId={elderId}
+                onUpdatePatient={(p) => setPatients(prev => [p, ...prev.slice(1)])}
+                onBack={openModeSwitch}
+                onSignOut={() => supabase.auth.signOut()}
+                startTour={justOnboarded}
+              />
+            </AccessibilityProvider>
+          </div>
         </div>
-      </div>
+      </LanguageProvider>
     );
   }
 
   return (
-    <div className="min-h-screen bg-stone-300 flex items-center justify-center p-4" style={{ fontFamily: "'DM Sans', system-ui, sans-serif" }}>
-      {/* Phone frame */}
+    <LanguageProvider>
+      <div className="min-h-screen bg-stone-300 flex items-center justify-center p-4" style={{ fontFamily: "'DM Sans', system-ui, sans-serif" }}>
+        {/* Phone frame */}
       <div className="w-[390px] h-[844px] bg-background relative overflow-hidden rounded-[3rem] shadow-2xl border-[6px] border-stone-800 flex flex-col">
         {/* Status bar */}
-        <div className="flex items-center justify-between px-6 pt-3 pb-1 shrink-0 bg-background/80 backdrop-blur-sm">
-          <span className="text-xs font-semibold text-foreground font-mono">9:41</span>
-          <div className="flex items-center gap-1.5">
-            <div className="flex gap-0.5 items-end h-3">
-              {[2, 3, 4, 4].map((h, i) => <div key={i} className="w-1 bg-foreground rounded-sm" style={{ height: `${h * 3}px` }} />)}
-            </div>
-            <Droplets size={11} className="text-foreground" />
-            <div className="text-xs font-semibold text-foreground font-mono">100%</div>
-          </div>
-        </div>
+        <LiveStatusBar className="bg-background/80 backdrop-blur-sm" />
 
         {/* App header */}
         <div className="px-4 pt-2 pb-3 bg-background/80 backdrop-blur-sm border-b border-border shrink-0">
@@ -306,6 +306,9 @@ export default function App() {
               <div className="flex items-center gap-2">
                 <button onClick={() => setShowCaregiverTourConfirm(true)} className="w-8 h-8 bg-card border border-border rounded-xl flex items-center justify-center">
                   <HelpCircle size={15} className="text-muted-foreground" />
+                </button>
+                <button onClick={() => setScreen("settings")} className="w-8 h-8 bg-card border border-border rounded-xl flex items-center justify-center" title="Open settings">
+                  <UserRound size={15} className="text-primary" />
                 </button>
                 <button onClick={() => setScreen("messages")} className="w-8 h-8 bg-card border border-border rounded-xl flex items-center justify-center">
                   <MessageSquare size={15} className="text-accent" />
@@ -339,7 +342,7 @@ export default function App() {
           {screen === "notifications" && <NotificationsScreen />}
           {screen === "ai" && <AskMeiScreen patient={patient} elderId={elderId} onUpdatePatient={handleUpdatePatient} />}
           {screen === "messages" && <MessagesScreen />}
-          {screen === "settings" && <SettingsScreen onSwitchMode={openModeSwitch} onSignOut={() => supabase.auth.signOut()} />}
+          {screen === "settings" && <SettingsScreen onSwitchMode={openModeSwitch} onSignOut={() => supabase.auth.signOut()} onEditProfile={() => setShowEditProfile(true)} />}
         </div>
 
         {/* Modals */}
@@ -347,6 +350,7 @@ export default function App() {
           <AddPrescriptionSheet
             onClose={() => setShowAddPrescription(false)}
             onAdd={handleAddPrescription}
+            onAdded={() => setScreen("patient")}
           />
         )}
         {showEditProfile && (
@@ -406,5 +410,6 @@ export default function App() {
         </div>
       </div>
     </div>
+    </LanguageProvider>
   );
 }

@@ -2,8 +2,11 @@ import { useState } from "react";
 import { ChevronRight, Lock, Shield, Edit3, RefreshCw, Plus, CheckCircle2, LogOut } from "lucide-react";
 import { Card, SectionHeader } from "../components/shared";
 import { Switch } from "../components/ui/switch";
+import { useLanguage } from "../lib/languageContext";
+import { LANGUAGE_OPTIONS, t } from "../lib/language";
 
-export function SettingsScreen({ onSwitchMode, onSignOut }: { onSwitchMode: () => void; onSignOut: () => void }) {
+export function SettingsScreen({ onSwitchMode, onSignOut, onEditProfile }: { onSwitchMode: () => void; onSignOut: () => void; onEditProfile: () => void }) {
+  const { language, setLanguage } = useLanguage();
   const [notifMissed, setNotifMissed] = useState(true);
   const [notifRefill, setNotifRefill] = useState(true);
   const [notifSummary, setNotifSummary] = useState(true);
@@ -22,9 +25,25 @@ export function SettingsScreen({ onSwitchMode, onSignOut }: { onSwitchMode: () =
               <p className="text-xs text-muted-foreground">Primary Caregiver · wm.tan@gmail.com</p>
             </div>
           </div>
-          <button className="w-full flex items-center justify-between px-4 py-3 text-sm text-foreground font-medium">
+          <button onClick={onEditProfile} className="w-full flex items-center justify-between px-4 py-3 text-sm text-foreground font-medium">
             Edit profile <ChevronRight size={14} className="text-muted-foreground" />
           </button>
+        </Card>
+      </div>
+
+      {/* Language */}
+      <div>
+        <SectionHeader title={t(language, "settings.voiceAndLanguage")} />
+        <Card className="px-4 py-4">
+          <div className="flex items-center justify-between gap-3">
+            <div>
+              <p className="text-sm font-medium text-foreground">{t(language, "settings.language")}</p>
+              <p className="text-xs text-muted-foreground">{t(language, "settings.languageDesc")}</p>
+            </div>
+            <select value={language} onChange={e => setLanguage(e.target.value as any)} className="bg-muted rounded-xl px-3 py-2 text-sm font-medium text-foreground outline-none">
+              {LANGUAGE_OPTIONS.map(option => <option key={option.id} value={option.id}>{option.label}</option>)}
+            </select>
+          </div>
         </Card>
       </div>
 

@@ -4,8 +4,11 @@ import type { Patient, Medication, MedStatus } from "../types";
 import { StatusPill } from "../components/shared";
 import { MED_PHOTOS, MED_SIMPLE } from "../data/medications";
 import { DASH_DAYS } from "../lib/constants";
+import { useLanguage } from "../lib/languageContext";
+import { t } from "../lib/language";
 
 export function TimelineScreen({ patient }: { patient: Patient }) {
+  const { language } = useLanguage();
   const [view, setView] = useState<"daily" | "weekly">("daily");
   const today = new Date();
   const [weekOffset, setWeekOffset] = useState(0);
@@ -69,7 +72,7 @@ export function TimelineScreen({ patient }: { patient: Patient }) {
   return (
     <div className="px-4 py-5">
       <div className="flex items-baseline justify-between mb-4">
-        <h2 className="font-['Fraunces'] text-xl font-semibold text-foreground">Schedule</h2>
+        <h2 className="font-['Fraunces'] text-xl font-semibold text-foreground">{t(language, "common.schedule")}</h2>
         <span className="text-lg font-mono font-bold text-black">
           {now.toLocaleTimeString("en-SG", { hour: "numeric", minute: "2-digit" })}
         </span>
@@ -96,7 +99,7 @@ export function TimelineScreen({ patient }: { patient: Patient }) {
             }`}
           >
             <Clock size={11} />
-            Today
+            {t(language, "common.today")}
           </button>
         </div>
         <div className="flex gap-1">
@@ -140,13 +143,13 @@ export function TimelineScreen({ patient }: { patient: Patient }) {
           onClick={() => setView("daily")}
           className={`flex-1 py-2 rounded-lg text-xs font-semibold transition-colors ${view === "daily" ? "bg-card text-foreground shadow-sm" : "text-muted-foreground"}`}
         >
-          Daily
+          {t(language, "common.daily")}
         </button>
         <button
           onClick={() => setView("weekly")}
           className={`flex-1 py-2 rounded-lg text-xs font-semibold transition-colors ${view === "weekly" ? "bg-card text-foreground shadow-sm" : "text-muted-foreground"}`}
         >
-          Weekly
+          {t(language, "common.weekly")}
         </button>
       </div>
 
@@ -196,7 +199,7 @@ export function TimelineScreen({ patient }: { patient: Patient }) {
                   {med.status === "missed" && (
                     <div className="px-4 pb-3">
                       <button className="w-full bg-orange-50 border border-orange-200 text-orange-700 text-xs font-semibold rounded-xl py-2 flex items-center justify-center gap-1.5">
-                        <Send size={11} /> Send reminder to patient
+                        <Send size={11} /> {t(language, "common.sendReminder")} to patient
                       </button>
                     </div>
                   )}
@@ -244,10 +247,10 @@ export function TimelineScreen({ patient }: { patient: Patient }) {
             ))}
           </div>
           <div className="flex items-center gap-4 px-4 py-3 border-t border-border flex-wrap">
-            <span className="flex items-center gap-1.5 text-[10px] text-muted-foreground"><div className="w-2 h-2 rounded-full bg-emerald-500" />Taken</span>
-            <span className="flex items-center gap-1.5 text-[10px] text-muted-foreground"><div className="w-2 h-2 rounded-full bg-orange-500" />Missed</span>
-            <span className="flex items-center gap-1.5 text-[10px] text-muted-foreground"><div className="w-2 h-2 rounded-full bg-sky-400" />Upcoming</span>
-            <span className="flex items-center gap-1.5 text-[10px] text-muted-foreground"><span className="text-muted-foreground/40">✕</span>Not due</span>
+            <span className="flex items-center gap-1.5 text-[10px] text-muted-foreground"><div className="w-2 h-2 rounded-full bg-emerald-500" />{t(language, "common.taken")}</span>
+            <span className="flex items-center gap-1.5 text-[10px] text-muted-foreground"><div className="w-2 h-2 rounded-full bg-orange-500" />{t(language, "common.missed")}</span>
+            <span className="flex items-center gap-1.5 text-[10px] text-muted-foreground"><div className="w-2 h-2 rounded-full bg-sky-400" />{t(language, "common.upcoming")}</span>
+            <span className="flex items-center gap-1.5 text-[10px] text-muted-foreground"><span className="text-muted-foreground/40">✕</span>{t(language, "common.notDue")}</span>
           </div>
         </div>
       )}

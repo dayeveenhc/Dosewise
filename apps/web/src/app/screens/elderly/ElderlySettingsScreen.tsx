@@ -6,6 +6,8 @@ import type { Patient } from "../../types";
 import { MED_SHAPES, MED_PHOTOS, COMMON_CONDITIONS, COMMON_ALLERGIES, COMMON_DRUG_ALLERGIES } from "../../data/medications";
 import { fetchProfile, saveProfile } from "../../lib/profile";
 import { TagList, fieldCls } from "../setup/GuidedSetupWizard";
+import { useLanguage } from "../../lib/languageContext";
+import { LANGUAGE_OPTIONS, t } from "../../lib/language";
 
 export function Toggle({ on, onToggle }: { on: boolean; onToggle: () => void }) {
   return (
@@ -21,8 +23,8 @@ export function ElderlySettingsScreen({ patient, elderId, onUpdatePatient, onBac
   patient: Patient; elderId?: string; onUpdatePatient: (p: Patient) => void; onBack: () => void; onSignOut: () => void;
 }) {
   const { fontSize, setFontSize, highContrast, setHighContrast, colourBlind, setColourBlind } = useAccessibility();
+  const { language, setLanguage } = useLanguage();
   const [voiceEnabled, setVoiceEnabled] = useState(true);
-  const [language, setLanguage] = useState("English");
   const [notifications, setNotifications] = useState(true);
   const [showShapes, setShowShapes] = useState(false);
   const primary = patient.contacts.find(c => c.isPrimary);
@@ -116,18 +118,18 @@ export function ElderlySettingsScreen({ patient, elderId, onUpdatePatient, onBac
             onClick={() => setProfileOpen(v => !v)}
             className="w-full flex items-center justify-between px-4 py-3.5 font-semibold text-foreground"
           >
-            Your Profile
+            {t(language, "settings.yourProfile")}
             <ChevronDown size={16} className={`text-muted-foreground transition-transform ${profileOpen ? "rotate-180" : ""}`} />
           </button>
           {profileOpen && (
           <div className="px-4 pb-4 space-y-4 border-t border-border pt-4">
           <div className="flex gap-3">
             <div className="flex-1">
-              <label className="block text-xs font-semibold text-foreground mb-1.5">Age</label>
+              <label className="block text-xs font-semibold text-foreground mb-1.5">{t(language, "settings.age")}</label>
               <input type="number" value={ageDraft} onChange={e => setAgeDraft(e.target.value)} placeholder="e.g. 78" className={fieldCls} />
             </div>
             <div className="flex-1">
-              <label className="block text-xs font-semibold text-foreground mb-1.5">Gender</label>
+              <label className="block text-xs font-semibold text-foreground mb-1.5">{t(language, "settings.gender")}</label>
               <div className="flex gap-2">
                 {(["Female", "Male"] as const).map(g => (
                   <button
@@ -144,21 +146,21 @@ export function ElderlySettingsScreen({ patient, elderId, onUpdatePatient, onBac
 
           <div className="flex gap-3">
             <div className="flex-1">
-              <label className="block text-xs font-semibold text-foreground mb-1.5">Weight (kg)</label>
+              <label className="block text-xs font-semibold text-foreground mb-1.5">{t(language, "settings.weightKg")}</label>
               <input type="number" value={weightDraft} onChange={e => setWeightDraft(e.target.value)} placeholder="e.g. 60" className={fieldCls} />
             </div>
             <div className="flex-1">
-              <label className="block text-xs font-semibold text-foreground mb-1.5">Height (cm)</label>
+              <label className="block text-xs font-semibold text-foreground mb-1.5">{t(language, "settings.heightCm")}</label>
               <input type="number" value={heightDraft} onChange={e => setHeightDraft(e.target.value)} placeholder="e.g. 160" className={fieldCls} />
             </div>
           </div>
 
-          <TagList label="Medical conditions" placeholder="e.g. Diabetes, Blood Pressure" items={conditionsDraft} suggestions={COMMON_CONDITIONS} onAdd={v => setConditionsDraft(p => [...p, v])} onRemove={i => setConditionsDraft(p => p.filter((_, j) => j !== i))} />
-          <TagList label="General allergies" placeholder="e.g. Peanuts, Shellfish" items={allergiesDraft} suggestions={COMMON_ALLERGIES} onAdd={v => setAllergiesDraft(p => [...p, v])} onRemove={i => setAllergiesDraft(p => p.filter((_, j) => j !== i))} />
-          <TagList label="Medication allergies" placeholder="e.g. Penicillin" items={drugAllergiesDraft} suggestions={COMMON_DRUG_ALLERGIES} onAdd={v => setDrugAllergiesDraft(p => [...p, v])} onRemove={i => setDrugAllergiesDraft(p => p.filter((_, j) => j !== i))} />
+          <TagList label={t(language, "settings.medicalConditions")} placeholder="e.g. Diabetes, Blood Pressure" items={conditionsDraft} suggestions={COMMON_CONDITIONS} onAdd={v => setConditionsDraft(p => [...p, v])} onRemove={i => setConditionsDraft(p => p.filter((_, j) => j !== i))} />
+          <TagList label={t(language, "settings.generalAllergies")} placeholder="e.g. Peanuts, Shellfish" items={allergiesDraft} suggestions={COMMON_ALLERGIES} onAdd={v => setAllergiesDraft(p => [...p, v])} onRemove={i => setAllergiesDraft(p => p.filter((_, j) => j !== i))} />
+          <TagList label={t(language, "settings.medicationAllergies")} placeholder="e.g. Penicillin" items={drugAllergiesDraft} suggestions={COMMON_DRUG_ALLERGIES} onAdd={v => setDrugAllergiesDraft(p => [...p, v])} onRemove={i => setDrugAllergiesDraft(p => p.filter((_, j) => j !== i))} />
 
           <div>
-            <p className="text-sm font-semibold text-foreground mb-2">Meals & sleep</p>
+            <p className="text-sm font-semibold text-foreground mb-2">{t(language, "settings.mealsSleep")}</p>
             <div className="space-y-2.5">
               <div className="flex items-center gap-3">
                 <div className="w-9 h-9 rounded-xl bg-secondary flex items-center justify-center shrink-0"><Coffee size={16} className="text-primary" /></div>
@@ -185,7 +187,7 @@ export function ElderlySettingsScreen({ patient, elderId, onUpdatePatient, onBac
             className="w-full h-12 rounded-2xl bg-primary text-primary-foreground text-sm font-semibold flex items-center justify-center gap-2 disabled:opacity-40 active:scale-[0.98] transition-transform"
           >
             {profileSaving ? <Loader2 size={15} className="animate-spin" /> : profileSaved ? <Check size={15} /> : null}
-            {profileSaving ? "Saving…" : profileSaved ? "Saved!" : "Save changes"}
+            {profileSaving ? t(language, "settings.saving") : profileSaved ? t(language, "settings.saved") : t(language, "settings.saveChanges")}
           </button>
           </div>
           )}
@@ -195,13 +197,13 @@ export function ElderlySettingsScreen({ patient, elderId, onUpdatePatient, onBac
         <div className="bg-card rounded-2xl border border-border divide-y divide-border">
           <div className="px-4 py-3 flex items-center gap-2">
             <Shield size={15} className="text-primary" />
-            <p className="font-semibold text-foreground">Accessibility</p>
+            <p className="font-semibold text-foreground">{t(language, "settings.accessibility")}</p>
           </div>
 
           {/* Font size */}
           <div className="px-4 py-4" data-tour="elder-fontsize">
-            <p className="text-[15px] font-medium text-foreground mb-0.5">Text Size</p>
-            <p className="text-xs text-muted-foreground mb-3">Drag to make text smaller or larger</p>
+            <p className="text-[15px] font-medium text-foreground mb-0.5">{t(language, "settings.textSize")}</p>
+            <p className="text-xs text-muted-foreground mb-3">{t(language, "settings.textSizeDesc")}</p>
             <div className="flex items-center gap-3">
               <span className="text-xs font-semibold text-muted-foreground shrink-0">A</span>
               <input
@@ -220,8 +222,8 @@ export function ElderlySettingsScreen({ patient, elderId, onUpdatePatient, onBac
           {/* High contrast */}
           <div className="px-4 py-4 flex items-center justify-between gap-3">
             <div className="flex-1">
-              <p className="text-[15px] font-medium text-foreground">High Contrast</p>
-              <p className="text-xs text-muted-foreground">Bolder colours and stronger outlines for easier reading</p>
+              <p className="text-[15px] font-medium text-foreground">{t(language, "settings.highContrast")}</p>
+              <p className="text-xs text-muted-foreground">{t(language, "settings.highContrastDesc")}</p>
             </div>
             <Toggle on={highContrast} onToggle={() => setHighContrast(!highContrast)} />
           </div>
@@ -230,8 +232,8 @@ export function ElderlySettingsScreen({ patient, elderId, onUpdatePatient, onBac
           <div className="px-4 py-4">
             <div className="flex items-center justify-between gap-3 mb-3">
               <div className="flex-1">
-                <p className="text-[15px] font-medium text-foreground">Colour Blind Mode</p>
-                <p className="text-xs text-muted-foreground">Uses pill shape, markings, and text — not colour — to identify each medication</p>
+                <p className="text-[15px] font-medium text-foreground">{t(language, "settings.colourBlindMode")}</p>
+                <p className="text-xs text-muted-foreground">{t(language, "settings.colourBlindDesc")}</p>
               </div>
               <Toggle on={colourBlind} onToggle={() => setColourBlind(!colourBlind)} />
             </div>
@@ -242,7 +244,7 @@ export function ElderlySettingsScreen({ patient, elderId, onUpdatePatient, onBac
                   onClick={() => setShowShapes(v => !v)}
                   className="w-full flex items-center justify-between text-sm font-semibold text-foreground"
                 >
-                  <span className="flex items-center gap-1.5"><Eye size={13} className="text-primary" />Your medication descriptions</span>
+                  <span className="flex items-center gap-1.5"><Eye size={13} className="text-primary" />{t(language, "settings.medicationDescriptions")}</span>
                   <ChevronDown size={13} className={`text-muted-foreground transition-transform ${showShapes ? "rotate-180" : ""}`} />
                 </button>
                 {showShapes && (
@@ -271,36 +273,31 @@ export function ElderlySettingsScreen({ patient, elderId, onUpdatePatient, onBac
         </div>
 
         <div className="bg-card rounded-2xl border border-border divide-y divide-border" data-tour="elder-language">
-          <div className="px-4 py-3"><p className="font-semibold text-foreground">Voice & Language</p></div>
+          <div className="px-4 py-3"><p className="font-semibold text-foreground">{t(language, "settings.voiceAndLanguage")}</p></div>
           <div className="px-4 py-4 flex items-center justify-between gap-3">
             <div className="flex-1">
-              <p className="text-[15px] font-medium text-foreground">Read Aloud</p>
-              <p className="text-xs text-muted-foreground">Mei reads her replies out loud</p>
+              <p className="text-[15px] font-medium text-foreground">{t(language, "settings.readAloud")}</p>
+              <p className="text-xs text-muted-foreground">{t(language, "settings.readAloudDesc")}</p>
             </div>
             <Toggle on={voiceEnabled} onToggle={() => setVoiceEnabled(v => !v)} />
           </div>
           <div className="px-4 py-4 flex items-center justify-between">
             <div>
-              <p className="text-[15px] font-medium text-foreground">Language</p>
-              <p className="text-xs text-muted-foreground">Mei responds in this language</p>
+              <p className="text-[15px] font-medium text-foreground">{t(language, "settings.language")}</p>
+              <p className="text-xs text-muted-foreground">{t(language, "settings.languageDesc")}</p>
             </div>
-            <select value={language} onChange={e => setLanguage(e.target.value)} className="bg-muted rounded-xl px-3 py-2 text-sm font-medium text-foreground outline-none">
-              <option>English</option>
-              <option>华语 (Mandarin)</option>
-              <option>闽南话 (Hokkien)</option>
-              <option>粤语 (Cantonese)</option>
-              <option>தமிழ் (Tamil)</option>
-              <option>Melayu</option>
+            <select value={language} onChange={e => setLanguage(e.target.value as any)} className="bg-muted rounded-xl px-3 py-2 text-sm font-medium text-foreground outline-none">
+              {LANGUAGE_OPTIONS.map(option => <option key={option.id} value={option.id}>{option.label}</option>)}
             </select>
           </div>
         </div>
 
         <div className="bg-card rounded-2xl border border-border divide-y divide-border">
-          <div className="px-4 py-3"><p className="font-semibold text-foreground">Reminders</p></div>
+          <div className="px-4 py-3"><p className="font-semibold text-foreground">{t(language, "settings.reminders")}</p></div>
           <div className="px-4 py-4 flex items-center justify-between gap-3">
             <div className="flex-1">
-              <p className="text-[15px] font-medium text-foreground">Medication Reminders</p>
-              <p className="text-xs text-muted-foreground">Alert when it's time to take medication</p>
+              <p className="text-[15px] font-medium text-foreground">{t(language, "settings.medicationReminders")}</p>
+              <p className="text-xs text-muted-foreground">{t(language, "settings.medicationRemindersDesc")}</p>
             </div>
             <Toggle on={notifications} onToggle={() => setNotifications(v => !v)} />
           </div>
@@ -308,7 +305,7 @@ export function ElderlySettingsScreen({ patient, elderId, onUpdatePatient, onBac
 
         {primary && (
           <div className="bg-card rounded-2xl border border-border divide-y divide-border">
-            <div className="px-4 py-3"><p className="font-semibold text-foreground">Emergency Contact</p></div>
+            <div className="px-4 py-3"><p className="font-semibold text-foreground">{t(language, "settings.emergencyContact")}</p></div>
             <div className="px-4 py-4 flex items-center justify-between">
               <div>
                 <p className="text-[15px] font-medium text-foreground">{primary.name}</p>
@@ -323,11 +320,11 @@ export function ElderlySettingsScreen({ patient, elderId, onUpdatePatient, onBac
         )}
 
         <button onClick={onBack} className="w-full h-12 rounded-2xl border border-border text-muted-foreground text-sm font-medium flex items-center justify-center gap-2 active:scale-[0.98] transition-transform">
-          <RefreshCw size={14} />Switch to Caregiver Mode
+          <RefreshCw size={14} />{t(language, "settings.switchToCaregiver")}
         </button>
 
         <button onClick={onSignOut} className="w-full h-12 rounded-2xl border border-destructive/30 text-destructive text-sm font-medium flex items-center justify-center gap-2 active:scale-[0.98] transition-transform">
-          <LogOut size={14} />Sign out
+          <LogOut size={14} />{t(language, "settings.signOut")}
         </button>
       </div>
     </div>
