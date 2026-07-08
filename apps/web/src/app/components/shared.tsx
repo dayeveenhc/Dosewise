@@ -1,6 +1,30 @@
-import { useState } from "react";
-import { CheckCircle2, AlertTriangle, Circle, X, ChevronDown, Plus } from "lucide-react";
+import { useEffect, useState } from "react";
+import { CheckCircle2, AlertTriangle, Circle, X, ChevronDown, Plus, Droplets } from "lucide-react";
 import type { MedStatus, Patient } from "../types";
+
+export function LiveStatusBar({ className = "" }: { className?: string }) {
+  const [currentTime, setCurrentTime] = useState(new Date());
+
+  useEffect(() => {
+    const intervalId = window.setInterval(() => setCurrentTime(new Date()), 1000);
+    return () => window.clearInterval(intervalId);
+  }, []);
+
+  return (
+    <div className={`flex items-center justify-between px-6 pt-3 pb-1 shrink-0 ${className}`}>
+      <span className="text-xs font-semibold text-foreground font-mono">
+        {currentTime.toLocaleTimeString("en-SG", { hour: "numeric", minute: "2-digit" })}
+      </span>
+      <div className="flex items-center gap-1.5">
+        <div className="flex gap-0.5 items-end h-3">
+          {[2, 3, 4, 4].map((height, i) => <div key={i} className="w-1 bg-foreground rounded-sm" style={{ height: `${height * 3}px` }} />)}
+        </div>
+        <Droplets size={11} className="text-foreground" />
+        <span className="text-xs font-semibold text-foreground font-mono">100%</span>
+      </div>
+    </div>
+  );
+}
 
 export function StatusPill({ status, small = false }: { status: MedStatus; small?: boolean }) {
   const map: Record<MedStatus, { label: string; icon: React.ReactNode; cls: string }> = {

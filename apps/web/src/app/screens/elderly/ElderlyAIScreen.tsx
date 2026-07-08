@@ -5,8 +5,8 @@ import type { Patient } from "../../types";
 import type { EMsg, ElderlyTab, DoctorQ } from "./types";
 import { agentTurn, fileToBase64 } from "../../lib/hermes";
 import { firstRoutableAction } from "../../lib/agentActions";
-import { getLanguage, setLanguage as persistLanguage, langOption, LANG_OPTIONS } from "../../lib/preferences";
-import type { LangCode } from "../../lib/preferences";
+import { useLanguage } from "../../lib/languageContext";
+import { t, LANGUAGE_OPTIONS, speechLangFor } from "../../lib/language";
 
 const nowLabel = () => new Date().toLocaleTimeString("en-SG", { hour: "2-digit", minute: "2-digit" });
 
@@ -73,6 +73,7 @@ export function ElderlyAIScreen({ patient, elderId, onLogDose, onNavigate, onMed
   onDeleteQuestion: (id: number) => void;
   autoMessage?: string;
 }) {
+  const { language, setLanguage } = useLanguage();
   const nick = patient.nickname || patient.name.split(" ")[1];
   const buildGreeting = (): EMsg => {
     const h = new Date().getHours();
@@ -94,13 +95,6 @@ export function ElderlyAIScreen({ patient, elderId, onLogDose, onNavigate, onMed
   const [sending, setSending] = useState(false);
   const [isListening, setIsListening] = useState(false);
   const [isSpeaking, setIsSpeaking] = useState(false);
-  // Shared per-user language ("Voice & Language" in Settings). Changing it here
-  // also updates Settings (and what Mei replies in) via the shared store.
-  const [language, setLanguageState] = useState<LangCode>(() => (elderId ? getLanguage(elderId) : "en"));
-  const changeLanguage = (code: LangCode) => {
-    setLanguageState(code);
-    if (elderId) persistLanguage(elderId, code);
-  };
   const [voiceOutput, setVoiceOutput] = useState(true);
   const [screenTab, setScreenTab] = useState<"chat" | "doctor">("chat");
   const [newQ, setNewQ] = useState("");
@@ -156,7 +150,7 @@ export function ElderlyAIScreen({ patient, elderId, onLogDose, onNavigate, onMed
     if (!voiceOutput || !hasTTS || !text) return;
     speechSynthesis.cancel();
     const utter = new SpeechSynthesisUtterance(text);
-    utter.lang = langOption(language).bcp47;
+    utter.lang = speechLangFor(language);
     utter.onstart = () => setIsSpeaking(true);
     utter.onend = () => setIsSpeaking(false);
     utter.onerror = () => setIsSpeaking(false);
@@ -179,7 +173,7 @@ export function ElderlyAIScreen({ patient, elderId, onLogDose, onNavigate, onMed
     }
     const rec = new SpeechRecognitionImpl();
     recognitionRef.current = rec;
-    rec.lang = langOption(language).bcp47;
+    rec.lang = speechLangFor(language);
     rec.interimResults = false;
     rec.onresult = (e: any) => setInput(e.results[0]?.[0]?.transcript ?? "");
     rec.onend = () => setIsListening(false);
@@ -254,16 +248,15 @@ export function ElderlyAIScreen({ patient, elderId, onLogDose, onNavigate, onMed
     else send(msg, b64);
   };
 
-
   return (
     <div className="flex flex-col flex-1 overflow-hidden relative">
       <div className="px-4 pt-2 pb-0 shrink-0">
         <div className="flex gap-2 bg-muted rounded-xl p-1">
           <button onClick={() => setScreenTab("chat")} className={`flex-1 py-2.5 rounded-lg text-sm font-semibold transition-colors ${screenTab === "chat" ? "bg-card text-foreground shadow-sm" : "text-muted-foreground"}`}>
-            Chat with Mei
+            {t(language, "ai.chatTab")}
           </button>
           <button onClick={() => setScreenTab("doctor")} className={`flex-1 py-2.5 rounded-lg text-sm font-semibold transition-colors relative ${screenTab === "doctor" ? "bg-card text-foreground shadow-sm" : "text-muted-foreground"}`}>
-            Ask Doctor
+            {t(language, "ai.doctorTab")}
             {unasked > 0 && <span className="absolute -top-1 -right-1 w-4 h-4 bg-amber-500 rounded-full text-[9px] text-white font-bold flex items-center justify-center">{unasked}</span>}
           </button>
         </div>
@@ -364,13 +357,13 @@ export function ElderlyAIScreen({ patient, elderId, onLogDose, onNavigate, onMed
           <div className="px-4 pt-2.5 shrink-0" data-tour="elder-quickhelp">
             <button onClick={() => setQuickOpen(o => !o)} className="w-full flex items-center gap-1.5 mb-2">
               <Sparkles size={15} className="text-primary" />
-              <span className="text-sm font-bold text-foreground">Quick help</span>
+              <span className="text-sm font-bold text-foreground">{t(language, "ai.quickHelp")}</span>
               <ChevronDown size={16} className={`ml-auto text-muted-foreground transition-transform ${quickOpen ? "rotate-180" : ""}`} />
             </button>
             {quickOpen && (
               <div className="space-y-2 pb-1">
                 <button onClick={handleSetup} className="w-full flex items-center gap-2 bg-primary/10 text-primary rounded-xl px-3 py-2.5 text-sm font-bold active:scale-[0.99] transition-transform">
-                  <Sparkles size={16} />Help me set up
+                  <Sparkles size={16} />{t(language, "ai.helpSetup")}
                 </button>
                 <div className="grid grid-cols-2 gap-1.5">
                   <FeatureBtn icon={Camera}   label="Add prescription" onClick={() => rxPhotoRef.current?.click()} />
@@ -400,7 +393,7 @@ export function ElderlyAIScreen({ patient, elderId, onLogDose, onNavigate, onMed
             <div className="px-4 pb-1 shrink-0">
               <div className="flex items-center gap-1.5 text-primary">
                 <Volume2 size={13} />
-                <span className="text-xs font-semibold">Speaking{language !== "en" ? ` in ${langOption(language).label}` : ""}…</span>
+                <span className="text-xs font-semibold">{t(language, "ai.speaking")}{language !== "en" ? ` in ${LANGUAGE_OPTIONS.find(o => o.id === language)?.label}` : ""}…</span>
               </div>
             </div>
           )}
@@ -485,19 +478,19 @@ export function ElderlyAIScreen({ patient, elderId, onLogDose, onNavigate, onMed
             <div className="absolute inset-0 z-50 flex items-end bg-black/40" onClick={() => setShowLangSheet(false)}>
               <div className="w-full bg-background rounded-t-3xl p-5 pb-7 animate-in slide-in-from-bottom duration-200" onClick={e => e.stopPropagation()}>
                 <div className="flex items-center justify-between mb-4">
-                  <h3 className="font-['Fraunces'] text-xl font-semibold text-foreground">Language & voice</h3>
+                  <h3 className="font-['Fraunces'] text-xl font-semibold text-foreground">{t(language, "ai.languageVoice")}</h3>
                   <button onClick={() => setShowLangSheet(false)} className="w-8 h-8 rounded-full bg-muted flex items-center justify-center"><X size={16} className="text-muted-foreground" /></button>
                 </div>
-                <p className="text-sm font-semibold text-foreground mb-2">Language</p>
+                <p className="text-sm font-semibold text-foreground mb-2">{t(language, "settings.language")}</p>
                 <div className="grid grid-cols-3 gap-2 mb-5">
-                  {LANG_OPTIONS.map(l => (
-                    <button key={l.code} onClick={() => changeLanguage(l.code)} className={`py-3 rounded-xl text-[14px] font-bold border transition-colors ${language === l.code ? "bg-primary text-white border-primary" : "bg-card text-foreground border-border"}`}>
+                  {LANGUAGE_OPTIONS.map(l => (
+                    <button key={l.id} onClick={() => setLanguage(l.id)} className={`py-3 rounded-xl text-[14px] font-bold border transition-colors ${language === l.id ? "bg-primary text-white border-primary" : "bg-card text-foreground border-border"}`}>
                       {l.label}
                     </button>
                   ))}
                 </div>
                 <button onClick={() => setVoiceOutput(v => !v)} className="w-full flex items-center justify-between bg-card border border-border rounded-xl px-4 py-3.5">
-                  <div className="flex items-center gap-2"><Volume2 size={18} className="text-primary" /><span className="text-[15px] font-semibold text-foreground">Voice replies</span></div>
+                  <div className="flex items-center gap-2"><Volume2 size={18} className="text-primary" /><span className="text-[15px] font-semibold text-foreground">{t(language, "settings.readAloud")}</span></div>
                   <div className={`w-12 h-7 rounded-full transition-colors relative ${voiceOutput ? "bg-primary" : "bg-muted"}`}>
                     <div className={`absolute top-0.5 w-6 h-6 rounded-full bg-white shadow transition-all ${voiceOutput ? "left-[22px]" : "left-0.5"}`} />
                   </div>

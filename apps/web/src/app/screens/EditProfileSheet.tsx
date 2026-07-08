@@ -1,11 +1,32 @@
 import { useState } from "react";
 import { X, AlertTriangle, Trash2, Star, Check, Plus } from "lucide-react";
 import type { Patient, Contact } from "../types";
+import { COMMON_ALLERGIES, COMMON_DRUG_ALLERGIES } from "../data/medications";
 
 interface EditProfileSheetProps {
   patient: Patient;
   onClose: () => void;
   onSave: (updated: Patient) => void;
+}
+
+function AllergyTypeAhead({ value, onChange, onSelect }: { value: string; onChange: (v: string) => void; onSelect: (v: string) => void }) {
+  const suggestions = [...COMMON_ALLERGIES, ...COMMON_DRUG_ALLERGIES];
+  const q = value.trim().toLowerCase();
+  const matches = q ? suggestions.filter(item => item.toLowerCase().includes(q)).slice(0, 8) : suggestions.slice(0, 8);
+  return (
+    <div className="relative">
+      <input value={value} onChange={e => onChange(e.target.value)} placeholder="Add allergy..." className={"w-full bg-input-background border border-border rounded-xl px-3.5 py-2.5 text-sm text-foreground placeholder:text-muted-foreground outline-none focus:border-primary transition-colors"} />
+      {matches.length > 0 && value.trim().length > 0 && (
+        <div className="absolute z-20 left-0 right-0 mt-1 bg-card border border-border rounded-xl shadow-lg overflow-hidden max-h-40 overflow-y-auto">
+          {matches.map(item => (
+            <button key={item} onMouseDown={e => { e.preventDefault(); onSelect(item); }} className="w-full text-left px-3.5 py-2 text-sm text-foreground hover:bg-muted transition-colors">
+              {item}
+            </button>
+          ))}
+        </div>
+      )}
+    </div>
+  );
 }
 
 export function EditProfileSheet({ patient, onClose, onSave }: EditProfileSheetProps) {
@@ -159,13 +180,13 @@ export function EditProfileSheet({ patient, onClose, onSave }: EditProfileSheetP
                   ))}
                 </div>
                 <div className="flex gap-2">
-                  <input
-                    value={newAllergy}
-                    onChange={e => setNewAllergy(e.target.value)}
-                    onKeyDown={e => e.key === "Enter" && addAllergy()}
-                    placeholder="Add allergy..."
-                    className={`${fieldCls} flex-1`}
-                  />
+                  <div className="flex-1">
+                    <AllergyTypeAhead
+                      value={newAllergy}
+                      onChange={setNewAllergy}
+                      onSelect={value => { setNewAllergy(value); setTimeout(() => addAllergy(), 0); }}
+                    />
+                  </div>
                   <button onClick={addAllergy} disabled={!newAllergy.trim()} className="w-10 h-10 bg-destructive rounded-xl flex items-center justify-center disabled:opacity-40">
                     <Plus size={16} className="text-white" />
                   </button>

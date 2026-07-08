@@ -1,7 +1,10 @@
 import { createClient } from "@supabase/supabase-js";
 
-const url = import.meta.env.VITE_SUPABASE_URL;
-const anonKey = import.meta.env.VITE_SUPABASE_ANON_KEY;
+const rawUrl = import.meta.env.VITE_SUPABASE_URL?.trim();
+const url = rawUrl
+  ? rawUrl.replace(/\/(?:rest\/v1|auth\/v1)\/?$/, "")
+  : "";
+const anonKey = import.meta.env.VITE_SUPABASE_ANON_KEY?.trim();
 
 if (!url || !anonKey) {
   throw new Error(

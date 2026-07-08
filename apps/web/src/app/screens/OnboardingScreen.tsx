@@ -1,19 +1,14 @@
-import { Droplets, Pill, Heart, Shield, Users, ChevronRight, User } from "lucide-react";
+import { Pill, Heart, Shield, Users, ChevronRight, User } from "lucide-react";
+import { LiveStatusBar } from "../components/shared";
+import { useLanguage } from "../lib/languageContext";
+import { t } from "../lib/language";
 
 export function OnboardingScreen({ onSelect }: { onSelect: (mode: "caregiver" | "elderly") => void }) {
+  const { language } = useLanguage();
   return (
     <div className="flex flex-col h-full bg-background">
       {/* Status bar */}
-      <div className="flex items-center justify-between px-6 pt-3 pb-1 shrink-0">
-        <span className="text-xs font-semibold text-foreground font-mono">9:41</span>
-        <div className="flex items-center gap-1.5">
-          <div className="flex gap-0.5 items-end h-3">
-            {[2, 3, 4, 4].map((h, i) => <div key={i} className="w-1 bg-foreground rounded-sm" style={{ height: `${h * 3}px` }} />)}
-          </div>
-          <Droplets size={11} className="text-foreground" />
-          <span className="text-xs font-semibold text-foreground font-mono">100%</span>
-        </div>
-      </div>
+      <LiveStatusBar />
 
       {/* Hero area */}
       <div className="flex flex-col items-center pt-10 pb-6 px-6">
@@ -34,10 +29,10 @@ export function OnboardingScreen({ onSelect }: { onSelect: (mode: "caregiver" | 
           </div>
         </div>
         <h1 className="font-['Fraunces'] text-2xl font-semibold text-foreground text-center leading-snug mb-2">
-          Who are you using<br />Dosewise for today?
+          {t(language, "common.whoAreYouUsing")}
         </h1>
         <p className="text-sm text-muted-foreground text-center leading-relaxed">
-          We'll tailor your experience based<br />on how you'd like to use the app.
+          {t(language, "common.modeHint")}
         </p>
       </div>
 
@@ -52,7 +47,7 @@ export function OnboardingScreen({ onSelect }: { onSelect: (mode: "caregiver" | 
             <Users size={20} className="text-primary-foreground" />
           </div>
           <div>
-            <p className="font-semibold text-foreground text-[15px] leading-snug mb-1">For a Loved One</p>
+            <p className="font-semibold text-foreground text-[15px] leading-snug mb-1">{t(language, "common.forLovedOne")}</p>
             <p className="text-sm text-muted-foreground leading-relaxed">Manage schedules, prescriptions, and monitor progress</p>
           </div>
           <ChevronRight size={18} className="text-muted-foreground mt-1.5 ml-auto shrink-0" />
@@ -67,7 +62,7 @@ export function OnboardingScreen({ onSelect }: { onSelect: (mode: "caregiver" | 
             <User size={20} className="text-amber-600" />
           </div>
           <div>
-            <p className="font-semibold text-foreground text-[15px] leading-snug mb-1">For Myself</p>
+            <p className="font-semibold text-foreground text-[15px] leading-snug mb-1">{t(language, "common.forMyself")}</p>
             <p className="text-sm text-muted-foreground leading-relaxed">Manage my daily medications and ask for help</p>
           </div>
           <ChevronRight size={18} className="text-muted-foreground mt-1.5 ml-auto shrink-0" />
@@ -77,7 +72,7 @@ export function OnboardingScreen({ onSelect }: { onSelect: (mode: "caregiver" | 
       {/* Footer */}
       <div className="px-6 pb-10 pt-6">
         <p className="text-center text-[11px] text-muted-foreground leading-relaxed">
-          You can switch modes anytime in Settings.
+          {t(language, "common.switchModesHint")}
         </p>
       </div>
     </div>

@@ -1,6 +1,9 @@
 import { ArrowLeft, ClipboardList, Lock, ChevronRight } from "lucide-react";
+import { useLanguage } from "../../lib/languageContext";
+import { t } from "../../lib/language";
 
 export function SetupMethodScreen({ onBack, onGuided }: { onBack: () => void; onGuided: () => void }) {
+  const { language } = useLanguage();
   return (
     <div className="flex flex-col h-full bg-background">
       <div className="px-4 pt-4 pb-2">
@@ -11,10 +14,10 @@ export function SetupMethodScreen({ onBack, onGuided }: { onBack: () => void; on
 
       <div className="px-6 pt-4 pb-6">
         <h1 className="font-['Fraunces'] text-2xl font-semibold text-foreground leading-snug mb-2">
-          How would you like<br />to set up your profile?
+          {t(language, "common.howSetUp")}
         </h1>
         <p className="text-sm text-muted-foreground leading-relaxed">
-          Pick whichever feels easier — you can always add more details later.
+          {t(language, "common.setUpHint")}
         </p>
       </div>
 
@@ -28,8 +31,8 @@ export function SetupMethodScreen({ onBack, onGuided }: { onBack: () => void; on
             <Lock size={20} className="text-muted-foreground" />
           </div>
           <div className="flex-1">
-            <p className="font-semibold text-foreground text-[15px] leading-snug mb-1">Sign in with HealthHub</p>
-            <p className="text-sm text-muted-foreground leading-relaxed">Coming soon</p>
+            <p className="font-semibold text-foreground text-[15px] leading-snug mb-1">{t(language, "common.healthHub")}</p>
+            <p className="text-sm text-muted-foreground leading-relaxed">{t(language, "common.healthHubComingSoon")}</p>
           </div>
         </div>
 
@@ -42,14 +45,14 @@ export function SetupMethodScreen({ onBack, onGuided }: { onBack: () => void; on
             <ClipboardList size={20} className="text-primary-foreground" />
           </div>
           <div className="flex-1">
-            <p className="font-semibold text-foreground text-[15px] leading-snug">Answer a few simple questions</p>
+            <p className="font-semibold text-foreground text-[15px] leading-snug">{t(language, "common.guidedSetup")}</p>
           </div>
           <ChevronRight size={18} className="text-muted-foreground mt-1 shrink-0" />
         </button>
       </div>
 
       <p className="text-center text-[11px] text-muted-foreground leading-relaxed px-6 pb-10">
-        This should only take a few minutes.
+        {t(language, "common.setupMinutes")}
       </p>
     </div>
   );

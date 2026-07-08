@@ -13,6 +13,8 @@ import { GuidedTour } from "../../components/GuidedTour";
 import type { TourStep } from "../../components/GuidedTour";
 import { ConfirmDialog } from "../../components/ConfirmDialog";
 import { logDoseTaken, addMedication, fetchElderMedications, to24h } from "../../lib/medications";
+import { useLanguage } from "../../lib/languageContext";
+import { t } from "../../lib/language";
 
 export function ElderlyApp({ patient, elderId, onUpdatePatient, onBack, onSignOut, startTour }: {
   patient: Patient;
@@ -23,11 +25,18 @@ export function ElderlyApp({ patient, elderId, onUpdatePatient, onBack, onSignOu
   startTour?: boolean;
 }) {
   const [tab, setTab] = useState<ElderlyTab>("home");
+  const [currentTime, setCurrentTime] = useState(new Date());
   const [pendingAIMessage, setPendingAIMessage] = useState<string | undefined>();
   const [addRx, setAddRx] = useState<null | "scan" | "manual">(null);
   const [showTravel, setShowTravel] = useState(false);
   const [showTour, setShowTour] = useState(!!startTour);
   const [showTourConfirm, setShowTourConfirm] = useState(false);
+  const { language } = useLanguage();
+
+  useEffect(() => {
+    const intervalId = window.setInterval(() => setCurrentTime(new Date()), 1000);
+    return () => window.clearInterval(intervalId);
+  }, []);
 
   // Ask once for permission to pop a browser notification at dose time. Only
   // works while this tab is open (no service worker / push infra) — that's a
@@ -118,10 +127,11 @@ export function ElderlyApp({ patient, elderId, onUpdatePatient, onBack, onSignOu
     if (elderId && med?.medicationId) logDoseTaken(med.medicationId, elderId);
   };
 
-  const handleAddPrescription = async (med: Omit<Medication, "id" | "status">) => {
+  const handleAddPrescription = async (med: Omit<Medication, "id" | "status"> & { times?: string[] }) => {
     const nextId = patient.medications.reduce((max, m) => Math.max(max, m.id), 0) + 1;
+    const timeHHMMs = (med.times && med.times.length ? med.times : [med.time]).map(t => to24h(t));
     const medicationId = elderId
-      ? await addMedication(elderId, { name: med.name, dosage: med.dose, purpose: med.purpose, timeHHMM: to24h(med.time), refillDays: med.refillDaysLeft })
+      ? await addMedication(elderId, { name: med.name, dosage: med.dose, purpose: med.purpose, timeHHMMs, refillDays: med.refillDaysLeft })
       : undefined;
     onUpdatePatient({ ...patient, medications: [...patient.medications, { ...med, id: nextId, medicationId, status: "upcoming" as MedStatus }] });
   };
@@ -146,18 +156,20 @@ export function ElderlyApp({ patient, elderId, onUpdatePatient, onBack, onSignOu
   const unasked = doctorQuestions.filter(q => !q.answered).length;
 
   const NAV: { id: ElderlyTab; icon: any; label: string; fab?: boolean }[] = [
-    { id: "home",          icon: Home,        label: "Home"     },
-    { id: "prescriptions", icon: Pill,        label: "Medications" },
-    { id: "ai",            icon: Brain,       label: "Ask Mei",  fab: true },
-    { id: "notifications", icon: Bell,        label: "Notifications" },
-    { id: "settings",      icon: Settings,    label: "Settings" },
+    { id: "home",          icon: Home,        label: t(language, "nav.home") },
+    { id: "prescriptions", icon: Pill,        label: t(language, "nav.medications") },
+    { id: "ai",            icon: Brain,       label: t(language, "nav.askMei"), fab: true },
+    { id: "notifications", icon: Bell,        label: t(language, "nav.notifications") },
+    { id: "settings",      icon: Settings,    label: t(language, "nav.settings") },
   ];
 
   return (
     <div className="flex flex-col h-full bg-background">
       {/* Status bar */}
       <div className="flex items-center justify-between px-6 pt-3 pb-1 shrink-0 bg-background/80 backdrop-blur-sm">
-        <span className="text-xs font-semibold text-foreground font-mono">9:41</span>
+        <span className="text-xs font-semibold text-foreground font-mono">
+          {currentTime.toLocaleTimeString("en-SG", { hour: "numeric", minute: "2-digit" })}
+        </span>
         <div className="flex items-center gap-1.5">
           <div className="flex gap-0.5 items-end h-3">{[2,3,4,4].map((ht,i) => <div key={i} className="w-1 bg-foreground rounded-sm" style={{ height: `${ht*3}px` }} />)}</div>
           <Droplets size={11} className="text-foreground" />
@@ -171,7 +183,7 @@ export function ElderlyApp({ patient, elderId, onUpdatePatient, onBack, onSignOu
           <div>
             <p className="text-[10px] text-muted-foreground uppercase tracking-[0.2em] font-medium">DOSEWISE</p>
             <h1 className="font-['Fraunces'] text-lg font-semibold text-foreground leading-tight">
-              {tab === "home" ? `Hello, ${patient.nickname || patient.name.split(" ")[1]}!` : tab === "prescriptions" ? "My Medications" : tab === "ai" ? "Ask Mei" : tab === "notifications" ? "Notifications" : "Settings"}
+              {tab === "home" ? t(language, "header.hello", { name: patient.nickname || patient.name.split(" ")[1] }) : tab === "prescriptions" ? t(language, "nav.medications") : tab === "ai" ? t(language, "nav.askMei") : tab === "notifications" ? t(language, "nav.notifications") : t(language, "nav.settings")}
             </h1>
           </div>
           <div className="flex items-center gap-2">
@@ -235,7 +247,7 @@ export function ElderlyApp({ patient, elderId, onUpdatePatient, onBack, onSignOu
         </div>
       </div>
 
-      {addRx && <AddPrescriptionSheet initialTab={addRx} onClose={() => setAddRx(null)} onAdd={handleAddPrescription} onAgentAdded={refreshMeds} />}
+      {addRx && <AddPrescriptionSheet initialTab={addRx} onClose={() => setAddRx(null)} onAdd={handleAddPrescription} onAdded={() => setTab("prescriptions")} onAgentAdded={refreshMeds} />}
       {showTravel && (
         <TravelModeSheet
           patient={patient}

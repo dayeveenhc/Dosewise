@@ -16,13 +16,17 @@ export const cls = (valid: boolean) => valid ? fieldClsValid : fieldCls;
 const isEmail = (v: string) => /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(v.trim());
 const isPositiveNumber = (v: string) => v.trim() !== "" && Number(v) > 0;
 
-function WizardChrome({ step, total, onBack, children }: { step: number; total: number; onBack: () => void; children: ReactNode }) {
+function WizardChrome({ step, total, onBack, showBack = true, children }: { step: number; total: number; onBack: () => void; showBack?: boolean; children: ReactNode }) {
   return (
     <div className="flex flex-col h-full bg-background">
       <div className="px-4 pt-4 pb-1 flex items-center gap-3 shrink-0">
-        <button onClick={onBack} className="w-9 h-9 rounded-full bg-card border border-border flex items-center justify-center active:bg-muted transition-colors shrink-0" aria-label="Back">
-          <ArrowLeft size={16} className="text-foreground" />
-        </button>
+        {showBack ? (
+          <button onClick={onBack} className="w-9 h-9 rounded-full bg-card border border-border flex items-center justify-center active:bg-muted transition-colors shrink-0" aria-label="Back">
+            <ArrowLeft size={16} className="text-foreground" />
+          </button>
+        ) : (
+          <div className="w-9 h-9 shrink-0" />
+        )}
         <div className="flex-1 flex gap-1.5">
           {Array.from({ length: total }, (_, i) => (
             <div key={i} className={`h-1.5 flex-1 rounded-full transition-colors ${i <= step ? "bg-primary" : "bg-muted"}`} />
@@ -279,6 +283,7 @@ export function GuidedSetupWizard({ mode, hasSession, elderId: initialElderId, o
   const steps = allSteps.filter(s => !(s === "account" && hasSessionAtStart));
   const step = steps[stepIndex];
   const total = steps.length;
+  const showBackButton = !elderId && step !== "done";
 
   const goNext = () => setStepIndex(i => Math.min(i + 1, steps.length - 1));
   const goBack = () => setStepIndex(i => Math.max(i - 1, 0));
@@ -328,7 +333,7 @@ export function GuidedSetupWizard({ mode, hasSession, elderId: initialElderId, o
   };
 
   return (
-    <WizardChrome step={stepIndex} total={total} onBack={stepIndex > 0 ? goBack : onExit}>
+    <WizardChrome step={stepIndex} total={total} onBack={stepIndex > 0 ? goBack : onExit} showBack={showBackButton}>
       {step === "account" && (
         <>
           <StepHeader title="Let's create your account" subtitle="This keeps your information safe and lets you sign back in later." />

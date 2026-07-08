@@ -3,6 +3,8 @@ import type { Patient } from "../types";
 import { Card, SectionHeader } from "../components/shared";
 import { MED_PHOTOS, MED_FREQUENCY } from "../data/medications";
 import type { Medication } from "../types";
+import { useLanguage } from "../lib/languageContext";
+import { t } from "../lib/language";
 
 interface PatientScreenProps {
   patient: Patient;
@@ -47,6 +49,7 @@ function groupMedications(medications: Medication[]): GroupedMedication[] {
 }
 
 export function PatientScreen({ patient, onEditProfile, onAddPrescription, onDeleteMedication }: PatientScreenProps) {
+  const { language } = useLanguage();
   const groupedMedications = groupMedications(patient.medications);
   return (
     <div className="px-4 py-5 space-y-5">
@@ -67,7 +70,7 @@ export function PatientScreen({ patient, onEditProfile, onAddPrescription, onDel
 
       {/* Conditions */}
       <div>
-        <SectionHeader title="Medical Conditions" action="Edit" onAction={onEditProfile} />
+        <SectionHeader title={t(language, "common.medicalConditions")} action={t(language, "common.edit")} onAction={onEditProfile} />
         <Card className="divide-y divide-border">
           {patient.conditions.length > 0 ? patient.conditions.map((c, i) => (
             <div key={i} className="flex items-center gap-3 px-4 py-3">
@@ -75,14 +78,14 @@ export function PatientScreen({ patient, onEditProfile, onAddPrescription, onDel
               <span className="text-sm text-foreground font-medium">{c}</span>
             </div>
           )) : (
-            <div className="px-4 py-4 text-sm text-muted-foreground">No conditions recorded. <button onClick={onEditProfile} className="text-primary underline">Add one</button></div>
+            <div className="px-4 py-4 text-sm text-muted-foreground">{t(language, "common.noConditionsRecorded")} <button onClick={onEditProfile} className="text-primary underline">{t(language, "common.addOne")}</button></div>
           )}
         </Card>
       </div>
 
       {/* Allergies */}
       <div>
-        <SectionHeader title="Known Allergies" action="Edit" onAction={onEditProfile} />
+        <SectionHeader title={t(language, "common.knownAllergies")} action={t(language, "common.edit")} onAction={onEditProfile} />
         {patient.allergies.length > 0 ? (
           <div className="flex flex-wrap gap-2">
             {patient.allergies.map((a, i) => (
@@ -92,13 +95,13 @@ export function PatientScreen({ patient, onEditProfile, onAddPrescription, onDel
             ))}
           </div>
         ) : (
-          <p className="text-sm text-muted-foreground">No allergies recorded. <button onClick={onEditProfile} className="text-primary underline">Add one</button></p>
+          <p className="text-sm text-muted-foreground">{t(language, "common.noAllergiesRecorded")} <button onClick={onEditProfile} className="text-primary underline">{t(language, "common.addOne")}</button></p>
         )}
       </div>
 
       {/* Current medications */}
       <div>
-        <SectionHeader title="Current Medications" action="+ Add" onAction={onAddPrescription} />
+        <SectionHeader title={t(language, "common.currentMedications")} action={t(language, "common.add")} onAction={onAddPrescription} />
         <Card className="divide-y divide-border" data-tour="cg-medlist">
           {groupedMedications.map((m) => (
             <div key={m.name} className="px-4 py-3 flex items-center gap-3">
@@ -122,7 +125,7 @@ export function PatientScreen({ patient, onEditProfile, onAddPrescription, onDel
               <button
                 onClick={() => m.ids.forEach(onDeleteMedication)}
                 className="w-7 h-7 rounded-full bg-red-50 border border-red-200 flex items-center justify-center shrink-0 hover:bg-red-100 transition-colors"
-                title="Remove medication"
+                title={t(language, "common.removeMedication")}
               >
                 <Trash2 size={12} className="text-red-600" />
               </button>
@@ -135,7 +138,7 @@ export function PatientScreen({ patient, onEditProfile, onAddPrescription, onDel
             <div className="w-8 h-8 rounded-full bg-secondary border border-primary/20 flex items-center justify-center shrink-0">
               <Plus size={14} className="text-primary" />
             </div>
-            <span className="text-sm text-primary font-semibold">Add prescription</span>
+            <span className="text-sm text-primary font-semibold">{t(language, "common.addPrescription")}</span>
           </button>
         </Card>
       </div>
@@ -143,7 +146,7 @@ export function PatientScreen({ patient, onEditProfile, onAddPrescription, onDel
       {/* Past medications */}
       {(patient.pastMedications?.length ?? 0) > 0 && (
         <div>
-          <SectionHeader title="Past Medications" />
+          <SectionHeader title={t(language, "common.pastMedications")} />
           <Card className="divide-y divide-border">
             {patient.pastMedications!.map(m => (
               <div key={m.id} className="px-4 py-3 flex items-center gap-3">
@@ -162,7 +165,7 @@ export function PatientScreen({ patient, onEditProfile, onAddPrescription, onDel
 
       {/* Emergency contacts */}
       <div>
-        <SectionHeader title="Emergency Contacts" action="Edit" onAction={onEditProfile} />
+        <SectionHeader title={t(language, "common.emergencyContacts")} action={t(language, "common.edit")} onAction={onEditProfile} />
         <Card className="divide-y divide-border">
           {patient.contacts.map((c, i) => (
             <div key={i} className="flex items-center gap-3 px-4 py-3">

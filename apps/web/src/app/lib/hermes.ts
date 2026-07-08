@@ -1,5 +1,6 @@
 import { supabase } from "./supabase";
-import { getLanguage, langOption } from "./preferences";
+import { readStoredLanguage } from "./languageContext";
+import { replyLanguageFor } from "./language";
 
 const HERMES_URL = import.meta.env.VITE_HERMES_URL;
 const HERMES_API_KEY = import.meta.env.VITE_HERMES_API_KEY;
@@ -32,9 +33,9 @@ export async function agentTurn(
     const { data: { session } } = await supabase.auth.getSession();
     if (!session) return { reply: FALLBACK_REPLY, tools_used: [], actions: [] };
 
-    // Reply in the language this user configured under "Voice & Language"
+    // Reply in the language configured under "Voice & Language"
     // (undefined for English keeps Hermes's default behaviour).
-    const replyLanguage = langOption(getLanguage(session.user.id)).replyLanguage;
+    const replyLanguage = replyLanguageFor(readStoredLanguage());
 
     const resp = await fetch(`${HERMES_URL}/agent/turn`, {
       method: "POST",

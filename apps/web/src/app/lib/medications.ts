@@ -133,13 +133,14 @@ async function decrementSupply(medicationId: string): Promise<void> {
 }
 
 export async function addMedication(elderId: string, input: {
-  name: string; dosage: string; purpose: string; timeHHMM: string; refillDays?: number;
+  name: string; dosage: string; purpose: string; timeHHMM?: string; timeHHMMs?: string[]; refillDays?: number;
 }): Promise<string> {
+  const times = (input.timeHHMMs && input.timeHHMMs.length ? input.timeHHMMs : input.timeHHMM ? [input.timeHHMM] : ["08:00"]).filter(Boolean);
   const { data, error } = await supabase
     .from("medications")
     .insert({
       elder_id: elderId, name: input.name, purpose: input.purpose,
-      dosage: input.dosage, schedule: { times: [input.timeHHMM] },
+      dosage: input.dosage, schedule: { times },
     })
     .select("id").single();
   if (error) throw error;

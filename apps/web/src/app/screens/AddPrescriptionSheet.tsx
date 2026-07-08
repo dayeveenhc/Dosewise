@@ -7,7 +7,8 @@ import { agentTurn, fileToBase64 } from "../lib/hermes";
 
 interface AddPrescriptionSheetProps {
   onClose: () => void;
-  onAdd: (med: Omit<Medication, "id" | "status">) => void;
+  onAdd: (med: Omit<Medication, "id" | "status"> & { times?: string[] }) => Promise<unknown> | void;
+  onAdded?: () => void;
   initialTab?: "scan" | "manual";
   // Called after the agent commits a scanned prescription server-side, so the
   // parent can refetch the medication list (there is no local onAdd for this path).
@@ -57,19 +58,21 @@ function TypeAhead<T>({ value, onChange, onPick, items, filter, label, render, p
   );
 }
 
-export function AddPrescriptionSheet({ onClose, onAdd, initialTab = "manual", onAgentAdded }: AddPrescriptionSheetProps) {
+export function AddPrescriptionSheet({ onClose, onAdd, onAdded, initialTab = "manual", onAgentAdded }: AddPrescriptionSheetProps) {
   const [tab, setTab] = useState<"scan" | "manual">(initialTab);
   const [scannedPhoto, setScannedPhoto] = useState<string | null>(null);
   const [scanning, setScanning] = useState(false);
   const [proposal, setProposal] = useState<string | null>(null);
   const [committing, setCommitting] = useState(false);
   const [committed, setCommitted] = useState(false);
+  const [submitState, setSubmitState] = useState<"idle" | "saving" | "success">("idle");
+  const [submitError, setSubmitError] = useState<string | null>(null);
   const fileRef = useRef<HTMLInputElement>(null);
 
   const [name, setName] = useState("");
   const [dose, setDose] = useState("");
   const [purpose, setPurpose] = useState("");
-  const [time, setTime] = useState("8:00 AM");
+  const [selectedTimes, setSelectedTimes] = useState<string[]>(["8:00 AM"]);
   const [customTime, setCustomTime] = useState("");
   const [useCustomTime, setUseCustomTime] = useState(false);
   const [refillDays, setRefillDays] = useState("");
@@ -77,17 +80,34 @@ export function AddPrescriptionSheet({ onClose, onAdd, initialTab = "manual", on
 
   const isValid = name.trim() && dose.trim() && purpose.trim();
 
-  const handleAdd = () => {
-    if (!isValid) return;
-    onAdd({
-      name: name.trim(),
-      dose: dose.trim(),
-      purpose: purpose.trim(),
-      time: useCustomTime ? customTime || time : time,
-      refillDaysLeft: refillDays ? parseInt(refillDays) : undefined,
-      colour,
-    });
-    onClose();
+  const handleAdd = async () => {
+    if (!isValid || submitState === "saving") return;
+    const chosenTimes = [
+      ...selectedTimes,
+      ...(useCustomTime && customTime.trim() ? [customTime.trim()] : []),
+    ].filter(Boolean);
+    setSubmitState("saving");
+    setSubmitError(null);
+    try {
+      await onAdd({
+        name: name.trim(),
+        dose: dose.trim(),
+        purpose: purpose.trim(),
+        time: chosenTimes[0] || "8:00 AM",
+        times: chosenTimes,
+        refillDaysLeft: refillDays ? parseInt(refillDays) : undefined,
+        colour,
+      });
+      setSubmitState("success");
+      window.setTimeout(() => {
+        onAdded?.();
+        onClose();
+      }, 700);
+    } catch (error) {
+      console.error("Failed to add medication", error);
+      setSubmitState("idle");
+      setSubmitError("Couldn't save the medication. Please try again.");
+    }
   };
 
   const pickMedication = (m: { name: string; purpose: string; dose: string }) => {
@@ -291,8 +311,11 @@ export function AddPrescriptionSheet({ onClose, onAdd, initialTab = "manual", on
                   {PRESET_TIMES.map(t => (
                     <button
                       key={t}
-                      onClick={() => { setTime(t); setUseCustomTime(false); }}
-                      className={`text-xs font-medium rounded-xl px-3 py-1.5 border transition-colors ${!useCustomTime && time === t ? "bg-primary text-primary-foreground border-primary" : "bg-muted text-muted-foreground border-border"}`}
+                      onClick={() => {
+                        setSelectedTimes(prev => prev.includes(t) ? prev.filter(item => item !== t) : [...prev, t]);
+                        setUseCustomTime(false);
+                      }}
+                      className={`text-xs font-medium rounded-xl px-3 py-1.5 border transition-colors ${selectedTimes.includes(t) ? "bg-primary text-primary-foreground border-primary" : "bg-muted text-muted-foreground border-border"}`}
                     >
                       {t}
                     </button>
@@ -342,7 +365,7 @@ export function AddPrescriptionSheet({ onClose, onAdd, initialTab = "manual", on
                   </div>
                   <div>
                     <p className="text-sm font-semibold text-foreground">{name} <span className="text-xs font-normal text-muted-foreground">{dose}</span></p>
-                    <p className="text-[11px] text-muted-foreground">{purpose} · {useCustomTime ? customTime || time : time}</p>
+                    <p className="text-[11px] text-muted-foreground">{purpose} · {([...(selectedTimes || []), ...(useCustomTime && customTime.trim() ? [customTime.trim()] : [])].filter(Boolean).join(" • ") || "8:00 AM")}</p>
                   </div>
                 </div>
               )}
@@ -352,13 +375,25 @@ export function AddPrescriptionSheet({ onClose, onAdd, initialTab = "manual", on
 
         {/* Submit (manual only) */}
         {tab === "manual" && (
-          <div className="px-5 py-4 border-t border-border shrink-0">
+          <div className="px-5 py-4 border-t border-border shrink-0 space-y-2">
+            {submitError && (
+              <div className="rounded-xl border border-destructive/20 bg-destructive/10 px-3 py-2 text-xs text-destructive">
+                {submitError}
+              </div>
+            )}
+            {submitState !== "idle" && (
+              <div className={`rounded-xl border px-3 py-2.5 flex items-center gap-2 text-sm ${submitState === "saving" ? "border-primary/20 bg-primary/10 text-primary" : "border-emerald-200 bg-emerald-50 text-emerald-700"}`}>
+                {submitState === "saving" ? <Sparkles size={14} className="animate-pulse" /> : <Check size={14} />}
+                <span>{submitState === "saving" ? "Saving medication…" : "Medication added"}</span>
+              </div>
+            )}
             <button
               onClick={handleAdd}
-              disabled={!isValid}
+              disabled={!isValid || submitState === "saving" || submitState === "success"}
               className="w-full bg-primary text-primary-foreground rounded-2xl py-3.5 text-sm font-semibold flex items-center justify-center gap-2 disabled:opacity-40 transition-opacity"
             >
-              <Plus size={16} /> Add {name || "medication"}
+              {submitState === "saving" ? <Sparkles size={16} className="animate-pulse" /> : submitState === "success" ? <Check size={16} /> : <Plus size={16} />}
+              {submitState === "saving" ? "Adding…" : submitState === "success" ? "Added" : `Add ${name || "medication"}`}
             </button>
           </div>
         )}

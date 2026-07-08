@@ -1,19 +1,14 @@
-import { Droplets, Pill, Heart, Shield, LogIn, Sparkles } from "lucide-react";
+import { Pill, Heart, Shield, LogIn, Sparkles } from "lucide-react";
+import { LiveStatusBar } from "../../components/shared";
+import { useLanguage } from "../../lib/languageContext";
+import { t } from "../../lib/language";
 
 export function WelcomeScreen({ onSignIn, onGetStarted }: { onSignIn: () => void; onGetStarted: () => void }) {
+  const { language } = useLanguage();
   return (
     <div className="flex flex-col h-full bg-background">
       {/* Status bar */}
-      <div className="flex items-center justify-between px-6 pt-3 pb-1 shrink-0">
-        <span className="text-xs font-semibold text-foreground font-mono">9:41</span>
-        <div className="flex items-center gap-1.5">
-          <div className="flex gap-0.5 items-end h-3">
-            {[2, 3, 4, 4].map((h, i) => <div key={i} className="w-1 bg-foreground rounded-sm" style={{ height: `${h * 3}px` }} />)}
-          </div>
-          <Droplets size={11} className="text-foreground" />
-          <span className="text-xs font-semibold text-foreground font-mono">100%</span>
-        </div>
-      </div>
+      <LiveStatusBar />
 
       {/* Hero area */}
       <div className="flex flex-col items-center pt-12 pb-6 px-6 flex-1 justify-center">
@@ -45,13 +40,13 @@ export function WelcomeScreen({ onSignIn, onGetStarted }: { onSignIn: () => void
           onClick={onGetStarted}
           className="w-full bg-primary text-primary-foreground rounded-2xl py-4 flex items-center justify-center gap-2 text-[16px] font-semibold active:scale-[0.98] transition-transform shadow-sm"
         >
-          <Sparkles size={18} />Get started
+          <Sparkles size={18} />{t(language, "common.getStarted")}
         </button>
         <button
           onClick={onSignIn}
           className="w-full bg-card border border-border rounded-2xl py-4 flex items-center justify-center gap-2 text-[16px] font-semibold text-foreground active:scale-[0.98] transition-transform"
         >
-          <LogIn size={18} className="text-muted-foreground" />I already have an account
+          <LogIn size={18} className="text-muted-foreground" />{t(language, "common.alreadyHaveAccount")}
         </button>
       </div>
     </div>

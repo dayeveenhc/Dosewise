@@ -1,14 +1,14 @@
 import { useEffect, useState } from "react";
 import type { Session } from "@supabase/supabase-js";
-import { Droplets, ArrowLeft, Bell, MessageSquare, HelpCircle } from "lucide-react";
+import { Droplets, ArrowLeft, Bell, MessageSquare, HelpCircle, UserRound } from "lucide-react";
 import type { AppMode, Screen, Patient, Medication } from "./types";
 import { PATIENTS, NOTIFICATIONS } from "./data/patients";
 import { NAV_ITEMS } from "./nav";
-import { PatientSwitcher } from "./components/shared";
+import { LiveStatusBar, PatientSwitcher } from "./components/shared";
 import { supabase } from "./lib/supabase";
 import { ensureProfile, fetchElderMedications, fetchArchivedMedications, addMedication, archiveMedication, to24h } from "./lib/medications";
 import { fetchProfileRole, fetchProfile } from "./lib/profile";
-import { getMode, setMode } from "./lib/preferences";
+import { readStoredAppMode, persistAppMode } from "./lib/sessionState";
 import { WelcomeScreen } from "./screens/setup/WelcomeScreen";
 import { SetupMethodScreen } from "./screens/setup/SetupMethodScreen";
 import { GuidedSetupWizard } from "./screens/setup/GuidedSetupWizard";
@@ -28,6 +28,7 @@ import { AccessibilityProvider } from "./accessibility.tsx";
 import { GuidedTour } from "./components/GuidedTour";
 import type { TourStep } from "./components/GuidedTour";
 import { ConfirmDialog } from "./components/ConfirmDialog";
+import { LanguageProvider } from "./lib/languageContext";
 
 export default function App() {
   const [session, setSession] = useState<Session | null>(null);
@@ -104,7 +105,7 @@ export default function App() {
         // Prefer the interface this user last used on this browser (e.g. a
         // caregiver-preview they expect to stick), falling back to the role
         // default. Role is stored correctly, so a fresh browser still lands right.
-        setAppMode(getMode(session.user.id) ?? (role === "elder" ? "elderly" : "caregiver"));
+        setAppMode(readStoredAppMode(session.user.id) ?? (role === "elder" ? "elderly" : "caregiver"));
       } else {
         setNeedsWizard(true);
         setPreAuthStage("mode");
@@ -129,9 +130,9 @@ export default function App() {
   // Remember the interface the user is actually on, per account, so leaving and
   // reopening the site lands back on it (caregiver stays caregiver, not elderly).
   // Captures every transition: role-init, the Settings preview switch, and the
-  // wizard finishing. "onboarding" is never persisted (guarded in setMode).
+  // wizard finishing. "onboarding" is never persisted (guarded in persistAppMode).
   useEffect(() => {
-    if (elderId && appMode !== "onboarding") setMode(elderId, appMode);
+    if (elderId && appMode !== "onboarding") persistAppMode(elderId, appMode);
   }, [elderId, appMode]);
 
   // Already-onboarded users switching preview mode from Settings (not new setup).
@@ -186,11 +187,12 @@ export default function App() {
   const patient = patients[selectedPatient];
   let nextMedId = patients.flatMap(p => p.medications).reduce((max, m) => Math.max(max, m.id), 0) + 1;
 
-  const handleAddPrescription = async (med: Omit<Medication, "id" | "status">) => {
+  const handleAddPrescription = async (med: Omit<Medication, "id" | "status"> & { times?: string[] }) => {
     if (!elderId) return;
+    const timeHHMMs = (med.times && med.times.length ? med.times : [med.time]).map(t => to24h(t));
     const medicationId = await addMedication(elderId, {
       name: med.name, dosage: med.dose, purpose: med.purpose,
-      timeHHMM: to24h(med.time), refillDays: med.refillDaysLeft,
+      timeHHMMs, refillDays: med.refillDaysLeft,
     });
     setPatients(prev => prev.map((p, i) => i !== selectedPatient ? p : {
       ...p,
@@ -232,200 +234,203 @@ export default function App() {
 
   if (authLoading) {
     return (
-      <div className="min-h-screen bg-stone-300 flex items-center justify-center p-4" style={{ fontFamily: "'DM Sans', system-ui, sans-serif" }}>
-        <div className="w-[390px] h-[844px] bg-background relative overflow-hidden rounded-[3rem] shadow-2xl border-[6px] border-stone-800 flex flex-col" />
-      </div>
+      <LanguageProvider>
+        <div className="min-h-screen bg-stone-300 flex items-center justify-center p-4" style={{ fontFamily: "'DM Sans', system-ui, sans-serif" }}>
+          <div className="w-[390px] h-[844px] bg-background relative overflow-hidden rounded-[3rem] shadow-2xl border-[6px] border-stone-800 flex flex-col" />
+        </div>
+      </LanguageProvider>
     );
   }
 
   if (appMode === "onboarding") {
     return (
-      <div className="min-h-screen bg-stone-300 flex items-center justify-center p-4" style={{ fontFamily: "'DM Sans', system-ui, sans-serif" }}>
-        <div className="w-[390px] h-[844px] bg-background relative overflow-hidden rounded-[3rem] shadow-2xl border-[6px] border-stone-800 flex flex-col">
-          {preAuthStage === "welcome" && (
-            <WelcomeScreen onSignIn={() => setPreAuthStage("signin")} onGetStarted={() => setPreAuthStage("mode")} />
-          )}
-          {preAuthStage === "signin" && (
-            <LoginScreen onBack={() => setPreAuthStage("welcome")} onGetStarted={() => setPreAuthStage("mode")} />
-          )}
-          {preAuthStage === "mode" && (
-            <OnboardingScreen onSelect={(mode) => {
-              if (session && !needsWizard) { setScreen("dashboard"); setAppMode(mode); }
-              else { setPendingMode(mode); setPreAuthStage("method"); }
-            }} />
-          )}
-          {preAuthStage === "method" && (
-            <SetupMethodScreen onBack={() => setPreAuthStage("mode")} onGuided={() => setPreAuthStage("wizard")} />
-          )}
-          {preAuthStage === "wizard" && (
-            <GuidedSetupWizard
-              mode={pendingMode}
-              hasSession={!!session}
-              elderId={elderId}
-              onComplete={() => { setNeedsWizard(false); setScreen("dashboard"); setJustOnboarded(true); setAppMode(pendingMode); }}
-              onExit={() => setPreAuthStage("method")}
-            />
-          )}
+      <LanguageProvider>
+        <div className="min-h-screen bg-stone-300 flex items-center justify-center p-4" style={{ fontFamily: "'DM Sans', system-ui, sans-serif" }}>
+          <div className="w-[390px] h-[844px] bg-background relative overflow-hidden rounded-[3rem] shadow-2xl border-[6px] border-stone-800 flex flex-col">
+            {preAuthStage === "welcome" && (
+              <WelcomeScreen onSignIn={() => setPreAuthStage("signin")} onGetStarted={() => setPreAuthStage("mode")} />
+            )}
+            {preAuthStage === "signin" && (
+              <LoginScreen onBack={() => setPreAuthStage("welcome")} onGetStarted={() => setPreAuthStage("mode")} />
+            )}
+            {preAuthStage === "mode" && (
+              <OnboardingScreen onSelect={(mode) => {
+                if (session && !needsWizard) { setScreen("dashboard"); setAppMode(mode); }
+                else { setPendingMode(mode); setPreAuthStage("method"); }
+              }} />
+            )}
+            {preAuthStage === "method" && (
+              <SetupMethodScreen onBack={() => setPreAuthStage("mode")} onGuided={() => setPreAuthStage("wizard")} />
+            )}
+            {preAuthStage === "wizard" && (
+              <GuidedSetupWizard
+                mode={pendingMode}
+                hasSession={!!session}
+                elderId={elderId}
+                onComplete={() => { setNeedsWizard(false); setScreen("dashboard"); setJustOnboarded(true); setAppMode(pendingMode); }}
+                onExit={() => setPreAuthStage("method")}
+              />
+            )}
+          </div>
         </div>
-      </div>
+      </LanguageProvider>
     );
   }
 
   if (appMode === "elderly") {
     return (
-      <div className="min-h-screen bg-stone-300 flex items-center justify-center p-4" style={{ fontFamily: "'DM Sans', system-ui, sans-serif" }}>
-        <div className="w-[390px] h-[844px] bg-background relative overflow-hidden rounded-[3rem] shadow-2xl border-[6px] border-stone-800 flex flex-col">
-          <AccessibilityProvider>
-            <ElderlyApp
-              patient={patients[0]}
-              elderId={elderId}
-              onUpdatePatient={(p) => setPatients(prev => [p, ...prev.slice(1)])}
-              onBack={openModeSwitch}
-              onSignOut={() => supabase.auth.signOut()}
-              startTour={justOnboarded}
-            />
-          </AccessibilityProvider>
+      <LanguageProvider>
+        <div className="min-h-screen bg-stone-300 flex items-center justify-center p-4" style={{ fontFamily: "'DM Sans', system-ui, sans-serif" }}>
+          <div className="w-[390px] h-[844px] bg-background relative overflow-hidden rounded-[3rem] shadow-2xl border-[6px] border-stone-800 flex flex-col">
+            <AccessibilityProvider>
+              <ElderlyApp
+                patient={patients[0]}
+                elderId={elderId}
+                onUpdatePatient={(p) => setPatients(prev => [p, ...prev.slice(1)])}
+                onBack={openModeSwitch}
+                onSignOut={() => supabase.auth.signOut()}
+                startTour={justOnboarded}
+              />
+            </AccessibilityProvider>
+          </div>
         </div>
-      </div>
+      </LanguageProvider>
     );
   }
 
   return (
-    <div className="min-h-screen bg-stone-300 flex items-center justify-center p-4" style={{ fontFamily: "'DM Sans', system-ui, sans-serif" }}>
-      {/* Phone frame */}
-      <div className="w-[390px] h-[844px] bg-background relative overflow-hidden rounded-[3rem] shadow-2xl border-[6px] border-stone-800 flex flex-col">
-        {/* Status bar */}
-        <div className="flex items-center justify-between px-6 pt-3 pb-1 shrink-0 bg-background/80 backdrop-blur-sm">
-          <span className="text-xs font-semibold text-foreground font-mono">9:41</span>
-          <div className="flex items-center gap-1.5">
-            <div className="flex gap-0.5 items-end h-3">
-              {[2, 3, 4, 4].map((h, i) => <div key={i} className="w-1 bg-foreground rounded-sm" style={{ height: `${h * 3}px` }} />)}
-            </div>
-            <Droplets size={11} className="text-foreground" />
-            <div className="text-xs font-semibold text-foreground font-mono">100%</div>
+    <LanguageProvider>
+      <div className="min-h-screen bg-stone-300 flex items-center justify-center p-4" style={{ fontFamily: "'DM Sans', system-ui, sans-serif" }}>
+        {/* Phone frame */}
+        <div className="w-[390px] h-[844px] bg-background relative overflow-hidden rounded-[3rem] shadow-2xl border-[6px] border-stone-800 flex flex-col">
+          {/* Status bar */}
+          <LiveStatusBar className="bg-background/80 backdrop-blur-sm" />
+
+          {/* App header */}
+          <div className="px-4 pt-2 pb-3 bg-background/80 backdrop-blur-sm border-b border-border shrink-0">
+            {showBack ? (
+              <div className="flex items-center gap-2 mb-2">
+                <button onClick={() => setScreen("dashboard")} className="w-8 h-8 bg-card border border-border rounded-xl flex items-center justify-center">
+                  <ArrowLeft size={14} className="text-foreground" />
+                </button>
+                <span className="text-sm font-medium text-muted-foreground">Care Team Notes</span>
+              </div>
+            ) : (
+              <div className="flex items-center justify-between mb-2">
+                <div>
+                  <p className="text-[10px] text-muted-foreground uppercase tracking-widest font-medium tracking-[0.2em]">DOSEWISE</p>
+                  <h1 className="font-['Fraunces'] text-lg font-semibold text-foreground leading-tight">
+                    {screen === "dashboard" ? "Dashboard" : screen === "patient" ? "Patient" : screen === "timeline" ? "Schedule" : screen === "ai" ? "Ask Mei" : screen === "settings" ? "Settings" : "Notifications"}
+                  </h1>
+                </div>
+                <div className="flex items-center gap-2">
+                  <button onClick={() => setShowCaregiverTourConfirm(true)} className="w-8 h-8 bg-card border border-border rounded-xl flex items-center justify-center">
+                    <HelpCircle size={15} className="text-muted-foreground" />
+                  </button>
+                  <button onClick={() => setScreen("settings")} className="w-8 h-8 bg-card border border-border rounded-xl flex items-center justify-center" title="Open settings">
+                    <UserRound size={15} className="text-primary" />
+                  </button>
+                  <button onClick={() => setScreen("messages")} className="w-8 h-8 bg-card border border-border rounded-xl flex items-center justify-center">
+                    <MessageSquare size={15} className="text-accent" />
+                  </button>
+                  <button onClick={() => setScreen("notifications")} className="w-8 h-8 bg-card border border-border rounded-xl flex items-center justify-center relative">
+                    <Bell size={15} className="text-primary" />
+                    {unreadCount > 0 && (
+                      <div className="absolute -top-1 -right-1 w-4 h-4 bg-destructive rounded-full flex items-center justify-center text-[9px] font-bold text-white">{unreadCount}</div>
+                    )}
+                  </button>
+                </div>
+              </div>
+            )}
+            {showPatientSwitcher && (
+              <PatientSwitcher patients={patients} selected={selectedPatient} onSelect={setSelectedPatient} />
+            )}
           </div>
-        </div>
 
-        {/* App header */}
-        <div className="px-4 pt-2 pb-3 bg-background/80 backdrop-blur-sm border-b border-border shrink-0">
-          {showBack ? (
-            <div className="flex items-center gap-2 mb-2">
-              <button onClick={() => setScreen("dashboard")} className="w-8 h-8 bg-card border border-border rounded-xl flex items-center justify-center">
-                <ArrowLeft size={14} className="text-foreground" />
-              </button>
-              <span className="text-sm font-medium text-muted-foreground">Care Team Notes</span>
-            </div>
-          ) : (
-            <div className="flex items-center justify-between mb-2">
-              <div>
-                <p className="text-[10px] text-muted-foreground uppercase tracking-widest font-medium tracking-[0.2em]">DOSEWISE</p>
-                <h1 className="font-['Fraunces'] text-lg font-semibold text-foreground leading-tight">
-                  {screen === "dashboard" ? "Dashboard" : screen === "patient" ? "Patient" : screen === "timeline" ? "Schedule" : screen === "ai" ? "Ask Mei" : screen === "settings" ? "Settings" : "Notifications"}
-                </h1>
-              </div>
-              <div className="flex items-center gap-2">
-                <button onClick={() => setShowCaregiverTourConfirm(true)} className="w-8 h-8 bg-card border border-border rounded-xl flex items-center justify-center">
-                  <HelpCircle size={15} className="text-muted-foreground" />
-                </button>
-                <button onClick={() => setScreen("messages")} className="w-8 h-8 bg-card border border-border rounded-xl flex items-center justify-center">
-                  <MessageSquare size={15} className="text-accent" />
-                </button>
-                <button onClick={() => setScreen("notifications")} className="w-8 h-8 bg-card border border-border rounded-xl flex items-center justify-center relative">
-                  <Bell size={15} className="text-primary" />
-                  {unreadCount > 0 && (
-                    <div className="absolute -top-1 -right-1 w-4 h-4 bg-destructive rounded-full flex items-center justify-center text-[9px] font-bold text-white">{unreadCount}</div>
-                  )}
-                </button>
-              </div>
-            </div>
-          )}
-          {showPatientSwitcher && (
-            <PatientSwitcher patients={patients} selected={selectedPatient} onSelect={setSelectedPatient} />
-          )}
-        </div>
+          {/* Screen content */}
+          <div className={`flex-1 ${screen === "ai" ? "overflow-hidden flex flex-col" : "overflow-y-auto scrollbar-none"}`}>
+            {screen === "dashboard" && <DashboardScreen patient={patient} onNavigate={setScreen} />}
+            {screen === "patient" && (
+              <PatientScreen
+                patient={patient}
+                onEditProfile={() => setShowEditProfile(true)}
+                onAddPrescription={() => setShowAddPrescription(true)}
+                onDeleteMedication={handleDeleteMedication}
+              />
+            )}
+            {screen === "timeline" && <TimelineScreen patient={patient} />}
+            {screen === "notifications" && <NotificationsScreen />}
+            {screen === "ai" && <AskMeiScreen patient={patient} elderId={elderId} onUpdatePatient={handleUpdatePatient} onNavigate={setScreen} onMedsChanged={refreshMedications} />}
+            {screen === "messages" && <MessagesScreen />}
+            {screen === "settings" && <SettingsScreen onSwitchMode={openModeSwitch} onSignOut={() => supabase.auth.signOut()} onEditProfile={() => setShowEditProfile(true)} />}
+          </div>
 
-        {/* Screen content */}
-        <div className={`flex-1 ${screen === "ai" ? "overflow-hidden flex flex-col" : "overflow-y-auto scrollbar-none"}`}>
-          {screen === "dashboard" && <DashboardScreen patient={patient} onNavigate={setScreen} />}
-          {screen === "patient" && (
-            <PatientScreen
-              patient={patient}
-              onEditProfile={() => setShowEditProfile(true)}
-              onAddPrescription={() => setShowAddPrescription(true)}
-              onDeleteMedication={handleDeleteMedication}
+          {/* Modals */}
+          {showAddPrescription && (
+            <AddPrescriptionSheet
+              onClose={() => setShowAddPrescription(false)}
+              onAdd={handleAddPrescription}
+              onAdded={() => setScreen("patient")}
+              onAgentAdded={refreshMedications}
             />
           )}
-          {screen === "timeline" && <TimelineScreen patient={patient} />}
-          {screen === "notifications" && <NotificationsScreen />}
-          {screen === "ai" && <AskMeiScreen patient={patient} elderId={elderId} onUpdatePatient={handleUpdatePatient} onNavigate={setScreen} onMedsChanged={refreshMedications} />}
-          {screen === "messages" && <MessagesScreen />}
-          {screen === "settings" && <SettingsScreen onSwitchMode={openModeSwitch} onSignOut={() => supabase.auth.signOut()} />}
-        </div>
+          {showEditProfile && (
+            <EditProfileSheet
+              patient={patient}
+              onClose={() => setShowEditProfile(false)}
+              onSave={handleUpdatePatient}
+            />
+          )}
+          {showCaregiverTour && <GuidedTour steps={caregiverTourSteps} onFinish={() => setShowCaregiverTour(false)} />}
+          {showCaregiverTourConfirm && (
+            <ConfirmDialog
+              title="Replay guided tour?"
+              body="We'll walk you through the main features again, starting from the Dashboard."
+              confirmLabel="Replay"
+              onConfirm={() => { setShowCaregiverTourConfirm(false); setShowCaregiverTour(true); }}
+              onCancel={() => setShowCaregiverTourConfirm(false)}
+            />
+          )}
 
-        {/* Modals */}
-        {showAddPrescription && (
-          <AddPrescriptionSheet
-            onClose={() => setShowAddPrescription(false)}
-            onAdd={handleAddPrescription}
-            onAgentAdded={refreshMedications}
-          />
-        )}
-        {showEditProfile && (
-          <EditProfileSheet
-            patient={patient}
-            onClose={() => setShowEditProfile(false)}
-            onSave={handleUpdatePatient}
-          />
-        )}
-        {showCaregiverTour && <GuidedTour steps={caregiverTourSteps} onFinish={() => setShowCaregiverTour(false)} />}
-        {showCaregiverTourConfirm && (
-          <ConfirmDialog
-            title="Replay guided tour?"
-            body="We'll walk you through the main features again, starting from the Dashboard."
-            confirmLabel="Replay"
-            onConfirm={() => { setShowCaregiverTourConfirm(false); setShowCaregiverTour(true); }}
-            onCancel={() => setShowCaregiverTourConfirm(false)}
-          />
-        )}
-
-        {/* Bottom navigation */}
-        <div className="shrink-0 bg-card/95 backdrop-blur-md border-t border-border px-2 pb-6 pt-2">
-          <div className="flex items-end">
-            {NAV_ITEMS.map(item => {
-              const isActive = activeTab === item.id;
-              if (item.fab) {
+          {/* Bottom navigation */}
+          <div className="shrink-0 bg-card/95 backdrop-blur-md border-t border-border px-2 pb-6 pt-2">
+            <div className="flex items-end">
+              {NAV_ITEMS.map(item => {
+                const isActive = activeTab === item.id;
+                if (item.fab) {
+                  return (
+                    <div key={item.id} className="flex-1 flex flex-col items-center">
+                      <button
+                        onClick={() => setScreen(item.id)}
+                        data-tour={`nav-${item.id}`}
+                        className={`w-14 h-14 rounded-full flex items-center justify-center -mt-7 shadow-lg active:scale-95 transition-transform bg-primary ${isActive ? "ring-4 ring-primary/25" : ""}`}
+                      >
+                        <item.icon size={24} className="text-primary-foreground" />
+                      </button>
+                      <span className={`text-[10px] font-medium mt-1 ${isActive ? "text-primary" : "text-muted-foreground"}`}>{item.label}</span>
+                    </div>
+                  );
+                }
                 return (
-                  <div key={item.id} className="flex-1 flex flex-col items-center">
-                    <button
-                      onClick={() => setScreen(item.id)}
-                      data-tour={`nav-${item.id}`}
-                      className={`w-14 h-14 rounded-full flex items-center justify-center -mt-7 shadow-lg active:scale-95 transition-transform bg-primary ${isActive ? "ring-4 ring-primary/25" : ""}`}
-                    >
-                      <item.icon size={24} className="text-primary-foreground" />
-                    </button>
-                    <span className={`text-[10px] font-medium mt-1 ${isActive ? "text-primary" : "text-muted-foreground"}`}>{item.label}</span>
-                  </div>
+                  <button
+                    key={item.id}
+                    onClick={() => setScreen(item.id)}
+                    data-tour={`nav-${item.id}`}
+                    className="flex-1 flex flex-col items-center gap-1 py-1 relative"
+                  >
+                    <div className={`w-10 h-7 rounded-2xl flex items-center justify-center transition-colors ${isActive ? "bg-primary" : ""}`}>
+                      <item.icon size={18} className={isActive ? "text-primary-foreground" : "text-muted-foreground"} />
+                    </div>
+                    <span className={`text-[10px] font-medium transition-colors ${isActive ? "text-primary" : "text-muted-foreground"}`}>
+                      {item.label}
+                    </span>
+                  </button>
                 );
-              }
-              return (
-                <button
-                  key={item.id}
-                  onClick={() => setScreen(item.id)}
-                  data-tour={`nav-${item.id}`}
-                  className="flex-1 flex flex-col items-center gap-1 py-1 relative"
-                >
-                  <div className={`w-10 h-7 rounded-2xl flex items-center justify-center transition-colors ${isActive ? "bg-primary" : ""}`}>
-                    <item.icon size={18} className={isActive ? "text-primary-foreground" : "text-muted-foreground"} />
-                  </div>
-                  <span className={`text-[10px] font-medium transition-colors ${isActive ? "text-primary" : "text-muted-foreground"}`}>
-                    {item.label}
-                  </span>
-                </button>
-              );
-            })}
+              })}
+            </div>
           </div>
         </div>
       </div>
-    </div>
+    </LanguageProvider>
   );
 }

@@ -5,6 +5,8 @@ import { agentTurn } from "../lib/hermes";
 import { firstRoutableAction } from "../lib/agentActions";
 import { WeeklySummarySheet } from "./WeeklySummarySheet";
 import { TravelModeSheet } from "./TravelModeSheet";
+import { useLanguage } from "../lib/languageContext";
+import { t } from "../lib/language";
 
 interface ChatMsg { id: number; role: "user" | "agent"; text: string; time: string; isConfirmation?: boolean }
 
@@ -24,6 +26,7 @@ function renderWithBold(text: string) {
 }
 
 export function AskMeiScreen({ patient, elderId, onUpdatePatient, onNavigate, onMedsChanged }: { patient: Patient; elderId?: string; onUpdatePatient: (p: Patient) => void; onNavigate?: (screen: Screen) => void; onMedsChanged?: () => void }) {
+  const { language } = useLanguage();
   const [messages, setMessages] = useState<ChatMsg[]>(() => [
     {
       id: 1,
@@ -71,13 +74,13 @@ export function AskMeiScreen({ patient, elderId, onUpdatePatient, onNavigate, on
           onClick={() => setShowSummary(true)}
           className="flex-1 flex items-center justify-center gap-1.5 bg-secondary text-primary text-xs font-semibold rounded-full px-3 py-2 active:opacity-80 transition-opacity"
         >
-          <TrendingUp size={13} /> Weekly Summary
+          <TrendingUp size={13} /> {t(language, "common.weeklySummary")}
         </button>
         <button
           onClick={() => setShowTravel(true)}
           className="flex-1 flex items-center justify-center gap-1.5 bg-secondary text-primary text-xs font-semibold rounded-full px-3 py-2 active:opacity-80 transition-opacity"
         >
-          <Plane size={13} /> Travel Mode
+          <Plane size={13} /> {t(language, "common.travelMode")}
         </button>
       </div>
 
@@ -127,7 +130,7 @@ export function AskMeiScreen({ patient, elderId, onUpdatePatient, onNavigate, on
               value={input}
               onChange={e => setInput(e.target.value)}
               onKeyDown={e => { if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); handleSend(); } }}
-              placeholder="Ask Mei about this patient..."
+              placeholder={t(language, "common.askMeiPlaceholder")}
               className="w-full bg-transparent text-foreground text-[15px] resize-none outline-none max-h-24 leading-relaxed placeholder:text-muted-foreground"
               rows={1}
             />

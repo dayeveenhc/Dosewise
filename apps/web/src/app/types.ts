@@ -8,6 +8,7 @@ export interface Medication {
   name: string;
   dose: string;
   time: string;
+  times?: string[];
   status: MedStatus;
   takenAt?: string;
   refillDaysLeft?: number;
