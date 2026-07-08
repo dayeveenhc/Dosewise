@@ -83,6 +83,10 @@ verified Supabase JWT (the dev `elder_id` fallback is rejected) and Telegram's
 `/switch` identity-impersonation is disabled. Leave it unset for the local /
 Telegram / CLI demo.
 
+**CORS:** the web app (`apps/web`) calls `/agent/turn` directly from the browser.
+Allowed origins come from `HERMES_CORS_ORIGINS` (comma-separated; defaults to the
+Vite dev server, `http://localhost:5173`). Add the deployed app origin in production.
+
 **Rate limiting** (in-process; `src/hermes/ratelimit.py`) is on by default:
 per-user caps on agent turns (`RATE_LIMIT_TURNS_PER_MINUTE` / `_PER_HOUR`, keyed by
 `elder_id` / Telegram `chat_id`) plus a coarse per-IP ceiling on the POST endpoints

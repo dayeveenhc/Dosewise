@@ -38,11 +38,36 @@ def mint_user_jwt(elder_id: str, ttl_seconds: int = _TTL_SECONDS) -> str:
     return jwt.encode(payload, settings.supabase_jwt_secret, algorithm=_ALGORITHM)
 
 
+# Modern Supabase projects sign user access tokens with an asymmetric key
+# (ES256/RS256) published at the project's JWKS endpoint; the legacy shared
+# secret only covers HS256. Cache the JWKS client — it caches keys internally.
+_ASYMMETRIC_ALGS = {"ES256", "RS256"}
+_jwks_client: jwt.PyJWKClient | None = None
+
+
+def _get_jwks_client() -> jwt.PyJWKClient:
+    global _jwks_client
+    if _jwks_client is None:
+        settings = get_settings()
+        _jwks_client = jwt.PyJWKClient(
+            f"{settings.supabase_project_url}/auth/v1/.well-known/jwks.json"
+        )
+    return _jwks_client
+
+
 def verify_jwt(token: str) -> dict:
     """Verify a client-supplied Supabase JWT (the real ``/agent/turn`` path).
 
+    Supports both signing schemes Supabase uses: legacy HS256 (the project's
+    shared JWT secret — also how ``mint_user_jwt`` signs) and the newer
+    asymmetric keys (ES256/RS256) verified against the project's JWKS.
+
     Returns the decoded claims. Raises ``jwt.InvalidTokenError`` on failure.
     """
+    alg = jwt.get_unverified_header(token).get("alg")
+    if alg in _ASYMMETRIC_ALGS:
+        key = _get_jwks_client().get_signing_key_from_jwt(token).key
+        return jwt.decode(token, key, algorithms=[alg], audience="authenticated")
     settings = get_settings()
     return jwt.decode(
         token,

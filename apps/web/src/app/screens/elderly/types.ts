@@ -13,4 +13,7 @@ export interface EMsg {
   text: string;
   time: string;
   isClinic?: boolean;
+  // A "✓ Added to your schedule"-style chip shown after the agent commits a write,
+  // just before redirecting to the page that shows the change.
+  isConfirmation?: boolean;
 }

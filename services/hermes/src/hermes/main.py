@@ -15,6 +15,7 @@ from pathlib import Path
 
 import uvicorn
 from fastapi import FastAPI
+from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 
 from .agent import llm
@@ -153,6 +154,15 @@ _RATE_LIMITED_PATHS = {"/agent/turn", "/telegram/webhook"}
 
 def create_app() -> FastAPI:
     app = FastAPI(title="Hermes", version="0.1.0", lifespan=lifespan)
+
+    # The web app (apps/web) calls /agent/turn straight from the browser, so its
+    # origin must pass CORS preflight. Telegram/CLI channels are unaffected.
+    app.add_middleware(
+        CORSMiddleware,
+        allow_origins=get_settings().cors_origins,
+        allow_methods=["POST", "OPTIONS"],
+        allow_headers=["Content-Type", "X-Hermes-Api-Key"],
+    )
 
     @app.middleware("http")
     async def _rate_limit_by_ip(request, call_next):

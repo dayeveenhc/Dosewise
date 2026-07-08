@@ -11,7 +11,9 @@ dependencies = [
     "httpx>=0.27",
     "pydantic>=2.7",
     "pydantic-settings>=2.3",
-    "pyjwt>=2.8",
+    # [crypto] pulls in `cryptography` for verifying Supabase's asymmetric
+    # (ES256/RS256) access tokens against the project JWKS (db/auth.py).
+    "pyjwt[crypto]>=2.8",
     "fastapi>=0.111",
     "uvicorn[standard]>=0.30",
     # Prescription/medical-history PDF text extraction (Telegram document uploads).

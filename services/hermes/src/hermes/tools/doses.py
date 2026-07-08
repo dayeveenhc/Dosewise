@@ -56,6 +56,7 @@ async def log_dose(ctx: ToolContext, medication_name: str) -> str:
             filters={"id": f"eq.{pending[0]['id']}"},
             returning=False,
         )
+        ctx.committed_actions.append({"tool": "log_dose", "summary": med["name"]})
         return f"Logged {med['name']} as taken."
 
     await db.insert(
@@ -70,6 +71,7 @@ async def log_dose(ctx: ToolContext, medication_name: str) -> str:
         },
         returning=False,
     )
+    ctx.committed_actions.append({"tool": "log_dose", "summary": med["name"]})
     return f"Logged {med['name']} as taken just now."
 
 

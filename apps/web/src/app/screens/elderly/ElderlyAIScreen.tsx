@@ -1,11 +1,54 @@
 import { useState, useRef, useEffect } from "react";
+import type { ChangeEvent } from "react";
 import { Volume2, Mic, Send, AlertTriangle, Brain, Circle, Check, Trash2, Plus, Camera, FileText, Pill, Globe, Sparkles, ChevronDown, X, Plane } from "lucide-react";
 import type { Patient } from "../../types";
 import type { EMsg, ElderlyTab, DoctorQ } from "./types";
-import { agentTurn } from "../../lib/hermes";
-import { VOICE_DEMOS } from "../../data/medications";
+import { agentTurn, fileToBase64 } from "../../lib/hermes";
+import { firstRoutableAction } from "../../lib/agentActions";
+import { getLanguage, setLanguage as persistLanguage, langOption, LANG_OPTIONS } from "../../lib/preferences";
+import type { LangCode } from "../../lib/preferences";
 
 const nowLabel = () => new Date().toLocaleTimeString("en-SG", { hour: "2-digit", minute: "2-digit" });
+
+// Browser speech APIs (Web Speech). Both degrade gracefully when unsupported:
+// no SpeechRecognition -> the mic button hides; no speechSynthesis -> replies
+// are text-only. Voice itself is client-side; the agent turn stays text+image.
+const SpeechRecognitionImpl: any =
+  typeof window !== "undefined" && ((window as any).SpeechRecognition || (window as any).webkitSpeechRecognition);
+const hasTTS = typeof window !== "undefined" && "speechSynthesis" in window;
+
+// Chat history survives switching bottom-nav tabs (this screen unmounts/remounts
+// each time), via sessionStorage — cleared automatically when the browser tab
+// closes, and force-expired after SESSION_TTL_MS regardless of activity.
+const SESSION_TTL_MS = 30 * 60 * 1000;
+
+function loadChatSession(key: string): { messages: EMsg[]; startedAt: number; quickOpen: boolean } | null {
+  if (typeof window === "undefined") return null;
+  try {
+    const raw = sessionStorage.getItem(key);
+    if (!raw) return null;
+    const parsed = JSON.parse(raw) as { messages: EMsg[]; startedAt: number; quickOpen?: boolean };
+    if (Date.now() - parsed.startedAt > SESSION_TTL_MS) return null;
+    // quickOpen defaults to collapsed for any restored session that already
+    // has real messages beyond the initial greeting.
+    return { ...parsed, quickOpen: parsed.quickOpen ?? parsed.messages.length <= 1 };
+  } catch {
+    return null;
+  }
+}
+
+// Mei's replies are meant to be plain text (soul.md), but LLMs sometimes slip
+// in markdown anyway — render **bold** as real bold instead of showing the
+// literal asterisks. Splits into text/strong nodes rather than using
+// dangerouslySetInnerHTML, since this is LLM output.
+function renderWithBold(text: string) {
+  const parts = text.split(/(\*\*[^*]+\*\*)/g);
+  return parts.map((part, i) =>
+    part.startsWith("**") && part.endsWith("**")
+      ? <strong key={i}>{part.slice(2, -2)}</strong>
+      : part
+  );
+}
 
 // A single feature tile in the "Quick help" launcher.
 function FeatureBtn({ icon: Icon, label, onClick, "data-tour": dataTour }: { icon: any; label: string; onClick: () => void; "data-tour"?: string }) {
@@ -17,11 +60,12 @@ function FeatureBtn({ icon: Icon, label, onClick, "data-tour": dataTour }: { ico
   );
 }
 
-export function ElderlyAIScreen({ patient, onLogDose, onNavigate, onAddRxPhoto, onOpenTravel, doctorQuestions, onAddDoctorQ, onMarkAnswered, onDeleteQuestion, autoMessage }: {
+export function ElderlyAIScreen({ patient, elderId, onLogDose, onNavigate, onMedsChanged, onOpenTravel, doctorQuestions, onAddDoctorQ, onMarkAnswered, onDeleteQuestion, autoMessage }: {
   patient: Patient;
+  elderId?: string;
   onLogDose: (id: number) => void;
   onNavigate: (tab: ElderlyTab) => void;
-  onAddRxPhoto: () => void;
+  onMedsChanged?: () => void;
   onOpenTravel: () => void;
   doctorQuestions: DoctorQ[];
   onAddDoctorQ: (q: string) => void;
@@ -30,29 +74,44 @@ export function ElderlyAIScreen({ patient, onLogDose, onNavigate, onAddRxPhoto, 
   autoMessage?: string;
 }) {
   const nick = patient.nickname || patient.name.split(" ")[1];
-  const h = new Date().getHours();
-  const g = h < 12 ? "morning" : h < 17 ? "afternoon" : "evening";
-  const next = patient.medications.find(m => m.status === "upcoming");
-  const greeting: EMsg = {
-    id: 1, role: "agent",
-    text: `Good ${g}, ${nick}! 😊\n\nI'm Mei, your medication helper. ${next ? `Your next medication is ${next.name} (${next.dose}) at ${next.time}.` : "You've taken all your medications today — well done! 🌟"}\n\nTap a button above for quick help, or just type your question below.`,
-    time: nowLabel(),
+  const buildGreeting = (): EMsg => {
+    const h = new Date().getHours();
+    const g = h < 12 ? "morning" : h < 17 ? "afternoon" : "evening";
+    const next = patient.medications.find(m => m.status === "upcoming");
+    return {
+      id: 1, role: "agent",
+      text: `Good ${g}, ${nick}! 😊\n\nI'm Mei, your medication helper. ${next ? `Your next medication is ${next.name} (${next.dose}) at ${next.time}.` : "You've taken all your medications today — well done! 🌟"}\n\nTap a button above for quick help, or just type your question below.`,
+      time: nowLabel(),
+    };
   };
-  const [messages, setMessages] = useState<EMsg[]>([greeting]);
+  // Key the saved chat by the signed-in user, not the (constant, mock) patient.id
+  // — otherwise every account shares one chat. Each account restores its own.
+  const storageKey = `mei-chat:${elderId ?? "anon"}`;
+  const restored = loadChatSession(storageKey);
+  const startedAtRef = useRef<number>(restored?.startedAt ?? Date.now());
+  const [messages, setMessages] = useState<EMsg[]>(() => restored?.messages ?? [buildGreeting()]);
   const [input, setInput] = useState("");
   const [sending, setSending] = useState(false);
   const [isListening, setIsListening] = useState(false);
   const [isSpeaking, setIsSpeaking] = useState(false);
-  const [language, setLanguage] = useState<"en" | "zh" | "hokkien">("en");
+  // Shared per-user language ("Voice & Language" in Settings). Changing it here
+  // also updates Settings (and what Mei replies in) via the shared store.
+  const [language, setLanguageState] = useState<LangCode>(() => (elderId ? getLanguage(elderId) : "en"));
+  const changeLanguage = (code: LangCode) => {
+    setLanguageState(code);
+    if (elderId) persistLanguage(elderId, code);
+  };
   const [voiceOutput, setVoiceOutput] = useState(true);
   const [screenTab, setScreenTab] = useState<"chat" | "doctor">("chat");
   const [newQ, setNewQ] = useState("");
   const [showInput, setShowInput] = useState(false);
-  const [quickOpen, setQuickOpen] = useState(true);
+  const [quickOpen, setQuickOpen] = useState(() => restored?.quickOpen ?? true);
   const [showMedPicker, setShowMedPicker] = useState(false);
   const [showLangSheet, setShowLangSheet] = useState(false);
   const scrollRef = useRef<HTMLDivElement>(null);
   const reportRef = useRef<HTMLInputElement>(null);
+  const rxPhotoRef = useRef<HTMLInputElement>(null);
+  const recognitionRef = useRef<any>(null);
 
   const flagged  = doctorQuestions.filter(q => !q.answered && q.addedAt.includes("Mei"));
   const manual   = doctorQuestions.filter(q => !q.answered && !q.addedAt.includes("Mei"));
@@ -61,34 +120,106 @@ export function ElderlyAIScreen({ patient, onLogDose, onNavigate, onAddRxPhoto, 
   const uniqueMeds = [...new Set(patient.medications.map(m => m.name))];
 
   const scrollToBottom = () => setTimeout(() => { if (scrollRef.current) scrollRef.current.scrollTop = scrollRef.current.scrollHeight; }, 60);
-  const speak = () => { if (voiceOutput) { setIsSpeaking(true); setTimeout(() => setIsSpeaking(false), 2500); } };
+
+  // Persist chat history so it survives switching bottom-nav tabs (this screen
+  // unmounts/remounts each time) — sessionStorage clears on its own when the
+  // tab closes.
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    sessionStorage.setItem(storageKey, JSON.stringify({ messages, startedAt: startedAtRef.current, quickOpen }));
+  }, [messages, quickOpen, storageKey]);
+
+  // Show the latest message immediately when returning to this tab, instead
+  // of wherever the scroll position happened to be left.
+  useEffect(() => {
+    scrollToBottom();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  // Force-expire the session after SESSION_TTL_MS even if the person never
+  // leaves this screen, not just on the next remount.
+  useEffect(() => {
+    const interval = setInterval(() => {
+      if (Date.now() - startedAtRef.current > SESSION_TTL_MS) {
+        startedAtRef.current = Date.now();
+        setMessages([buildGreeting()]);
+        setQuickOpen(true);
+      }
+    }, 60_000);
+    return () => clearInterval(interval);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  // Real TTS via the browser's speechSynthesis, in the chosen language
+  // (Hokkien falls back to Mandarin — no browser voice exists for it).
+  const speak = (text: string) => {
+    if (!voiceOutput || !hasTTS || !text) return;
+    speechSynthesis.cancel();
+    const utter = new SpeechSynthesisUtterance(text);
+    utter.lang = langOption(language).bcp47;
+    utter.onstart = () => setIsSpeaking(true);
+    utter.onend = () => setIsSpeaking(false);
+    utter.onerror = () => setIsSpeaking(false);
+    speechSynthesis.speak(utter);
+  };
 
   const pushAgent = (text: string, isClinic?: boolean) => {
     setMessages(prev => [...prev, { id: Date.now(), role: "agent", text, time: nowLabel(), isClinic }]);
     scrollToBottom();
-    speak();
+    speak(text);
   };
 
+  // Real dictation via the browser's SpeechRecognition (mic button is hidden
+  // when the browser doesn't support it).
   const handleMic = () => {
-    if (isListening) return;
+    if (!SpeechRecognitionImpl) return;
+    if (isListening) {
+      recognitionRef.current?.stop();
+      return;
+    }
+    const rec = new SpeechRecognitionImpl();
+    recognitionRef.current = rec;
+    rec.lang = langOption(language).bcp47;
+    rec.interimResults = false;
+    rec.onresult = (e: any) => setInput(e.results[0]?.[0]?.transcript ?? "");
+    rec.onend = () => setIsListening(false);
+    rec.onerror = () => setIsListening(false);
     setIsListening(true);
-    setTimeout(() => {
-      setInput(VOICE_DEMOS[Math.floor(Date.now() % VOICE_DEMOS.length)]);
-      setIsListening(false);
-    }, 1800);
+    rec.start();
   };
 
-  const send = async (text: string) => {
+  const send = async (text: string, imageBase64?: string, pdfBase64?: string) => {
     const t = text.trim();
     if (!t || sending) return;
     setMessages(prev => [...prev, { id: Date.now(), role: "user", text: t, time: nowLabel() }]);
+    setQuickOpen(false);
     scrollToBottom();
     setSending(true);
-    const { reply } = await agentTurn(t);
+    const { reply, actions } = await agentTurn(t, imageBase64, pdfBase64);
     setMessages(prev => [...prev, { id: Date.now() + 1, role: "agent", text: reply, time: nowLabel() }]);
     setSending(false);
     scrollToBottom();
-    speak();
+    speak(reply);
+    // Only fires when the agent *actually* committed a write this turn (not on a
+    // propose). Refresh the destination, confirm it in chat, then guide the user
+    // to the page that shows the change.
+    const routed = firstRoutableAction(actions);
+    if (routed) {
+      onMedsChanged?.();
+      setMessages(prev => [...prev, { id: Date.now() + 2, role: "agent", text: `✓ ${routed.target.done} — opening your ${routed.target.label}…`, time: nowLabel(), isConfirmation: true }]);
+      scrollToBottom();
+      setTimeout(() => onNavigate(routed.target.elderly), 1200);
+    }
+  };
+
+  // "Add prescription" quick-help: snap/choose a photo, then let the agent read
+  // the label and propose it in the chat (confirm with a simple "yes").
+  const onRxPhotoFile = async (e: ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    e.target.value = "";
+    if (!file) return;
+    setQuickOpen(false);
+    send("📷 Here is a photo of my prescription.", await fileToBase64(file));
   };
 
   const handleSend = () => {
@@ -109,15 +240,20 @@ export function ElderlyAIScreen({ patient, onLogDose, onNavigate, onAddRxPhoto, 
     pushAgent(`Let's get you set up, ${nick}! Here's what I can do:\n\n📷 Add a medication — tap “Add prescription” and snap a photo of the box.\n📄 Update your health profile — upload a clinic report and I'll read it.\n💊 Ask about a medication — tap “Ask a medication” and pick one.\n🌐 Change language or turn my voice on/off.\n\nWhat would you like to do first?`);
   };
 
-  const runReport = () => {
-    pushAgent("📄 Reading your report…");
-    setTimeout(() => {
-      pushAgent(`All done! I've updated ${nick}'s medical profile from the report:\n\n• Blood pressure: 128/80\n• HbA1c (sugar): 6.9%\n• Kidney function: normal\n\nYour caregiver can see these updates too. ✅`);
-    }, 1400);
+  // "Update profile": the clinic report goes to the real agent — a PDF's text is
+  // extracted server-side; an image goes through the vision path. The agent
+  // proposes the profile update and saves only after a confirming "yes".
+  const onReportFile = async (e: ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    e.target.value = "";
+    if (!file) return;
+    setQuickOpen(false);
+    const b64 = await fileToBase64(file);
+    const msg = "📄 Here is my clinic report. Please update my medical profile from it.";
+    if (file.type === "application/pdf") send(msg, undefined, b64);
+    else send(msg, b64);
   };
-  const onReportFile = () => runReport();
 
-  const LANGS = [{ id: "en" as const, label: "English" }, { id: "zh" as const, label: "华语" }, { id: "hokkien" as const, label: "闽南话" }];
 
   return (
     <div className="flex flex-col flex-1 overflow-hidden relative">
@@ -237,7 +373,7 @@ export function ElderlyAIScreen({ patient, onLogDose, onNavigate, onAddRxPhoto, 
                   <Sparkles size={16} />Help me set up
                 </button>
                 <div className="grid grid-cols-2 gap-1.5">
-                  <FeatureBtn icon={Camera}   label="Add prescription" onClick={onAddRxPhoto} />
+                  <FeatureBtn icon={Camera}   label="Add prescription" onClick={() => rxPhotoRef.current?.click()} />
                   <FeatureBtn icon={FileText} label="Update profile"   onClick={() => reportRef.current?.click()} />
                   <FeatureBtn icon={Pill}     label="Ask a medication" onClick={() => setShowMedPicker(v => !v)} />
                   <FeatureBtn icon={Globe}    label="Language & voice" onClick={() => setShowLangSheet(true)} />
@@ -264,13 +400,20 @@ export function ElderlyAIScreen({ patient, onLogDose, onNavigate, onAddRxPhoto, 
             <div className="px-4 pb-1 shrink-0">
               <div className="flex items-center gap-1.5 text-primary">
                 <Volume2 size={13} />
-                <span className="text-xs font-semibold">Speaking{language !== "en" ? ` in ${language === "zh" ? "华语" : "闽南话"}` : ""}…</span>
+                <span className="text-xs font-semibold">Speaking{language !== "en" ? ` in ${langOption(language).label}` : ""}…</span>
               </div>
             </div>
           )}
 
           <div ref={scrollRef} className="flex-1 overflow-y-auto scrollbar-none px-4 py-3 space-y-3 border-t border-border">
-            {messages.map(msg => (
+            {messages.map(msg => msg.isConfirmation ? (
+              <div key={msg.id} className="flex justify-center">
+                <div className="flex items-center gap-1.5 bg-emerald-50 border border-emerald-200 text-emerald-800 rounded-full px-3.5 py-1.5">
+                  <Check size={13} className="text-emerald-600 shrink-0" />
+                  <span className="text-[13px] font-semibold">{msg.text.replace(/^✓\s*/, "")}</span>
+                </div>
+              </div>
+            ) : (
               <div key={msg.id} className={`flex ${msg.role === "user" ? "justify-end" : "justify-start"} gap-2`}>
                 {msg.role === "agent" && (
                   <div className="w-8 h-8 rounded-full bg-primary flex items-center justify-center shrink-0 mt-1">
@@ -279,7 +422,7 @@ export function ElderlyAIScreen({ patient, onLogDose, onNavigate, onAddRxPhoto, 
                 )}
                 <div className={`max-w-[82%] flex flex-col gap-1 ${msg.role === "user" ? "items-end" : "items-start"}`}>
                   <div className={`rounded-2xl px-4 py-3 ${msg.role === "user" ? "bg-primary text-primary-foreground rounded-tr-sm" : "bg-card border border-border rounded-tl-sm"}`}>
-                    <p className={`text-[15px] leading-relaxed whitespace-pre-line ${msg.role === "user" ? "text-primary-foreground" : "text-foreground"}`}>{msg.text}</p>
+                    <p className={`text-[15px] leading-relaxed whitespace-pre-line ${msg.role === "user" ? "text-primary-foreground" : "text-foreground"}`}>{renderWithBold(msg.text)}</p>
                     {msg.isClinic && <p className="text-[11px] mt-2 opacity-60 italic">⚕️ Always verify with your doctor or pharmacist</p>}
                   </div>
                   <p className="text-[10px] text-muted-foreground px-1">{msg.time}</p>
@@ -308,8 +451,13 @@ export function ElderlyAIScreen({ patient, onLogDose, onNavigate, onAddRxPhoto, 
 
           <div className="px-4 pb-4 pt-1 border-t border-border shrink-0">
             <div className="flex gap-2 items-end">
-              <button onClick={handleMic} className={`w-10 h-10 rounded-full flex items-center justify-center shrink-0 transition-colors ${isListening ? "bg-red-500 text-white" : "bg-muted text-foreground"}`}>
-                <Mic size={17} />
+              {SpeechRecognitionImpl && (
+                <button onClick={handleMic} className={`w-10 h-10 rounded-full flex items-center justify-center shrink-0 transition-colors ${isListening ? "bg-red-500 text-white" : "bg-muted text-foreground"}`}>
+                  <Mic size={17} />
+                </button>
+              )}
+              <button onClick={() => rxPhotoRef.current?.click()} className="w-10 h-10 rounded-full bg-muted text-foreground flex items-center justify-center shrink-0">
+                <Camera size={17} />
               </button>
               <div className="flex-1 bg-input-background rounded-2xl px-3.5 py-2">
                 <textarea
@@ -328,8 +476,9 @@ export function ElderlyAIScreen({ patient, onLogDose, onNavigate, onAddRxPhoto, 
             <p className="text-center text-[10px] text-muted-foreground mt-2">Mei is an AI helper. Always check with a doctor or pharmacist for medical advice.</p>
           </div>
 
-          {/* hidden input used by "Update profile" */}
+          {/* hidden inputs used by "Update profile" and "Add prescription" */}
           <input ref={reportRef} type="file" accept="image/*,application/pdf" className="hidden" onChange={onReportFile} />
+          <input ref={rxPhotoRef} type="file" accept="image/*" capture="environment" className="hidden" onChange={onRxPhotoFile} />
 
           {/* Language & voice sheet */}
           {showLangSheet && (
@@ -340,9 +489,9 @@ export function ElderlyAIScreen({ patient, onLogDose, onNavigate, onAddRxPhoto, 
                   <button onClick={() => setShowLangSheet(false)} className="w-8 h-8 rounded-full bg-muted flex items-center justify-center"><X size={16} className="text-muted-foreground" /></button>
                 </div>
                 <p className="text-sm font-semibold text-foreground mb-2">Language</p>
-                <div className="flex gap-2 mb-5">
-                  {LANGS.map(l => (
-                    <button key={l.id} onClick={() => setLanguage(l.id)} className={`flex-1 py-3 rounded-xl text-[15px] font-bold border transition-colors ${language === l.id ? "bg-primary text-white border-primary" : "bg-card text-foreground border-border"}`}>
+                <div className="grid grid-cols-3 gap-2 mb-5">
+                  {LANG_OPTIONS.map(l => (
+                    <button key={l.code} onClick={() => changeLanguage(l.code)} className={`py-3 rounded-xl text-[14px] font-bold border transition-colors ${language === l.code ? "bg-primary text-white border-primary" : "bg-card text-foreground border-border"}`}>
                       {l.label}
                     </button>
                   ))}

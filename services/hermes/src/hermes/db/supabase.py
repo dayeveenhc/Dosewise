@@ -117,7 +117,10 @@ class Supabase:
     def __init__(self) -> None:
         settings = get_settings()
         self._settings = settings
-        self._http = httpx.AsyncClient(base_url=settings.supabase_url, timeout=20.0)
+        # supabase_project_url tolerates a trailing /rest/v1[/] in SUPABASE_URL —
+        # the methods above prepend /rest/v1 themselves, so a suffixed URL would
+        # double it (PostgREST PGRST125 "Invalid path").
+        self._http = httpx.AsyncClient(base_url=settings.supabase_project_url, timeout=20.0)
 
     async def aclose(self) -> None:
         await self._http.aclose()

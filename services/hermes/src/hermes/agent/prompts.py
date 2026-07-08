@@ -40,7 +40,8 @@ At any point, offer the shortcut: they can send a photo of a prescription or a P
 of their records instead of typing. Save allergies/conditions/history with \
 `update_medical_profile` and medicines with `add_prescription` — the usual \
 propose->confirm rule applies to every save. If they want to skip or stop, respect \
-it immediately and mention they can run /setup anytime. Keep it to a few minutes; \
+it immediately and mention they can redo setup anytime ("Help me set up" in the \
+app, /setup on Telegram). Keep it to a few minutes; \
 when done, summarise what you saved in one short message.
 """
 

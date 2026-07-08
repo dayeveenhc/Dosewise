@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { Droplets, Home, Pill, Brain, Bell, Settings, HelpCircle } from "lucide-react";
 import type { Patient, Medication, MedStatus, Message } from "../../types";
 import type { ElderlyTab, DoctorQ } from "./types";
@@ -12,7 +12,7 @@ import { TravelModeSheet } from "../TravelModeSheet";
 import { GuidedTour } from "../../components/GuidedTour";
 import type { TourStep } from "../../components/GuidedTour";
 import { ConfirmDialog } from "../../components/ConfirmDialog";
-import { logDoseTaken, addMedication, to24h } from "../../lib/medications";
+import { logDoseTaken, addMedication, fetchElderMedications, to24h } from "../../lib/medications";
 
 export function ElderlyApp({ patient, elderId, onUpdatePatient, onBack, onSignOut, startTour }: {
   patient: Patient;
@@ -28,6 +28,42 @@ export function ElderlyApp({ patient, elderId, onUpdatePatient, onBack, onSignOu
   const [showTravel, setShowTravel] = useState(false);
   const [showTour, setShowTour] = useState(!!startTour);
   const [showTourConfirm, setShowTourConfirm] = useState(false);
+
+  // Ask once for permission to pop a browser notification at dose time. Only
+  // works while this tab is open (no service worker / push infra) — that's a
+  // known limit, not a bug: see CONTEXT.md notification-tier notes.
+  useEffect(() => {
+    if (typeof window !== "undefined" && "Notification" in window && Notification.permission === "default") {
+      Notification.requestPermission();
+    }
+  }, []);
+
+  // Fires a browser notification the minute a medication's scheduled time
+  // arrives, for whatever's currently "upcoming" in patient.medications (kept
+  // fresh by refreshMeds after the agent adds/reminds via chat or photo scan).
+  // notifiedRef tracks "id|date" so a slot notifies once per day, not every poll tick.
+  const notifiedRef = useRef<Set<string>>(new Set());
+  useEffect(() => {
+    if (typeof window === "undefined" || !("Notification" in window)) return;
+    const check = () => {
+      if (Notification.permission !== "granted") return;
+      const now = new Date();
+      const nowLabel = now.toLocaleTimeString("en-SG", { hour: "numeric", minute: "2-digit", hour12: true }).toUpperCase();
+      const today = now.toISOString().slice(0, 10);
+      for (const med of patient.medications) {
+        if (med.status !== "upcoming" || med.time.toUpperCase() !== nowLabel) continue;
+        const key = `${med.id}|${today}`;
+        if (notifiedRef.current.has(key)) continue;
+        notifiedRef.current.add(key);
+        new Notification(`💊 Time for ${med.name}`, {
+          body: `${med.dose || ""} — ${med.purpose || "your medicine"}`.trim(),
+        });
+      }
+    };
+    check();
+    const interval = setInterval(check, 30_000);
+    return () => clearInterval(interval);
+  }, [patient.medications]);
 
   const tourSteps: TourStep[] = [
     {
@@ -90,6 +126,14 @@ export function ElderlyApp({ patient, elderId, onUpdatePatient, onBack, onSignOu
     onUpdatePatient({ ...patient, medications: [...patient.medications, { ...med, id: nextId, medicationId, status: "upcoming" as MedStatus }] });
   };
 
+  // After the agent writes a medication change server-side (photo prescription,
+  // chat-logged dose/refill), refetch so the local list isn't stale.
+  const refreshMeds = async () => {
+    if (!elderId) return;
+    const medications = await fetchElderMedications(elderId);
+    onUpdatePatient({ ...patient, medications });
+  };
+
   const handleAddDoctorQ = (q: string) => {
     setDoctorQuestions(prev => [{ id: Date.now(), question: q, addedAt: `Added by Mei · ${new Date().toLocaleTimeString("en-SG", { hour: "2-digit", minute: "2-digit" })}`, answered: false }, ...prev]);
   };
@@ -146,9 +190,10 @@ export function ElderlyApp({ patient, elderId, onUpdatePatient, onBack, onSignOu
         {tab === "ai"            && (
           <ElderlyAIScreen
             patient={patient}
+            elderId={elderId}
             onLogDose={handleLogDose}
             onNavigate={setTab}
-            onAddRxPhoto={() => setAddRx("scan")}
+            onMedsChanged={refreshMeds}
             onOpenTravel={() => setShowTravel(true)}
             doctorQuestions={doctorQuestions}
             onAddDoctorQ={handleAddDoctorQ}
@@ -190,7 +235,7 @@ export function ElderlyApp({ patient, elderId, onUpdatePatient, onBack, onSignOu
         </div>
       </div>
 
-      {addRx && <AddPrescriptionSheet initialTab={addRx} onClose={() => setAddRx(null)} onAdd={handleAddPrescription} />}
+      {addRx && <AddPrescriptionSheet initialTab={addRx} onClose={() => setAddRx(null)} onAdd={handleAddPrescription} onAgentAdded={refreshMeds} />}
       {showTravel && (
         <TravelModeSheet
           patient={patient}

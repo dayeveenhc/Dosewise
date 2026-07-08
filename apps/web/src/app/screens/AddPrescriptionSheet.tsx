@@ -3,11 +3,15 @@ import type { ReactNode, ChangeEvent } from "react";
 import { X, Check, Plus, Pill, Camera, PenLine, Image as ImageIcon, Sparkles } from "lucide-react";
 import type { Medication } from "../types";
 import { MED_COLOURS, PRESET_TIMES, MEDICATION_CATALOG, COMMON_CONDITIONS, MED_PHOTOS } from "../data/medications";
+import { agentTurn, fileToBase64 } from "../lib/hermes";
 
 interface AddPrescriptionSheetProps {
   onClose: () => void;
   onAdd: (med: Omit<Medication, "id" | "status">) => void;
   initialTab?: "scan" | "manual";
+  // Called after the agent commits a scanned prescription server-side, so the
+  // parent can refetch the medication list (there is no local onAdd for this path).
+  onAgentAdded?: () => void;
 }
 
 // A small type-ahead input: shows filtered suggestions as the user types.
@@ -53,11 +57,13 @@ function TypeAhead<T>({ value, onChange, onPick, items, filter, label, render, p
   );
 }
 
-export function AddPrescriptionSheet({ onClose, onAdd, initialTab = "manual" }: AddPrescriptionSheetProps) {
+export function AddPrescriptionSheet({ onClose, onAdd, initialTab = "manual", onAgentAdded }: AddPrescriptionSheetProps) {
   const [tab, setTab] = useState<"scan" | "manual">(initialTab);
   const [scannedPhoto, setScannedPhoto] = useState<string | null>(null);
   const [scanning, setScanning] = useState(false);
-  const [fromScan, setFromScan] = useState(false);
+  const [proposal, setProposal] = useState<string | null>(null);
+  const [committing, setCommitting] = useState(false);
+  const [committed, setCommitted] = useState(false);
   const fileRef = useRef<HTMLInputElement>(null);
 
   const [name, setName] = useState("");
@@ -90,26 +96,43 @@ export function AddPrescriptionSheet({ onClose, onAdd, initialTab = "manual" }: 
     if (!dose.trim()) setDose(m.dose);
   };
 
-  // Simulated label scan: reads a photo, then pre-fills the form for review.
-  // (Mockup only — real OCR would replace runScan.)
-  const runScan = (photoUrl: string, demo: { name: string; purpose: string; dose: string }) => {
+  // Real label scan: the photo goes to Hermes, whose add_prescription tool reads
+  // the label and proposes the details (propose→confirm; nothing is saved until
+  // the person confirms below, and the write happens server-side).
+  const runScan = async (photoUrl: string, file: Blob) => {
     setScannedPhoto(photoUrl);
     setScanning(true);
-    setTimeout(() => {
-      setName(demo.name);
-      setDose(demo.dose);
-      setPurpose(demo.purpose);
-      setRefillDays("30");
-      setScanning(false);
-      setFromScan(true);
-      setTab("manual");
-    }, 1300);
+    setProposal(null);
+    setCommitted(false);
+    const b64 = await fileToBase64(file);
+    const { reply } = await agentTurn("Here is a photo of my prescription.", b64);
+    setProposal(reply);
+    setScanning(false);
+  };
+
+  const confirmScan = async () => {
+    setCommitting(true);
+    const { reply, actions } = await agentTurn("Yes, please add it.");
+    setProposal(reply);
+    setCommitting(false);
+    // actions only contains add_prescription once the write actually committed
+    // (never on the propose turn) — a reliable "it's really saved" signal.
+    if (actions.some(a => a.tool === "add_prescription")) {
+      setCommitted(true);
+      onAgentAdded?.();
+    }
   };
 
   const onFile = (e: ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (!file) return;
-    runScan(URL.createObjectURL(file), MEDICATION_CATALOG[0]);
+    runScan(URL.createObjectURL(file), file);
+  };
+
+  const onSamplePhoto = async () => {
+    // The bundled sample image, routed through the same real agent path.
+    const blob = await (await fetch(MED_PHOTOS["Metformin"])).blob();
+    runScan(MED_PHOTOS["Metformin"], blob);
   };
 
   const inputCls = "w-full bg-input-background border border-border rounded-xl px-3.5 py-2.5 text-sm text-foreground placeholder:text-muted-foreground outline-none focus:border-primary transition-colors";
@@ -165,6 +188,36 @@ export function AddPrescriptionSheet({ onClose, onAdd, initialTab = "manual" }: 
                     <span className="text-sm font-semibold">Reading the label…</span>
                   </div>
                 </div>
+              ) : proposal ? (
+                <div className="space-y-3">
+                  <div className="border border-border bg-card rounded-2xl p-4 flex flex-col gap-3">
+                    {scannedPhoto && <img src={scannedPhoto} alt="scan" className="w-20 h-20 rounded-xl object-cover" />}
+                    <p className="text-[15px] text-foreground leading-relaxed whitespace-pre-line">{proposal}</p>
+                  </div>
+                  {committed ? (
+                    <button onClick={onClose} className="w-full bg-primary text-primary-foreground rounded-2xl py-3.5 text-sm font-semibold flex items-center justify-center gap-2">
+                      <Check size={16} /> Done
+                    </button>
+                  ) : (
+                    <div className="flex gap-2">
+                      <button
+                        onClick={() => { setProposal(null); setScannedPhoto(null); }}
+                        disabled={committing}
+                        className="flex-1 h-12 rounded-2xl border border-border text-muted-foreground text-sm font-semibold disabled:opacity-40"
+                      >
+                        Retake
+                      </button>
+                      <button
+                        onClick={confirmScan}
+                        disabled={committing}
+                        className="flex-1 h-12 rounded-2xl bg-primary text-primary-foreground text-sm font-semibold flex items-center justify-center gap-2 disabled:opacity-40"
+                      >
+                        {committing ? <Sparkles size={15} className="animate-pulse" /> : <Check size={15} />}
+                        {committing ? "Saving…" : "Yes, add it"}
+                      </button>
+                    </div>
+                  )}
+                </div>
               ) : (
                 <>
                   <button
@@ -175,10 +228,10 @@ export function AddPrescriptionSheet({ onClose, onAdd, initialTab = "manual" }: 
                       <Camera size={26} className="text-primary" />
                     </div>
                     <p className="text-[15px] font-semibold text-foreground">Take a photo</p>
-                    <p className="text-xs text-muted-foreground leading-relaxed">Snap the medication box or the prescription label — we'll fill in the details for you to check.</p>
+                    <p className="text-xs text-muted-foreground leading-relaxed">Snap the medication box or the prescription label — Mei will read it and check the details with you.</p>
                   </button>
                   <button
-                    onClick={() => runScan(MED_PHOTOS["Metformin"], MEDICATION_CATALOG[0])}
+                    onClick={onSamplePhoto}
                     className="w-full flex items-center justify-center gap-2 py-2.5 rounded-xl bg-muted text-sm font-semibold text-foreground active:bg-muted/70"
                   >
                     <ImageIcon size={15} />Try with a sample photo
@@ -191,13 +244,6 @@ export function AddPrescriptionSheet({ onClose, onAdd, initialTab = "manual" }: 
             </div>
           ) : (
             <>
-              {fromScan && (
-                <div className="bg-primary/5 border border-primary/20 rounded-xl px-3 py-2.5 flex items-center gap-2">
-                  <Sparkles size={14} className="text-primary shrink-0" />
-                  <p className="text-xs text-foreground">Filled in from your photo — please check it's correct.</p>
-                </div>
-              )}
-
               {/* Medication name — type-ahead */}
               <div>
                 <label className="block text-xs font-semibold text-foreground mb-1.5">Medication name <span className="text-destructive">*</span></label>

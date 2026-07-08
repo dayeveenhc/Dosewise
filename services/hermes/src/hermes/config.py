@@ -7,6 +7,7 @@ git-ignored file; nothing is hardcoded here.
 
 from __future__ import annotations
 
+import os
 from functools import lru_cache
 from pathlib import Path
 
@@ -16,10 +17,15 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 #   parents[0]=hermes  [1]=src  [2]=services/hermes  [3]=services  [4]=repo root
 _REPO_ROOT = Path(__file__).resolve().parents[4]
 
+# Allows a second process (e.g. a demo/ngrok instance run alongside prod) to load
+# an entirely separate .env file instead of the shared repo-root one. Unset in
+# normal/prod operation, so this is a no-op there.
+_ENV_FILE = Path(os.environ["HERMES_ENV_FILE"]) if os.environ.get("HERMES_ENV_FILE") else _REPO_ROOT / ".env"
+
 
 class Settings(BaseSettings):
     model_config = SettingsConfigDict(
-        env_file=_REPO_ROOT / ".env",
+        env_file=_ENV_FILE,
         env_file_encoding="utf-8",
         extra="ignore",
     )
@@ -87,6 +93,13 @@ class Settings(BaseSettings):
     hermes_channel_mode: str = "polling"  # polling | webhook
     # Dev: hot-reload the server when the mounted source changes (uvicorn --reload).
     hermes_reload: bool = False
+    # Browser origins allowed to call /agent/turn (comma-separated). The Vite dev
+    # server by default; add the deployed app origin in production.
+    hermes_cors_origins: str = "http://localhost:5173"
+
+    @property
+    def cors_origins(self) -> list[str]:
+        return [o.strip() for o in self.hermes_cors_origins.split(",") if o.strip()]
 
     # --- Telegram test identity mapping ---
     # Elder A from supabase/seed/seed.sql
@@ -97,6 +110,12 @@ class Settings(BaseSettings):
     # `elder_id` fallback is rejected and Telegram's /switch impersonation is
     # disabled. Default false keeps the local/Telegram/CLI demo ergonomic.
     hermes_strict_auth: bool = False
+
+    # --- Shared-secret API key (optional; for instances exposed outside the
+    # trusted network, e.g. via ngrok) ---
+    # When set, requests to /agent/turn must carry a matching X-Hermes-Api-Key
+    # header. Empty (default) disables the check entirely.
+    hermes_api_key: str = ""
 
     # --- Rate limiting (in-process; see ratelimit.py) ---
     rate_limit_enabled: bool = True
@@ -119,6 +138,18 @@ class Settings(BaseSettings):
     @property
     def repo_root(self) -> Path:
         return _REPO_ROOT
+
+    @property
+    def supabase_project_url(self) -> str:
+        """SUPABASE_URL normalized to the bare project URL.
+
+        Deployed .envs sometimes carry a trailing ``/rest/v1[/]``; callers append
+        their own service paths (``/rest/v1/...``, ``/auth/v1/...``), so strip it.
+        """
+        base = self.supabase_url.rstrip("/")
+        if base.endswith("/rest/v1"):
+            base = base[: -len("/rest/v1")]
+        return base
 
 
 @lru_cache

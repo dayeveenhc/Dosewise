@@ -33,4 +33,13 @@ export default defineConfig({
 
   // File types to support raw imports. Never add .css, .tsx, or .ts files to this.
   assetsInclude: ['**/*.svg', '**/*.csv'],
+
+  // Demo-only: accept connections from the ngrok tunnel host, which Vite's
+  // default host-check otherwise rejects with "Blocked request". Free-tier
+  // ngrok URLs are random per-session, so allow any ngrok-free.app subdomain
+  // rather than hardcoding one that'll go stale on the next tunnel restart.
+  server: {
+    host: true,
+    allowedHosts: ['.ngrok-free.app', '.ngrok-free.dev'],
+  },
 })

@@ -166,6 +166,8 @@ async def add_prescription(
         ctx.session.pending_proposal = None
         ctx.session.pending_image = None
         ctx.session.awaiting_confirmation = False
+    summary = name + (f" {dosage}" if dosage else "")
+    ctx.committed_actions.append({"tool": "add_prescription", "summary": summary})
     return f"Saved {name} to the medication list and marked it confirmed."
 
 
@@ -377,6 +379,9 @@ async def set_medication_reminder(
     if ctx.session is not None:
         ctx.session.pending_reminder = None
         ctx.session.awaiting_confirmation = False
+    ctx.committed_actions.append(
+        {"tool": "set_medication_reminder", "summary": f"{name} at {', '.join(valid)}"}
+    )
     return (
         f"Saved. I'll remind you to take {name} at "
         f"{', '.join(valid)} {_days_phrase(valid_days)}."

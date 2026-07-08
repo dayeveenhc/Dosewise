@@ -8,6 +8,7 @@ import { PatientSwitcher } from "./components/shared";
 import { supabase } from "./lib/supabase";
 import { ensureProfile, fetchElderMedications, fetchArchivedMedications, addMedication, archiveMedication, to24h } from "./lib/medications";
 import { fetchProfileRole, fetchProfile } from "./lib/profile";
+import { getMode, setMode } from "./lib/preferences";
 import { WelcomeScreen } from "./screens/setup/WelcomeScreen";
 import { SetupMethodScreen } from "./screens/setup/SetupMethodScreen";
 import { GuidedSetupWizard } from "./screens/setup/GuidedSetupWizard";
@@ -100,7 +101,10 @@ export default function App() {
       const role = await fetchProfileRole(session.user.id);
       if (role) {
         setNeedsWizard(false);
-        setAppMode(role === "elder" ? "elderly" : "caregiver");
+        // Prefer the interface this user last used on this browser (e.g. a
+        // caregiver-preview they expect to stick), falling back to the role
+        // default. Role is stored correctly, so a fresh browser still lands right.
+        setAppMode(getMode(session.user.id) ?? (role === "elder" ? "elderly" : "caregiver"));
       } else {
         setNeedsWizard(true);
         setPreAuthStage("mode");
@@ -121,6 +125,14 @@ export default function App() {
   }, [session]);
 
   const elderId = session?.user.id;
+
+  // Remember the interface the user is actually on, per account, so leaving and
+  // reopening the site lands back on it (caregiver stays caregiver, not elderly).
+  // Captures every transition: role-init, the Settings preview switch, and the
+  // wizard finishing. "onboarding" is never persisted (guarded in setMode).
+  useEffect(() => {
+    if (elderId && appMode !== "onboarding") setMode(elderId, appMode);
+  }, [elderId, appMode]);
 
   // Already-onboarded users switching preview mode from Settings (not new setup).
   const openModeSwitch = () => { setNeedsWizard(false); setPreAuthStage("mode"); setAppMode("onboarding"); };
@@ -184,6 +196,14 @@ export default function App() {
       ...p,
       medications: [...p.medications, { ...med, id: nextMedId++, medicationId, status: "upcoming" }],
     }));
+  };
+
+  // After the agent commits a scanned prescription server-side, refetch the list
+  // (that path writes via Hermes, not the local handleAddPrescription).
+  const refreshMedications = async () => {
+    if (!elderId) return;
+    const medications = await fetchElderMedications(elderId);
+    setPatients(prev => prev.map((p, i) => i !== selectedPatient ? p : { ...p, medications }));
   };
 
   const handleDeleteMedication = async (id: number) => {
@@ -337,7 +357,7 @@ export default function App() {
           )}
           {screen === "timeline" && <TimelineScreen patient={patient} />}
           {screen === "notifications" && <NotificationsScreen />}
-          {screen === "ai" && <AskMeiScreen patient={patient} elderId={elderId} onUpdatePatient={handleUpdatePatient} />}
+          {screen === "ai" && <AskMeiScreen patient={patient} elderId={elderId} onUpdatePatient={handleUpdatePatient} onNavigate={setScreen} onMedsChanged={refreshMedications} />}
           {screen === "messages" && <MessagesScreen />}
           {screen === "settings" && <SettingsScreen onSwitchMode={openModeSwitch} onSignOut={() => supabase.auth.signOut()} />}
         </div>
@@ -347,6 +367,7 @@ export default function App() {
           <AddPrescriptionSheet
             onClose={() => setShowAddPrescription(false)}
             onAdd={handleAddPrescription}
+            onAgentAdded={refreshMedications}
           />
         )}
         {showEditProfile && (

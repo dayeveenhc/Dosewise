@@ -145,6 +145,9 @@ async def log_refill(
             returning=False,
         )
     tail = f" (about enough until {forecast})" if pills_remaining else ""
+    ctx.committed_actions.append(
+        {"tool": "log_refill", "summary": f"{med['name']}: {pills_remaining} pills"}
+    )
     return f"Updated {med['name']}: {pills_remaining} pills on hand{tail}."
 
 

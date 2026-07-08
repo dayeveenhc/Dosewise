@@ -5,6 +5,8 @@ import type { FontSize } from "../../accessibility.tsx";
 import type { Patient } from "../../types";
 import { MED_SHAPES, MED_PHOTOS, COMMON_CONDITIONS, COMMON_ALLERGIES, COMMON_DRUG_ALLERGIES } from "../../data/medications";
 import { fetchProfile, saveProfile } from "../../lib/profile";
+import { getLanguage, setLanguage as persistLanguage, LANG_OPTIONS } from "../../lib/preferences";
+import type { LangCode } from "../../lib/preferences";
 import { TagList, fieldCls } from "../setup/GuidedSetupWizard";
 
 export function Toggle({ on, onToggle }: { on: boolean; onToggle: () => void }) {
@@ -22,7 +24,13 @@ export function ElderlySettingsScreen({ patient, elderId, onUpdatePatient, onBac
 }) {
   const { fontSize, setFontSize, highContrast, setHighContrast, colourBlind, setColourBlind } = useAccessibility();
   const [voiceEnabled, setVoiceEnabled] = useState(true);
-  const [language, setLanguage] = useState("English");
+  // The authoritative "Mei responds in this language" control — persisted per user
+  // and read by every agent call (see lib/hermes.ts).
+  const [language, setLanguageState] = useState<LangCode>(() => (elderId ? getLanguage(elderId) : "en"));
+  const changeLanguage = (code: LangCode) => {
+    setLanguageState(code);
+    if (elderId) persistLanguage(elderId, code);
+  };
   const [notifications, setNotifications] = useState(true);
   const [showShapes, setShowShapes] = useState(false);
   const primary = patient.contacts.find(c => c.isPrimary);
@@ -46,6 +54,7 @@ export function ElderlySettingsScreen({ patient, elderId, onUpdatePatient, onBac
 
   useEffect(() => {
     if (!elderId) return;
+    setLanguageState(getLanguage(elderId));
     fetchProfile(elderId).then(profile => {
       if (!profile) return;
       const d = profile.details;
@@ -284,13 +293,10 @@ export function ElderlySettingsScreen({ patient, elderId, onUpdatePatient, onBac
               <p className="text-[15px] font-medium text-foreground">Language</p>
               <p className="text-xs text-muted-foreground">Mei responds in this language</p>
             </div>
-            <select value={language} onChange={e => setLanguage(e.target.value)} className="bg-muted rounded-xl px-3 py-2 text-sm font-medium text-foreground outline-none">
-              <option>English</option>
-              <option>华语 (Mandarin)</option>
-              <option>闽南话 (Hokkien)</option>
-              <option>粤语 (Cantonese)</option>
-              <option>தமிழ் (Tamil)</option>
-              <option>Melayu</option>
+            <select value={language} onChange={e => changeLanguage(e.target.value as LangCode)} className="bg-muted rounded-xl px-3 py-2 text-sm font-medium text-foreground outline-none">
+              {LANG_OPTIONS.map(l => (
+                <option key={l.code} value={l.code}>{l.label}</option>
+              ))}
             </select>
           </div>
         </div>

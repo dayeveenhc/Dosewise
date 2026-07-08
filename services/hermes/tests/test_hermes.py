@@ -40,6 +40,37 @@ def test_minted_jwt_acts_as_elder():
     assert claims["aud"] == "authenticated"
 
 
+def test_verify_jwt_accepts_es256_via_jwks(monkeypatch):
+    # Modern Supabase projects sign browser access tokens with ES256 (asymmetric),
+    # not the legacy HS256 shared secret — verify_jwt must accept them via JWKS.
+    import time
+    from types import SimpleNamespace
+
+    import jwt as pyjwt
+    from cryptography.hazmat.primitives.asymmetric import ec
+
+    from hermes.db import auth
+
+    private_key = ec.generate_private_key(ec.SECP256R1())
+    now = int(time.time())
+    token = pyjwt.encode(
+        {"sub": ELDER_A, "role": "authenticated", "aud": "authenticated",
+         "iat": now, "exp": now + 60},
+        private_key,
+        algorithm="ES256",
+        headers={"kid": "test-key"},
+    )
+
+    class _StubJWKS:
+        def get_signing_key_from_jwt(self, tok):
+            return SimpleNamespace(key=private_key.public_key())
+
+    monkeypatch.setattr(auth, "_get_jwks_client", lambda: _StubJWKS())
+    claims = auth.verify_jwt(token)
+    assert claims["sub"] == ELDER_A
+    assert claims["aud"] == "authenticated"
+
+
 class _StubDB:
     def __init__(self):
         self.inserted = []
@@ -87,3 +118,34 @@ async def test_add_prescription_refuses_confirm_without_proposal():
     out = await add(ctx, name="Warfarin", confirmed=True)
     assert "Refused" in out
     assert supa.db.inserted == []
+    # Nothing was written, so nothing should be reported as committed.
+    assert ctx.committed_actions == []
+
+
+async def test_add_prescription_records_committed_action_only_on_commit():
+    # ctx.committed_actions is the reliable "a write really happened" signal the
+    # web app uses to confirm + redirect — it must stay empty on the propose turn.
+    add = get_handler("add_prescription")
+    supa = _StubSupabase()
+    session = SessionState(elder_id=ELDER_A)
+    ctx = ToolContext(supabase=supa, elder_id=ELDER_A, session=session)
+
+    await add(ctx, name="Metformin", confirmed=False, dosage="500mg")
+    assert ctx.committed_actions == []
+
+    await add(ctx, name="Metformin", confirmed=True, dosage="500mg")
+    assert len(ctx.committed_actions) == 1
+    assert ctx.committed_actions[0]["tool"] == "add_prescription"
+    assert "Metformin" in ctx.committed_actions[0]["summary"]
+
+
+def test_supabase_url_rest_suffix_is_normalized(monkeypatch):
+    # A deployed SUPABASE_URL that already ends in /rest/v1[/] must not double the
+    # path (PostgREST PGRST125) — the client methods prepend /rest/v1 themselves.
+    from hermes.config import get_settings
+    from hermes.db.supabase import Supabase
+
+    monkeypatch.setattr(
+        get_settings(), "supabase_url", "https://proj.supabase.co/rest/v1/", raising=False
+    )
+    assert str(Supabase()._http.base_url) == "https://proj.supabase.co"
