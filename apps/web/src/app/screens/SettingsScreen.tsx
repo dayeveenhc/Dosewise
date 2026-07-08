@@ -11,6 +11,13 @@ import { CallMockup } from "../components/CallMockup";
 
 const FONT_SIZES: FontSize[] = ["small", "normal", "large", "xlarge", "xxlarge"];
 
+interface CareTeamMember { name: string; role: string; initials: string; active: boolean }
+const CARE_TEAM_SEED: CareTeamMember[] = [
+  { name: "Tan Shu Fen", role: "Daughter · View only", initials: "SF", active: true },
+  { name: "Siti Nuraini", role: "Helper · Log doses only", initials: "SN", active: true },
+  { name: "Dr Priya Nair", role: "GP · Medical records", initials: "PN", active: false },
+];
+
 export function SettingsScreen({ patient, onSwitchMode, onSignOut, onEditProfile }: { patient: Patient; onSwitchMode: () => void; onSignOut: () => void; onEditProfile: () => void }) {
   const { language, setLanguage } = useLanguage();
   const { fontSize, setFontSize, highContrast, setHighContrast } = useAccessibility();
@@ -20,12 +27,23 @@ export function SettingsScreen({ patient, onSwitchMode, onSignOut, onEditProfile
   const [notifRefill, setNotifRefill] = useState(true);
   const [notifSummary, setNotifSummary] = useState(true);
   const [notifRefillDays, setNotifRefillDays] = useState("7");
+  const [careTeam, setCareTeam] = useState<CareTeamMember[]>(CARE_TEAM_SEED);
+  const [showAddMember, setShowAddMember] = useState(false);
+  const [newMemberName, setNewMemberName] = useState("");
+  const [newMemberRole, setNewMemberRole] = useState("");
+
+  const addCareTeamMember = () => {
+    if (!newMemberName.trim()) return;
+    const initials = newMemberName.trim().split(/\s+/).map(w => w[0]).slice(0, 2).join("").toUpperCase();
+    setCareTeam(prev => [...prev, { name: newMemberName.trim(), role: newMemberRole.trim() || "Care team", initials, active: true }]);
+    setNewMemberName(""); setNewMemberRole(""); setShowAddMember(false);
+  };
 
   return (
     <div className="px-4 py-5 space-y-5">
       {/* Account */}
       <div>
-        <SectionHeader title="Account" />
+        <SectionHeader title={t(language, "settings.account")} />
         <Card>
           <div className="flex items-center gap-3 px-4 py-4 border-b border-border">
             <div className="w-12 h-12 rounded-2xl bg-primary flex items-center justify-center text-primary-foreground font-bold text-lg shrink-0">TW</div>
@@ -35,14 +53,14 @@ export function SettingsScreen({ patient, onSwitchMode, onSignOut, onEditProfile
             </div>
           </div>
           <button onClick={onEditProfile} className="w-full flex items-center justify-between px-4 py-3 text-sm text-foreground font-medium">
-            Edit profile <ChevronRight size={14} className="text-muted-foreground" />
+            {t(language, "settings.editProfile")} <ChevronRight size={14} className="text-muted-foreground" />
           </button>
         </Card>
       </div>
 
       {/* Emergency contacts */}
       <div data-tour="cg-emergency">
-        <SectionHeader title="Emergency Contacts" />
+        <SectionHeader title={t(language, "common.emergencyContacts")} />
         <Card className="divide-y divide-border">
           {patient.contacts.map((c, i) => (
             <div key={i} className="flex items-center gap-3 px-4 py-3">
@@ -63,11 +81,11 @@ export function SettingsScreen({ patient, onSwitchMode, onSignOut, onEditProfile
 
       {/* Accessibility */}
       <div>
-        <SectionHeader title="Accessibility" />
+        <SectionHeader title={t(language, "settings.accessibility")} />
         <Card className="divide-y divide-border">
           <div className="px-4 py-4">
-            <p className="text-sm font-medium text-foreground mb-0.5">Text size</p>
-            <p className="text-xs text-muted-foreground mb-3">Make text throughout the app bigger or smaller</p>
+            <p className="text-sm font-medium text-foreground mb-0.5">{t(language, "settings.textSize")}</p>
+            <p className="text-xs text-muted-foreground mb-3">{t(language, "settings.textSizeDesc")}</p>
             <div className="flex items-center gap-3">
               <span className="text-xs font-semibold text-muted-foreground shrink-0">A</span>
               <input
@@ -84,8 +102,8 @@ export function SettingsScreen({ patient, onSwitchMode, onSignOut, onEditProfile
           </div>
           <div className="px-4 py-4 flex items-center justify-between gap-3">
             <div className="flex-1">
-              <p className="text-sm font-medium text-foreground">High contrast</p>
-              <p className="text-xs text-muted-foreground">Stronger colours and borders for easier reading</p>
+              <p className="text-sm font-medium text-foreground">{t(language, "settings.highContrast")}</p>
+              <p className="text-xs text-muted-foreground">{t(language, "settings.highContrastDesc")}</p>
             </div>
             <Switch checked={highContrast} onCheckedChange={setHighContrast} />
           </div>
@@ -117,12 +135,12 @@ export function SettingsScreen({ patient, onSwitchMode, onSignOut, onEditProfile
 
       {/* Notifications */}
       <div data-tour="cg-settings">
-        <SectionHeader title="Notifications" />
+        <SectionHeader title={t(language, "nav.notifications")} />
         <Card className="divide-y divide-border">
           {[
-            { label: "Missed dose alerts", sub: "Immediate push notification", val: notifMissed, set: setNotifMissed },
-            { label: "Refill reminders", sub: `Alert when supply drops below ${notifRefillDays} days`, val: notifRefill, set: setNotifRefill },
-            { label: "Weekly AI summary", sub: "Every Monday morning", val: notifSummary, set: setNotifSummary },
+            { label: t(language, "settings.missedDoseAlerts"), sub: t(language, "settings.missedDoseAlertsDesc"), val: notifMissed, set: setNotifMissed },
+            { label: t(language, "settings.refillReminders"), sub: t(language, "settings.refillRemindersDesc", { days: notifRefillDays }), val: notifRefill, set: setNotifRefill },
+            { label: t(language, "settings.weeklyAiSummary"), sub: t(language, "settings.weeklyAiSummaryDesc"), val: notifSummary, set: setNotifSummary },
           ].map(({ label, sub, val, set }) => (
             <div key={label} className="flex items-center justify-between px-4 py-3">
               <div>
@@ -134,7 +152,7 @@ export function SettingsScreen({ patient, onSwitchMode, onSignOut, onEditProfile
           ))}
         </Card>
         <div className="mt-2 bg-card border border-border rounded-2xl px-4 py-3">
-          <p className="text-xs font-medium text-foreground mb-2">Alert when below</p>
+          <p className="text-xs font-medium text-foreground mb-2">{t(language, "settings.alertWhenBelow")}</p>
           <div className="flex gap-2">
             {["3", "5", "7", "10"].map(d => (
               <button
@@ -151,13 +169,9 @@ export function SettingsScreen({ patient, onSwitchMode, onSignOut, onEditProfile
 
       {/* Caregiver team */}
       <div>
-        <SectionHeader title="Care Team Access" />
+        <SectionHeader title={t(language, "settings.careTeamAccess")} />
         <Card className="divide-y divide-border">
-          {[
-            { name: "Tan Shu Fen", role: "Daughter · View only", initials: "SF", active: true },
-            { name: "Siti Nuraini", role: "Helper · Log doses only", initials: "SN", active: true },
-            { name: "Dr Priya Nair", role: "GP · Medical records", initials: "PN", active: false },
-          ].map(m => (
+          {careTeam.map(m => (
             <div key={m.name} className="flex items-center gap-3 px-4 py-3">
               <div className="w-8 h-8 rounded-full bg-secondary flex items-center justify-center text-[11px] font-bold text-primary shrink-0">{m.initials}</div>
               <div className="flex-1 min-w-0">
@@ -167,23 +181,48 @@ export function SettingsScreen({ patient, onSwitchMode, onSignOut, onEditProfile
               <div className={`w-2 h-2 rounded-full ${m.active ? "bg-emerald-500" : "bg-stone-300"}`} />
             </div>
           ))}
-          <button className="flex items-center gap-3 px-4 py-3 w-full">
-            <div className="w-8 h-8 rounded-full bg-muted flex items-center justify-center shrink-0">
-              <Plus size={14} className="text-muted-foreground" />
+          {showAddMember ? (
+            <div className="px-4 py-3 space-y-2">
+              <input
+                value={newMemberName}
+                onChange={e => setNewMemberName(e.target.value)}
+                placeholder={t(language, "common.fullName")}
+                className="w-full bg-input-background border border-border rounded-xl px-3.5 py-2.5 text-sm text-foreground placeholder:text-muted-foreground outline-none focus:border-primary transition-colors"
+              />
+              <input
+                value={newMemberRole}
+                onChange={e => setNewMemberRole(e.target.value)}
+                placeholder={t(language, "common.roleExample")}
+                className="w-full bg-input-background border border-border rounded-xl px-3.5 py-2.5 text-sm text-foreground placeholder:text-muted-foreground outline-none focus:border-primary transition-colors"
+              />
+              <div className="flex gap-2">
+                <button onClick={addCareTeamMember} disabled={!newMemberName.trim()} className="flex-1 bg-primary text-primary-foreground rounded-xl py-2 text-xs font-semibold disabled:opacity-40">
+                  {t(language, "common.add")}
+                </button>
+                <button onClick={() => { setShowAddMember(false); setNewMemberName(""); setNewMemberRole(""); }} className="px-4 rounded-xl border border-border text-xs font-semibold text-muted-foreground">
+                  {t(language, "common.dismiss")}
+                </button>
+              </div>
             </div>
-            <span className="text-sm text-muted-foreground font-medium">Add care team member</span>
-          </button>
+          ) : (
+            <button onClick={() => setShowAddMember(true)} className="flex items-center gap-3 px-4 py-3 w-full">
+              <div className="w-8 h-8 rounded-full bg-muted flex items-center justify-center shrink-0">
+                <Plus size={14} className="text-muted-foreground" />
+              </div>
+              <span className="text-sm text-muted-foreground font-medium">{t(language, "settings.addCareTeamMember")}</span>
+            </button>
+          )}
         </Card>
       </div>
 
       {/* Privacy */}
       <div>
-        <SectionHeader title="Privacy & Security" />
+        <SectionHeader title={t(language, "settings.privacySecurity")} />
         <Card className="divide-y divide-border">
           {[
-            { icon: <Lock size={15} />, label: "Data encryption", sub: "End-to-end encrypted" },
-            { icon: <Shield size={15} />, label: "PDPA compliance", sub: "Singapore PDPA 2012" },
-            { icon: <Edit3 size={15} />, label: "Audit log", sub: "All access events recorded" },
+            { icon: <Lock size={15} />, label: t(language, "settings.dataEncryption"), sub: t(language, "settings.dataEncryptionDesc") },
+            { icon: <Shield size={15} />, label: t(language, "settings.pdpaCompliance"), sub: t(language, "settings.pdpaComplianceDesc") },
+            { icon: <Edit3 size={15} />, label: t(language, "settings.auditLog"), sub: t(language, "settings.auditLogDesc") },
           ].map(({ icon, label, sub }) => (
             <div key={label} className="flex items-center gap-3 px-4 py-3">
               <div className="w-7 h-7 bg-secondary rounded-xl flex items-center justify-center text-primary shrink-0">{icon}</div>
@@ -198,14 +237,14 @@ export function SettingsScreen({ patient, onSwitchMode, onSignOut, onEditProfile
       </div>
 
       <button onClick={onSwitchMode} className="w-full h-12 rounded-2xl border border-border text-muted-foreground text-sm font-medium flex items-center justify-center gap-2 active:scale-[0.98] transition-transform">
-        <RefreshCw size={14} />Switch to Elderly Mode
+        <RefreshCw size={14} />{t(language, "settings.switchToElderly")}
       </button>
 
       <button onClick={onSignOut} className="w-full h-12 rounded-2xl border border-destructive/30 text-destructive text-sm font-medium flex items-center justify-center gap-2 active:scale-[0.98] transition-transform">
-        <LogOut size={14} />Sign out
+        <LogOut size={14} />{t(language, "settings.signOut")}
       </button>
 
-      <p className="text-center text-[11px] text-muted-foreground pb-4">DOSEWISE v1.0 · Made with care in Singapore</p>
+      <p className="text-center text-[11px] text-muted-foreground pb-4">DOSEWISE v1.0 · {t(language, "settings.footer")}</p>
 
       {callTarget && <CallMockup name={callTarget.name} role={callTarget.role} onEnd={() => setCallTarget(null)} />}
     </div>

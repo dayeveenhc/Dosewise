@@ -37,6 +37,7 @@ const fieldClsValid = `${fieldBase} border-emerald-500 focus:border-emerald-500`
 export const cls = (valid: boolean) => valid ? fieldClsValid : fieldCls;
 const isEmail = (v: string) => /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(v.trim());
 const isPositiveNumber = (v: string) => v.trim() !== "" && Number(v) > 0;
+const to24hDate = (d: Date) => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
 
 function WizardChrome({ step, total, onBack, showBack = true, children }: { step: number; total: number; onBack: () => void; showBack?: boolean; children: ReactNode }) {
   return (
@@ -209,7 +210,11 @@ function MedList({ meds, onAdd, onRemove }: { meds: DraftMed[]; onAdd: (m: Draft
 
   return (
     <div>
-      <input ref={fileRef} type="file" accept="image/*,application/pdf" capture="environment" className="hidden" onChange={onFile} />
+      {/* No `capture` here (unlike a camera-only capture input) — mobile browsers
+          bias straight into the camera when it's present, which blocks picking
+          an existing PDF from Files. Omitting it still offers "Take Photo" as
+          one of the native picker's options, so scanning still works. */}
+      <input ref={fileRef} type="file" accept="image/*,application/pdf" className="hidden" onChange={onFile} />
       {meds.length > 0 && (
         <div className="space-y-2 mb-3">
           {meds.map((m, i) => (
@@ -323,7 +328,7 @@ export function GuidedSetupWizard({ mode, hasSession, elderId: initialElderId, o
   const [password, setPassword] = useState("");
 
   const [fullName, setFullName] = useState("");
-  const [age, setAge] = useState("");
+  const [dob, setDob] = useState("");
   const [weightKg, setWeightKg] = useState("");
   const [heightCm, setHeightCm] = useState("");
   const [gender, setGender] = useState("");
@@ -342,7 +347,10 @@ export function GuidedSetupWizard({ mode, hasSession, elderId: initialElderId, o
   const allSteps = mode === "elderly"
     ? ["account", "profile", "conditions", "allergies", "current-meds", "med-history", "routine", "done"]
     : ["account", "placeholder"];
-  const steps = allSteps.filter(s => !(s === "account" && hasSessionAtStart));
+  // The "account" step always runs — even with a session already in hand — so
+  // a returning user who signed up via email confirmation still gets asked
+  // their preferred name; only the email/password fields are skipped for them.
+  const steps = allSteps;
   const step = steps[stepIndex];
   const total = steps.length;
   const showBackButton = !elderId && step !== "done";
@@ -371,7 +379,7 @@ export function GuidedSetupWizard({ mode, hasSession, elderId: initialElderId, o
     setFinishing(true);
     if (mode === "elderly") {
       await saveProfile(elderId, role, fullName, {
-        age: age ? Number(age) : undefined,
+        dob: dob || undefined,
         weightKg: weightKg ? Number(weightKg) : undefined,
         heightCm: heightCm ? Number(heightCm) : undefined,
         gender: gender || undefined,
@@ -398,24 +406,35 @@ export function GuidedSetupWizard({ mode, hasSession, elderId: initialElderId, o
     <WizardChrome step={stepIndex} total={total} onBack={stepIndex > 0 ? goBack : onExit} showBack={showBackButton}>
       {step === "account" && (
         <>
-          <StepHeader title="Let's create your account" subtitle="This keeps your information safe and lets you sign back in later." />
+          <StepHeader
+            title={hasSessionAtStart ? "What should we call you?" : "Let's create your account"}
+            subtitle={hasSessionAtStart ? "This is how the app will greet you." : "This keeps your information safe and lets you sign back in later."}
+          />
           <div className="space-y-3 flex-1">
             <div>
               <label className="block text-xs font-semibold text-foreground mb-1.5">Preferred name</label>
               <input value={fullName} onChange={e => setFullName(e.target.value)} placeholder="What should we call you?" className={cls(fullName.trim().length > 0)} />
             </div>
-            <div>
-              <label className="block text-xs font-semibold text-foreground mb-1.5">Email</label>
-              <input type="email" value={email} onChange={e => setEmail(e.target.value)} placeholder="you@example.com" className={cls(isEmail(email))} autoComplete="email" />
-            </div>
-            <div>
-              <label className="block text-xs font-semibold text-foreground mb-1.5">Password</label>
-              <input type="password" value={password} onChange={e => setPassword(e.target.value)} onKeyDown={e => e.key === "Enter" && createAccount()} placeholder="At least 6 characters" className={cls(password.length >= 6)} autoComplete="new-password" />
-            </div>
+            {!hasSessionAtStart && (
+              <>
+                <div>
+                  <label className="block text-xs font-semibold text-foreground mb-1.5">Email</label>
+                  <input type="email" value={email} onChange={e => setEmail(e.target.value)} placeholder="you@example.com" className={cls(isEmail(email))} autoComplete="email" />
+                </div>
+                <div>
+                  <label className="block text-xs font-semibold text-foreground mb-1.5">Password</label>
+                  <input type="password" value={password} onChange={e => setPassword(e.target.value)} onKeyDown={e => e.key === "Enter" && createAccount()} placeholder="At least 6 characters" className={cls(password.length >= 6)} autoComplete="new-password" />
+                </div>
+              </>
+            )}
             {accountError && <p className="text-xs text-destructive font-medium">{accountError}</p>}
             {accountInfo && <p className="text-xs text-primary font-medium">{accountInfo}</p>}
           </div>
-          <ContinueButton onClick={createAccount} disabled={!email.trim() || !password.trim()} loading={accountLoading}>Create account</ContinueButton>
+          {hasSessionAtStart ? (
+            <ContinueButton onClick={goNext} disabled={!fullName.trim()}>Continue</ContinueButton>
+          ) : (
+            <ContinueButton onClick={createAccount} disabled={!email.trim() || !password.trim()} loading={accountLoading}>Create account</ContinueButton>
+          )}
         </>
       )}
 
@@ -425,8 +444,8 @@ export function GuidedSetupWizard({ mode, hasSession, elderId: initialElderId, o
           <div className="space-y-3 flex-1">
             <div className="flex gap-3">
               <div className="flex-1">
-                <label className="block text-xs font-semibold text-foreground mb-1.5">Age</label>
-                <input type="number" value={age} onChange={e => setAge(e.target.value)} placeholder="e.g. 78" className={cls(isPositiveNumber(age))} />
+                <label className="block text-xs font-semibold text-foreground mb-1.5">Date of birth</label>
+                <input type="date" value={dob} onChange={e => setDob(e.target.value)} max={to24hDate(new Date())} className={cls(dob.trim().length > 0)} />
               </div>
               <div className="flex-1">
                 <label className="block text-xs font-semibold text-foreground mb-1.5">Gender</label>

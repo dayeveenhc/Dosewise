@@ -1,17 +1,25 @@
-import { Pill, Heart, Shield, Users, ChevronRight, User } from "lucide-react";
+import { Pill, Heart, Shield, Users, ChevronRight, User, ArrowLeft } from "lucide-react";
 import { LiveStatusBar } from "../components/shared";
 import { useLanguage } from "../lib/languageContext";
 import { t } from "../lib/language";
 
-export function OnboardingScreen({ onSelect }: { onSelect: (mode: "caregiver" | "elderly") => void }) {
+export function OnboardingScreen({ onSelect, onBack }: { onSelect: (mode: "caregiver" | "elderly") => void; onBack?: () => void }) {
   const { language } = useLanguage();
   return (
     <div className="flex flex-col h-full bg-background">
       {/* Status bar */}
       <LiveStatusBar />
 
+      {onBack && (
+        <div className="px-4 pt-2">
+          <button onClick={onBack} className="w-9 h-9 rounded-full bg-card border border-border flex items-center justify-center active:bg-muted transition-colors">
+            <ArrowLeft size={16} className="text-foreground" />
+          </button>
+        </div>
+      )}
+
       {/* Hero area */}
-      <div className="flex flex-col items-center pt-10 pb-6 px-6">
+      <div className={`flex flex-col items-center pb-6 px-6 ${onBack ? "pt-4" : "pt-10"}`}>
         {/* Wordmark */}
         <p className="text-[10px] text-muted-foreground uppercase tracking-[0.25em] font-medium mb-1">DOSEWISE</p>
         {/* Pill icon cluster */}

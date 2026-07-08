@@ -7,7 +7,7 @@ import { NAV_ITEMS } from "./nav";
 import { LiveStatusBar, PatientSwitcher } from "./components/shared";
 import { supabase } from "./lib/supabase";
 import { ensureProfile, fetchElderMedications, fetchArchivedMedications, addMedication, archiveMedication, to24h } from "./lib/medications";
-import { fetchProfileRole, fetchProfile } from "./lib/profile";
+import { fetchProfileRole, fetchProfile, calculateAge } from "./lib/profile";
 import { readStoredAppMode, persistAppMode } from "./lib/sessionState";
 import { WelcomeScreen } from "./screens/setup/WelcomeScreen";
 import { SetupMethodScreen } from "./screens/setup/SetupMethodScreen";
@@ -41,6 +41,10 @@ export default function App() {
   // Sign-in-or-Get-started -> Caregiver-or-Myself -> HealthHub-or-Guided -> wizard.
   const [preAuthStage, setPreAuthStage] = useState<"welcome" | "signin" | "mode" | "method" | "wizard">("welcome");
   const [pendingMode, setPendingMode] = useState<"caregiver" | "elderly">("elderly");
+  // Set right before an already-onboarded user previews the other mode from
+  // Settings, so backing out of the picker can restore what they were on
+  // instead of stranding them mid-"onboarding".
+  const [modeBeforeSwitch, setModeBeforeSwitch] = useState<AppMode>("caregiver");
   // True only when a session exists but has no profile row yet (e.g. signed in
   // without ever finishing setup) — routes back through the wizard instead of
   // treating the mode picker as a quick preview-mode switch.
@@ -162,7 +166,7 @@ export default function App() {
   }, [elderId, appMode]);
 
   // Already-onboarded users switching preview mode from Settings (not new setup).
-  const openModeSwitch = () => { setNeedsWizard(false); setPreAuthStage("mode"); setAppMode("onboarding"); };
+  const openModeSwitch = () => { setModeBeforeSwitch(appMode); setNeedsWizard(false); setPreAuthStage("mode"); setAppMode("onboarding"); };
 
   // Loads the signed-in user's real medications into the first (only, for now)
   // patient slot on login, keeping the mock cosmetic fields (photo, contacts, etc.)
@@ -183,15 +187,19 @@ export default function App() {
       ]);
       const taken = medications.filter(m => m.status === "taken").length;
       const adherenceToday = medications.length ? Math.round((taken / medications.length) * 100) : 0;
-      const displayName = profile?.fullName || session?.user.email || "You";
+      // Never fall back to the account email here — it's not a name, and the
+      // wizard's account step is the only thing that should feed this.
+      const displayName = profile?.fullName || "You";
       // The wizard only ever collects one name field ("preferred name") — it IS
       // the nickname, not a formal name to be split down to its first word.
-      const preferredName = profile?.fullName || displayName.split("@")[0];
+      const preferredName = profile?.fullName || displayName;
       setPatients(prev => [{
         ...prev[0],
         name: displayName,
         nickname: preferredName,
-        age: profile?.details.age ?? prev[0].age,
+        // Prefer age derived from the stored date of birth; `details.age` is a
+        // legacy fallback for profiles saved before dob collection existed.
+        age: profile?.details.dob ? calculateAge(profile.details.dob) : (profile?.details.age ?? prev[0].age),
         gender: profile?.details.gender ?? prev[0].gender,
         weightKg: profile?.details.weightKg ?? prev[0].weightKg,
         heightCm: profile?.details.heightCm ?? prev[0].heightCm,
@@ -212,6 +220,23 @@ export default function App() {
 
   const patient = patients[selectedPatient];
   let nextMedId = patients.flatMap(p => p.medications).reduce((max, m) => Math.max(max, m.id), 0) + 1;
+
+  // No caregiver-to-elder linking exists in the backend yet (invite code, email
+  // link, etc.) — this appends a locally-held patient at the same mock depth as
+  // PATIENTS, not a real linked account. Revisit once that backend exists.
+  const handleAddPatient = (name: string, relation: string) => {
+    const initials = name.trim().split(/\s+/).map(w => w[0]).slice(0, 2).join("").toUpperCase();
+    const photo = `data:image/svg+xml;utf8,${encodeURIComponent(
+      `<svg xmlns="http://www.w3.org/2000/svg" width="80" height="80"><rect width="80" height="80" rx="40" fill="#D9CFC1"/><text x="50%" y="50%" dy=".35em" text-anchor="middle" font-family="sans-serif" font-size="28" fill="#5B4636">${initials}</text></svg>`
+    )}`;
+    const newId = patients.reduce((max, p) => Math.max(max, p.id), 0) + 1;
+    setPatients(prev => [...prev, {
+      id: newId, name, nickname: name.split(" ")[0], age: 0, relation, photo,
+      bloodType: "Unknown", conditions: [], allergies: [], medications: [], contacts: [],
+      adherenceToday: 0, adherenceWeek: 0, lastChecked: "Just added",
+    }]);
+    setSelectedPatient(patients.length);
+  };
 
   const handleAddPrescription = async (med: Omit<Medication, "id" | "status"> & { times?: string[] }) => {
     if (!elderId) return;
@@ -298,10 +323,17 @@ export default function App() {
               <LoginScreen onBack={() => setPreAuthStage("welcome")} onGetStarted={() => setPreAuthStage("mode")} />
             )}
             {preAuthStage === "mode" && (
-              <OnboardingScreen onSelect={(mode) => {
-                if (session && !needsWizard) { setScreen("dashboard"); setAppMode(mode); }
-                else { setPendingMode(mode); setPreAuthStage("method"); }
-              }} />
+              <OnboardingScreen
+                onSelect={(mode) => {
+                  if (session && !needsWizard) { setScreen("dashboard"); setAppMode(mode); }
+                  else { setPendingMode(mode); setPreAuthStage("method"); }
+                }}
+                onBack={
+                  !session ? () => setPreAuthStage("welcome")
+                  : !needsWizard ? () => setAppMode(modeBeforeSwitch)
+                  : undefined // mid-setup with no completed profile yet — nothing sensible to go back to
+                }
+              />
             )}
             {preAuthStage === "method" && (
               <SetupMethodScreen onBack={() => setPreAuthStage("mode")} onGuided={() => setPreAuthStage("wizard")} />
@@ -393,7 +425,7 @@ export default function App() {
               </div>
             )}
             {showPatientSwitcher && (
-              <PatientSwitcher patients={patients} selected={selectedPatient} onSelect={setSelectedPatient} />
+              <PatientSwitcher patients={patients} selected={selectedPatient} onSelect={setSelectedPatient} onAdd={handleAddPatient} />
             )}
           </div>
 
@@ -412,6 +444,7 @@ export default function App() {
             {screen === "notifications" && (
               <NotificationsScreen
                 notifications={notifications}
+                patient={patient}
                 onMarkAllRead={() => setNotifications(prev => prev.map(n => ({ ...n, read: true })))}
                 onDismiss={id => setNotifications(prev => prev.filter(n => n.id !== id))}
               />

@@ -4,9 +4,10 @@ import { useAccessibility } from "../../accessibility.tsx";
 import type { FontSize } from "../../accessibility.tsx";
 import type { Patient } from "../../types";
 import { MED_SHAPES, COMMON_CONDITIONS, COMMON_ALLERGIES, COMMON_DRUG_ALLERGIES } from "../../data/medications";
-import { fetchProfile, saveProfile } from "../../lib/profile";
+import { fetchProfile, saveProfile, calculateAge } from "../../lib/profile";
 import { TagList, fieldCls, GenderPicker } from "../setup/GuidedSetupWizard";
 import { MedAvatar } from "../../components/shared";
+import { CallMockup } from "../../components/CallMockup";
 import { useLanguage } from "../../lib/languageContext";
 import { LANGUAGE_OPTIONS, t } from "../../lib/language";
 
@@ -28,11 +29,12 @@ export function ElderlySettingsScreen({ patient, elderId, onUpdatePatient, onBac
   const [voiceEnabled, setVoiceEnabled] = useState(true);
   const [notifications, setNotifications] = useState(true);
   const [showShapes, setShowShapes] = useState(false);
+  const [showCallPrimary, setShowCallPrimary] = useState(false);
   const primary = patient.contacts.find(c => c.isPrimary);
 
   // Draft copies of everything the guided setup wizard collects, so this
   // section can double as "edit what you answered during setup."
-  const [ageDraft, setAgeDraft] = useState("");
+  const [dobDraft, setDobDraft] = useState("");
   const [genderDraft, setGenderDraft] = useState("");
   const [weightDraft, setWeightDraft] = useState("");
   const [heightDraft, setHeightDraft] = useState("");
@@ -52,7 +54,7 @@ export function ElderlySettingsScreen({ patient, elderId, onUpdatePatient, onBac
     fetchProfile(elderId).then(profile => {
       if (!profile) return;
       const d = profile.details;
-      setAgeDraft(d.age ? String(d.age) : "");
+      setDobDraft(d.dob ?? "");
       setGenderDraft(d.gender ?? "");
       setWeightDraft(d.weightKg ? String(d.weightKg) : "");
       setHeightDraft(d.heightCm ? String(d.heightCm) : "");
@@ -71,7 +73,7 @@ export function ElderlySettingsScreen({ patient, elderId, onUpdatePatient, onBac
     setProfileSaving(true);
     const mealTimes = { breakfast: breakfastDraft, lunch: lunchDraft, dinner: dinnerDraft };
     await saveProfile(elderId, "elder", patient.name, {
-      age: ageDraft ? Number(ageDraft) : undefined,
+      dob: dobDraft || undefined,
       weightKg: weightDraft ? Number(weightDraft) : undefined,
       heightCm: heightDraft ? Number(heightDraft) : undefined,
       gender: genderDraft || undefined,
@@ -83,7 +85,7 @@ export function ElderlySettingsScreen({ patient, elderId, onUpdatePatient, onBac
     });
     onUpdatePatient({
       ...patient,
-      age: ageDraft ? Number(ageDraft) : patient.age,
+      age: dobDraft ? calculateAge(dobDraft) : patient.age,
       gender: genderDraft || undefined,
       weightKg: weightDraft ? Number(weightDraft) : undefined,
       heightCm: heightDraft ? Number(heightDraft) : undefined,
@@ -126,8 +128,8 @@ export function ElderlySettingsScreen({ patient, elderId, onUpdatePatient, onBac
           <div className="px-4 pb-4 space-y-4 border-t border-border pt-4">
           <div className="flex gap-3">
             <div className="flex-1">
-              <label className="block text-xs font-semibold text-foreground mb-1.5">{t(language, "settings.age")}</label>
-              <input type="number" value={ageDraft} onChange={e => setAgeDraft(e.target.value)} placeholder="e.g. 78" className={fieldCls} />
+              <label className="block text-xs font-semibold text-foreground mb-1.5">{t(language, "settings.dob")}</label>
+              <input type="date" value={dobDraft} onChange={e => setDobDraft(e.target.value)} max={new Date().toISOString().slice(0, 10)} className={fieldCls} />
             </div>
             <div className="flex-1">
               <label className="block text-xs font-semibold text-foreground mb-1.5">{t(language, "settings.gender")}</label>
@@ -301,9 +303,9 @@ export function ElderlySettingsScreen({ patient, elderId, onUpdatePatient, onBac
                 <p className="text-sm text-muted-foreground">{primary.role}</p>
                 <p className="text-sm text-muted-foreground">{primary.phone}</p>
               </div>
-              <a href={`tel:${primary.phone}`} className="w-12 h-12 bg-emerald-100 text-emerald-700 rounded-xl flex items-center justify-center active:scale-95 transition-transform">
+              <button onClick={() => setShowCallPrimary(true)} className="w-12 h-12 bg-emerald-100 text-emerald-700 rounded-xl flex items-center justify-center active:scale-95 transition-transform">
                 <Phone size={18} />
-              </a>
+              </button>
             </div>
           </div>
         )}
@@ -316,6 +318,10 @@ export function ElderlySettingsScreen({ patient, elderId, onUpdatePatient, onBac
           <LogOut size={14} />{t(language, "settings.signOut")}
         </button>
       </div>
+
+      {showCallPrimary && primary && (
+        <CallMockup name={primary.name} role={primary.role} onEnd={() => setShowCallPrimary(false)} />
+      )}
     </div>
   );
 }

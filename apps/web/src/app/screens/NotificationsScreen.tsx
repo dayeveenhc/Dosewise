@@ -1,14 +1,20 @@
-import { AlertTriangle, RefreshCw, Brain, Bell, Phone, CheckCircle2, Send } from "lucide-react";
-import type { Notification } from "../types";
+import { useState } from "react";
+import { AlertTriangle, RefreshCw, Brain, Bell, Phone, CheckCircle2, Send, Check } from "lucide-react";
+import type { Notification, Patient } from "../types";
 import { useLanguage } from "../lib/languageContext";
 import { t } from "../lib/language";
+import { CallMockup } from "../components/CallMockup";
 
-export function NotificationsScreen({ notifications, onMarkAllRead, onDismiss }: {
-  notifications: Notification[]; onMarkAllRead: () => void; onDismiss: (id: number) => void;
+export function NotificationsScreen({ notifications, patient, onMarkAllRead, onDismiss }: {
+  notifications: Notification[]; patient: Patient; onMarkAllRead: () => void; onDismiss: (id: number) => void;
 }) {
   const { language } = useLanguage();
   const notifs = notifications;
   const unread = notifs.filter(n => !n.read).length;
+  const [showCallPatient, setShowCallPatient] = useState(false);
+  // No pharmacy-ordering backend exists yet — requesting a refill just confirms
+  // the ask was logged, same demo-depth as the rest of this screen's actions.
+  const [refillRequested, setRefillRequested] = useState<Set<number>>(new Set());
 
   const markAllRead = onMarkAllRead;
   const dismiss = onDismiss;
@@ -57,13 +63,18 @@ export function NotificationsScreen({ notifications, onMarkAllRead, onDismiss }:
             </div>
             <div className="flex gap-2 mt-3">
               {n.type === "missed" && (
-                <button className="flex-1 text-xs font-semibold bg-orange-600 text-white rounded-xl py-2 flex items-center justify-center gap-1.5">
+                <button onClick={() => setShowCallPatient(true)} className="flex-1 text-xs font-semibold bg-orange-600 text-white rounded-xl py-2 flex items-center justify-center gap-1.5">
                   <Phone size={11} /> {t(language, "common.callPatient")}
                 </button>
               )}
               {n.type === "refill" && (
-                <button className="flex-1 text-xs font-semibold bg-amber-600 text-white rounded-xl py-2 flex items-center justify-center gap-1.5">
-                  <RefreshCw size={11} /> {t(language, "common.orderRefill")}
+                <button
+                  onClick={() => setRefillRequested(prev => new Set(prev).add(n.id))}
+                  disabled={refillRequested.has(n.id)}
+                  className="flex-1 text-xs font-semibold bg-amber-600 text-white rounded-xl py-2 flex items-center justify-center gap-1.5 disabled:opacity-60"
+                >
+                  {refillRequested.has(n.id) ? <Check size={11} /> : <RefreshCw size={11} />}
+                  {refillRequested.has(n.id) ? t(language, "common.requested") : t(language, "common.orderRefill")}
                 </button>
               )}
               <button onClick={() => dismiss(n.id)} className="text-xs font-medium text-muted-foreground border border-border bg-white/60 rounded-xl px-3 py-2">
@@ -83,6 +94,10 @@ export function NotificationsScreen({ notifications, onMarkAllRead, onDismiss }:
           </div>
         )}
       </div>
+
+      {showCallPatient && (
+        <CallMockup name={patient.nickname} role={t(language, "common.patient")} onEnd={() => setShowCallPatient(false)} />
+      )}
     </div>
   );
 }

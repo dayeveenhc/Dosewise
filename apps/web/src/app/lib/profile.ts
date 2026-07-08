@@ -8,7 +8,10 @@ export type Role = "elder" | "caregiver";
 // Supabase migration, which is out of apps/web's scope. Flagged as a known
 // workaround, not a permanent home for this data.
 export interface ProfileDetails {
+  // Legacy: profiles saved before date-of-birth collection was added only have
+  // this. Kept read-only for backward compatibility — new saves write `dob`.
   age?: number;
+  dob?: string; // ISO date (YYYY-MM-DD); age is derived from this via calculateAge
   weightKg?: number;
   heightCm?: number;
   gender?: string;
@@ -18,6 +21,16 @@ export interface ProfileDetails {
   mealTimes?: { breakfast?: string; lunch?: string; dinner?: string };
   sleepTime?: string;
   travelPlan?: { startDate: string; endDate: string; timezone: string };
+}
+
+export function calculateAge(dob: string): number {
+  const birth = new Date(dob);
+  const now = new Date();
+  let age = now.getFullYear() - birth.getFullYear();
+  const hadBirthdayThisYear = now.getMonth() > birth.getMonth()
+    || (now.getMonth() === birth.getMonth() && now.getDate() >= birth.getDate());
+  if (!hadBirthdayThisYear) age--;
+  return age;
 }
 
 export async function saveProfile(

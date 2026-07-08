@@ -59,11 +59,11 @@ export function PatientScreen({ patient, onEditProfile, onAddPrescription, onDel
         <div className="px-4 pb-4 -mt-10">
           <img src={patient.photo} alt={patient.name} className="w-20 h-20 rounded-2xl object-cover border-4 border-white shadow-md bg-muted" />
           <h2 className="font-['Fraunces'] text-xl font-semibold text-foreground mt-2">{patient.name}</h2>
-          <p className="text-sm text-muted-foreground">{patient.relation} · Age {patient.age}</p>
+          <p className="text-sm text-muted-foreground">{t(language, "common.relationAge", { relation: patient.relation, age: patient.age })}</p>
           <div className="flex gap-2 mt-3 flex-wrap">
-            <span className="text-[11px] bg-secondary text-primary border border-primary/20 rounded-full px-2.5 py-1 font-medium">Blood Type {patient.bloodType}</span>
-            <span className="text-[11px] bg-muted text-muted-foreground border border-border rounded-full px-2.5 py-1 font-medium">{patient.conditions.length} Conditions</span>
-            <span className="text-[11px] bg-muted text-muted-foreground border border-border rounded-full px-2.5 py-1 font-medium">{patient.medications.length} Medications</span>
+            <span className="text-[11px] bg-secondary text-primary border border-primary/20 rounded-full px-2.5 py-1 font-medium">{t(language, "common.bloodType", { type: patient.bloodType })}</span>
+            <span className="text-[11px] bg-muted text-muted-foreground border border-border rounded-full px-2.5 py-1 font-medium">{t(language, "common.conditionsCount", { count: patient.conditions.length })}</span>
+            <span className="text-[11px] bg-muted text-muted-foreground border border-border rounded-full px-2.5 py-1 font-medium">{t(language, "common.medicationsCount", { count: patient.medications.length })}</span>
           </div>
         </div>
       </Card>
@@ -113,7 +113,7 @@ export function PatientScreen({ patient, onEditProfile, onAddPrescription, onDel
                   <p className="text-[11px] text-muted-foreground">{MED_FREQUENCY[m.name]}</p>
                 )}
                 {m.refillDaysLeft && m.refillDaysLeft <= 7 && (
-                  <p className="text-[11px] text-amber-700 font-medium mt-0.5">{m.refillDaysLeft} days of supply left</p>
+                  <p className="text-[11px] text-amber-700 font-medium mt-0.5">{t(language, "common.daysOfSupplyLeft", { count: m.refillDaysLeft })}</p>
                 )}
               </div>
               <button

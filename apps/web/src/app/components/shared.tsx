@@ -90,9 +90,18 @@ export function QuickAction({ icon, label, colour, onClick }: { icon: React.Reac
   );
 }
 
-export function PatientSwitcher({ patients, selected, onSelect }: { patients: Patient[]; selected: number; onSelect: (i: number) => void }) {
+export function PatientSwitcher({ patients, selected, onSelect, onAdd }: { patients: Patient[]; selected: number; onSelect: (i: number) => void; onAdd: (name: string, relation: string) => void }) {
   const [open, setOpen] = useState(false);
+  const [adding, setAdding] = useState(false);
+  const [newName, setNewName] = useState("");
+  const [newRelation, setNewRelation] = useState("");
   const patient = patients[selected];
+
+  const submitAdd = () => {
+    if (!newName.trim()) return;
+    onAdd(newName.trim(), newRelation.trim() || "Care recipient");
+    setNewName(""); setNewRelation(""); setAdding(false); setOpen(false);
+  };
 
   return (
     <div className="relative z-[200]">
@@ -124,12 +133,38 @@ export function PatientSwitcher({ patients, selected, onSelect }: { patients: Pa
               {i === selected && <CheckCircle2 size={14} className="ml-auto text-primary" />}
             </button>
           ))}
-          <button className="flex items-center gap-3 w-full px-3 py-2.5 text-left hover:bg-muted border-t border-border">
-            <div className="w-8 h-8 rounded-full bg-muted flex items-center justify-center">
-              <Plus size={14} className="text-muted-foreground" />
+          {adding ? (
+            <div className="p-3 border-t border-border space-y-2">
+              <input
+                autoFocus
+                value={newName}
+                onChange={e => setNewName(e.target.value)}
+                placeholder="Full name"
+                className="w-full bg-input-background border border-border rounded-xl px-3 py-2 text-xs text-foreground placeholder:text-muted-foreground outline-none focus:border-primary transition-colors"
+              />
+              <input
+                value={newRelation}
+                onChange={e => setNewRelation(e.target.value)}
+                placeholder="Your relation (e.g. Mother)"
+                className="w-full bg-input-background border border-border rounded-xl px-3 py-2 text-xs text-foreground placeholder:text-muted-foreground outline-none focus:border-primary transition-colors"
+              />
+              <div className="flex gap-2">
+                <button onClick={submitAdd} disabled={!newName.trim()} className="flex-1 bg-primary text-primary-foreground rounded-xl py-1.5 text-xs font-semibold disabled:opacity-40">
+                  Add
+                </button>
+                <button onClick={() => { setAdding(false); setNewName(""); setNewRelation(""); }} className="px-3 rounded-xl border border-border text-xs font-semibold text-muted-foreground">
+                  Cancel
+                </button>
+              </div>
             </div>
-            <span className="text-xs text-muted-foreground font-medium">Add care recipient</span>
-          </button>
+          ) : (
+            <button onClick={() => setAdding(true)} className="flex items-center gap-3 w-full px-3 py-2.5 text-left hover:bg-muted border-t border-border">
+              <div className="w-8 h-8 rounded-full bg-muted flex items-center justify-center">
+                <Plus size={14} className="text-muted-foreground" />
+              </div>
+              <span className="text-xs text-muted-foreground font-medium">Add care recipient</span>
+            </button>
+          )}
         </div>
       )}
     </div>

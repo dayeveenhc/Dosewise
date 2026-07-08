@@ -116,16 +116,20 @@ export function AddPrescriptionSheet({ onClose, onAdd, onAdded, initialTab = "ma
     if (!dose.trim()) setDose(m.dose);
   };
 
-  // Real label scan: the photo goes to Hermes, whose add_prescription tool reads
-  // the label and proposes the details (propose→confirm; nothing is saved until
-  // the person confirms below, and the write happens server-side).
-  const runScan = async (photoUrl: string, file: Blob) => {
+  // Real label scan: the photo or PDF goes to Hermes, whose add_prescription tool
+  // reads the label and proposes the details (propose→confirm; nothing is saved
+  // until the person confirms below, and the write happens server-side).
+  const runScan = async (photoUrl: string | null, file: Blob, isPdf: boolean) => {
     setScannedPhoto(photoUrl);
     setScanning(true);
     setProposal(null);
     setCommitted(false);
     const b64 = await fileToBase64(file);
-    const { reply } = await agentTurn("Here is a photo of my prescription.", b64);
+    const { reply } = await agentTurn(
+      "Here is a photo of my prescription.",
+      isPdf ? undefined : b64,
+      isPdf ? b64 : undefined
+    );
     setProposal(reply);
     setScanning(false);
   };
@@ -145,14 +149,16 @@ export function AddPrescriptionSheet({ onClose, onAdd, onAdded, initialTab = "ma
 
   const onFile = (e: ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
+    e.target.value = "";
     if (!file) return;
-    runScan(URL.createObjectURL(file), file);
+    const isPdf = file.type === "application/pdf";
+    runScan(isPdf ? null : URL.createObjectURL(file), file, isPdf);
   };
 
   const onSamplePhoto = async () => {
     // The bundled sample image, routed through the same real agent path.
     const blob = await (await fetch(MED_PHOTOS["Metformin"])).blob();
-    runScan(MED_PHOTOS["Metformin"], blob);
+    runScan(MED_PHOTOS["Metformin"], blob, false);
   };
 
   const inputCls = "w-full bg-input-background border border-border rounded-xl px-3.5 py-2.5 text-sm text-foreground placeholder:text-muted-foreground outline-none focus:border-primary transition-colors";
@@ -199,7 +205,11 @@ export function AddPrescriptionSheet({ onClose, onAdd, onAdded, initialTab = "ma
         <div className="overflow-y-auto scrollbar-none px-5 py-4 space-y-4">
           {tab === "scan" ? (
             <div className="space-y-3">
-              <input ref={fileRef} type="file" accept="image/*" capture="environment" className="hidden" onChange={onFile} />
+              {/* No `capture` here — mobile browsers bias straight into the camera
+                  when it's present, which blocks picking an existing PDF from
+                  Files. Omitting it still offers "Take Photo" as one of the
+                  native picker's options, so scanning still works. */}
+              <input ref={fileRef} type="file" accept="image/*,application/pdf" className="hidden" onChange={onFile} />
               {scanning ? (
                 <div className="border-2 border-primary/30 bg-primary/5 rounded-2xl p-6 flex flex-col items-center text-center gap-3">
                   {scannedPhoto && <img src={scannedPhoto} alt="scan" className="w-24 h-24 rounded-xl object-cover" />}
@@ -247,8 +257,8 @@ export function AddPrescriptionSheet({ onClose, onAdd, onAdded, initialTab = "ma
                     <div className="w-14 h-14 rounded-full bg-primary/10 flex items-center justify-center">
                       <Camera size={26} className="text-primary" />
                     </div>
-                    <p className="text-[15px] font-semibold text-foreground">Take a photo</p>
-                    <p className="text-xs text-muted-foreground leading-relaxed">Snap the medication box or the prescription label — Mei will read it and check the details with you.</p>
+                    <p className="text-[15px] font-semibold text-foreground">Take a photo or upload a file</p>
+                    <p className="text-xs text-muted-foreground leading-relaxed">Snap the medication box or prescription label, or upload a photo/PDF of it — Mei will read it and check the details with you.</p>
                   </button>
                   <button
                     onClick={onSamplePhoto}
