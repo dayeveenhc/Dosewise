@@ -74,7 +74,12 @@ Hermes wiring — see MEMORY.md).
 
 Voice input/output is client-side (browser Web Speech API — `SpeechRecognition`
 + `speechSynthesis`), not routed through Hermes; it degrades gracefully where
-unsupported.
+unsupported. Text-to-speech goes through the shared `lib/speech.ts::speak`
+(cancel→speak race fix + `voiceschanged` voice selection). Whether Mei reads
+replies aloud is one persisted setting — `voiceOutput` on `AccessibilityProvider`
+(`accessibility.tsx`, key `dosewise:accessibility`) — read/written by both
+Settings "Read Aloud" toggles, both chats, and the in-chat "Language & voice"
+switch (don't reintroduce a separate per-chat voice `useState`).
 
 ## Backend (`services/hermes`)
 

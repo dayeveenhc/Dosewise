@@ -20,9 +20,8 @@ const CARE_TEAM_SEED: CareTeamMember[] = [
 
 export function SettingsScreen({ patient, onSwitchMode, onSignOut, onEditProfile }: { patient: Patient; onSwitchMode: () => void; onSignOut: () => void; onEditProfile: () => void }) {
   const { language, setLanguage } = useLanguage();
-  const { fontSize, setFontSize, highContrast, setHighContrast } = useAccessibility();
+  const { fontSize, setFontSize, highContrast, setHighContrast, voiceOutput, setVoiceOutput } = useAccessibility();
   const [callTarget, setCallTarget] = useState<Contact | null>(null);
-  const [voiceEnabled, setVoiceEnabled] = useState(true);
   const [notifMissed, setNotifMissed] = useState(true);
   const [notifRefill, setNotifRefill] = useState(true);
   const [notifSummary, setNotifSummary] = useState(true);
@@ -128,7 +127,7 @@ export function SettingsScreen({ patient, onSwitchMode, onSignOut, onEditProfile
               <p className="text-sm font-medium text-foreground">{t(language, "settings.readAloud")}</p>
               <p className="text-xs text-muted-foreground">{t(language, "settings.readAloudDesc")}</p>
             </div>
-            <Switch checked={voiceEnabled} onCheckedChange={setVoiceEnabled} />
+            <Switch checked={voiceOutput} onCheckedChange={setVoiceOutput} />
           </div>
         </Card>
       </div>

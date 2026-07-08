@@ -12,7 +12,8 @@ interface AddPrescriptionSheetProps {
   initialTab?: "scan" | "manual";
   // Called after the agent commits a scanned prescription server-side, so the
   // parent can refetch the medication list (there is no local onAdd for this path).
-  onAgentAdded?: () => void;
+  // Receives the added medication name so the parent can highlight it as proof.
+  onAgentAdded?: (name?: string) => void;
 }
 
 // A small type-ahead input: shows filtered suggestions as the user types.
@@ -141,9 +142,10 @@ export function AddPrescriptionSheet({ onClose, onAdd, onAdded, initialTab = "ma
     setCommitting(false);
     // actions only contains add_prescription once the write actually committed
     // (never on the propose turn) — a reliable "it's really saved" signal.
-    if (actions.some(a => a.tool === "add_prescription")) {
+    const added = actions.find(a => a.tool === "add_prescription");
+    if (added) {
       setCommitted(true);
-      onAgentAdded?.();
+      onAgentAdded?.(added.name);
     }
   };
 

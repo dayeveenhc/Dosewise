@@ -7,9 +7,11 @@ import { firstRoutableAction } from "../lib/agentActions";
 import { WeeklySummarySheet } from "./WeeklySummarySheet";
 import { TravelModeSheet } from "./TravelModeSheet";
 import { useLanguage } from "../lib/languageContext";
+import { useAccessibility } from "../accessibility.tsx";
 import { t, LANGUAGE_OPTIONS, speechLangFor } from "../lib/language";
+import { speak as speakUtterance } from "../lib/speech";
 
-interface ChatMsg { id: number; role: "user" | "agent"; text: string; time: string; isConfirmation?: boolean }
+interface ChatMsg { id: number; role: "user" | "agent"; text: string; time: string; isConfirmation?: boolean; image?: string }
 
 const nowLabel = () => new Date().toLocaleTimeString("en-SG", { hour: "2-digit", minute: "2-digit" });
 
@@ -43,8 +45,9 @@ function FeatureBtn({ icon: Icon, label, onClick }: { icon: any; label: string; 
   );
 }
 
-export function AskMeiScreen({ patient, elderId, onUpdatePatient, onNavigate, onMedsChanged }: { patient: Patient; elderId?: string; onUpdatePatient: (p: Patient) => void; onNavigate?: (screen: Screen) => void; onMedsChanged?: () => void }) {
+export function AskMeiScreen({ patient, elderId, onUpdatePatient, onNavigate, onMedsChanged }: { patient: Patient; elderId?: string; onUpdatePatient: (p: Patient) => void; onNavigate?: (screen: Screen) => void; onMedsChanged?: () => void | Promise<void> }) {
   const { language, setLanguage } = useLanguage();
+  const { voiceOutput, setVoiceOutput } = useAccessibility();
   const [messages, setMessages] = useState<ChatMsg[]>(() => [
     {
       id: 1,
@@ -62,7 +65,6 @@ export function AskMeiScreen({ patient, elderId, onUpdatePatient, onNavigate, on
   const [showLangSheet, setShowLangSheet] = useState(false);
   const [isListening, setIsListening] = useState(false);
   const [isSpeaking, setIsSpeaking] = useState(false);
-  const [voiceOutput, setVoiceOutput] = useState(true);
   const scrollRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLTextAreaElement>(null);
   const reportRef = useRef<HTMLInputElement>(null);
@@ -90,13 +92,10 @@ export function AskMeiScreen({ patient, elderId, onUpdatePatient, onNavigate, on
   // (Hokkien falls back to Mandarin — no browser voice exists for it).
   const speak = (text: string) => {
     if (!voiceOutput || !hasTTS || !text) return;
-    speechSynthesis.cancel();
-    const utter = new SpeechSynthesisUtterance(text);
-    utter.lang = speechLangFor(language);
-    utter.onstart = () => setIsSpeaking(true);
-    utter.onend = () => setIsSpeaking(false);
-    utter.onerror = () => setIsSpeaking(false);
-    speechSynthesis.speak(utter);
+    speakUtterance(text, speechLangFor(language), {
+      onStart: () => setIsSpeaking(true),
+      onEnd: () => setIsSpeaking(false),
+    });
   };
 
   // Real dictation via the browser's SpeechRecognition (mic button is hidden
@@ -118,10 +117,10 @@ export function AskMeiScreen({ patient, elderId, onUpdatePatient, onNavigate, on
     rec.start();
   };
 
-  const send = async (text: string, imageBase64?: string, pdfBase64?: string) => {
+  const send = async (text: string, imageBase64?: string, pdfBase64?: string, displayImage?: string) => {
     const trimmed = text.trim();
     if (!trimmed || sending) return;
-    setMessages(prev => [...prev, { id: Date.now(), role: "user", text: trimmed, time: nowLabel() }]);
+    setMessages(prev => [...prev, { id: Date.now(), role: "user", text: trimmed, time: nowLabel(), image: displayImage }]);
     setQuickOpen(false);
     scrollToBottom();
     setSending(true);
@@ -130,12 +129,21 @@ export function AskMeiScreen({ patient, elderId, onUpdatePatient, onNavigate, on
     setSending(false);
     scrollToBottom();
     speak(reply);
-    // Only when the agent actually committed a write this turn: refresh, confirm,
-    // and guide the caregiver to the page that shows the change.
+    // Refresh medication state whenever the agent committed *any* write this turn
+    // (not only routable ones) — awaited + caught so a failed refetch is visible,
+    // not silently swallowed while chat has already reported success.
+    if (actions.length) {
+      try {
+        await onMedsChanged?.();
+      } catch (err) {
+        console.warn("[dosewise] medication refresh after agent write failed:", err);
+      }
+    }
+    // When the write has a destination screen, confirm it and guide the caregiver there.
     const routed = firstRoutableAction(actions);
     if (routed) {
-      onMedsChanged?.();
-      setMessages(prev => [...prev, { id: Date.now() + 2, role: "agent", text: `✓ ${routed.target.done} — opening ${routed.target.label}…`, time: nowLabel(), isConfirmation: true }]);
+      const detail = routed.action.tool === "add_prescription" && routed.action.summary ? `: ${routed.action.summary}` : "";
+      setMessages(prev => [...prev, { id: Date.now() + 2, role: "agent", text: `✓ ${routed.target.done}${detail} — opening ${routed.target.label}…`, time: nowLabel(), isConfirmation: true }]);
       scrollToBottom();
       if (onNavigate) setTimeout(() => onNavigate(routed.target.caregiver), 1200);
     }
@@ -155,7 +163,7 @@ export function AskMeiScreen({ patient, elderId, onUpdatePatient, onNavigate, on
     e.target.value = "";
     if (!file) return;
     setQuickOpen(false);
-    send("📷 Here is a photo of the prescription.", await fileToBase64(file));
+    send("📷 Here is a photo of the prescription.", await fileToBase64(file), undefined, URL.createObjectURL(file));
   };
 
   // "Update profile": the clinic report goes to the real agent — a PDF's text is
@@ -169,11 +177,11 @@ export function AskMeiScreen({ patient, elderId, onUpdatePatient, onNavigate, on
     const b64 = await fileToBase64(file);
     const msg = "📄 Here is a clinic report. Please update the medical profile from it.";
     if (file.type === "application/pdf") send(msg, undefined, b64);
-    else send(msg, b64);
+    else send(msg, b64, undefined, URL.createObjectURL(file));
   };
 
   return (
-    <div className="flex flex-col flex-1 overflow-hidden relative">
+    <div className="flex flex-col flex-1 min-h-0 overflow-hidden relative">
       {/* Quick help feature launcher */}
       <div className="px-4 pt-2.5 shrink-0" data-tour="cg-askmei">
         <button onClick={() => setQuickOpen(o => !o)} className="w-full flex items-center gap-1.5 mb-2">
@@ -233,6 +241,9 @@ export function AskMeiScreen({ patient, elderId, onUpdatePatient, onNavigate, on
               </div>
             )}
             <div className={`max-w-[82%] flex flex-col gap-1 ${msg.role === "user" ? "items-end" : "items-start"}`}>
+              {msg.image && (
+                <img src={msg.image} alt="Attachment" className="max-w-[70%] rounded-2xl border border-border object-cover" />
+              )}
               <div className={`rounded-2xl px-4 py-3 ${msg.role === "user" ? "bg-primary text-primary-foreground rounded-tr-sm" : "bg-card border border-border rounded-tl-sm"}`}>
                 <p className={`text-[15px] leading-relaxed whitespace-pre-line ${msg.role === "user" ? "text-primary-foreground" : "text-foreground"}`}>{renderWithBold(msg.text)}</p>
               </div>
@@ -329,7 +340,7 @@ export function AskMeiScreen({ patient, elderId, onUpdatePatient, onNavigate, on
                 </button>
               ))}
             </div>
-            <button onClick={() => setVoiceOutput(v => !v)} className="w-full flex items-center justify-between bg-card border border-border rounded-xl px-4 py-3.5">
+            <button onClick={() => setVoiceOutput(!voiceOutput)} className="w-full flex items-center justify-between bg-card border border-border rounded-xl px-4 py-3.5">
               <div className="flex items-center gap-2"><Volume2 size={18} className="text-primary" /><span className="text-[15px] font-semibold text-foreground">{t(language, "settings.readAloud")}</span></div>
               <div className={`w-12 h-7 rounded-full transition-colors relative ${voiceOutput ? "bg-primary" : "bg-muted"}`}>
                 <div className={`absolute top-0.5 w-6 h-6 rounded-full bg-white shadow transition-all ${voiceOutput ? "left-[22px]" : "left-0.5"}`} />

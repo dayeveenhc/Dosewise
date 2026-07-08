@@ -5,13 +5,28 @@ import { replyLanguageFor } from "./language";
 const HERMES_URL = import.meta.env.VITE_HERMES_URL;
 const HERMES_API_KEY = import.meta.env.VITE_HERMES_API_KEY;
 
-const FALLBACK_REPLY = "Sorry, something went wrong. Let me get a person to help.";
+// Friendly, class-specific fallbacks. A single opaque English line used to mask
+// every failure (expired sign-in, rate limit, server error, network) as one
+// message with no logging — which made real bugs invisible and looked like the
+// agent "couldn't understand." Distinguish the classes: log the real cause to
+// the console, and tell the user something they can act on.
+const FALLBACK_GENERIC = "Sorry, something went wrong. Let me get a person to help.";
+const FALLBACK_SIGNED_OUT = "You've been signed out. Please sign in again to keep chatting with Mei.";
+const FALLBACK_RATE_LIMIT = "You're sending messages a little too fast. Please wait a moment and try again.";
+const FALLBACK_UNREACHABLE = "I can't reach the assistant right now. Please check your connection and try again in a moment.";
+
+function fallback(reply: string): AgentTurnResponse {
+  return { reply, tools_used: [], actions: [] };
+}
 
 // A write the agent actually committed this turn (never a mere proposal), so the
 // UI can confirm it and redirect to the page that shows the change.
 export interface AgentAction {
   tool: string;
   summary?: string;
+  // For add_prescription: the medication name, so the UI can highlight the exact
+  // card that just landed on the timeline / medication list as visible proof.
+  name?: string;
 }
 
 interface AgentTurnResponse {
@@ -31,7 +46,10 @@ export async function agentTurn(
 ): Promise<AgentTurnResponse> {
   try {
     const { data: { session } } = await supabase.auth.getSession();
-    if (!session) return { reply: FALLBACK_REPLY, tools_used: [], actions: [] };
+    if (!session) {
+      console.warn("[dosewise] agentTurn: no Supabase session — user is signed out");
+      return fallback(FALLBACK_SIGNED_OUT);
+    }
 
     // Reply in the language configured under "Voice & Language"
     // (undefined for English keeps Hermes's default behaviour).
@@ -51,11 +69,76 @@ export async function agentTurn(
         reply_language: replyLanguage,
       }),
     });
-    if (!resp.ok) return { reply: FALLBACK_REPLY, tools_used: [], actions: [] };
+    if (!resp.ok) {
+      // Distinguish the failure classes that used to collapse into one message.
+      const detail = await resp.text().catch(() => "");
+      console.warn(`[dosewise] agentTurn: HTTP ${resp.status} from /agent/turn`, detail);
+      if (resp.status === 401) return fallback(FALLBACK_SIGNED_OUT);
+      if (resp.status === 429) return fallback(FALLBACK_RATE_LIMIT);
+      return fallback(FALLBACK_GENERIC); // 4xx/5xx: server/provider-side issue
+    }
     const data = await resp.json();
     return { reply: data.reply, tools_used: data.tools_used ?? [], actions: data.actions ?? [] };
-  } catch {
-    return { reply: FALLBACK_REPLY, tools_used: [], actions: [] };
+  } catch (err) {
+    // Network failure, CORS rejection, or malformed JSON — the request never got
+    // a usable answer back.
+    console.warn("[dosewise] agentTurn: request failed before a reply", err);
+    return fallback(FALLBACK_UNREACHABLE);
+  }
+}
+
+// Structured fields read from an uploaded record by Hermes's /profile/extract
+// "pull" endpoint (snake_case mirrors services/hermes/src/hermes/agent/extract.py).
+export interface ExtractedMed {
+  name?: string;
+  dose?: string;
+  time?: string;
+}
+export interface ExtractedProfile {
+  full_name?: string;
+  dob?: string;
+  gender?: string;
+  weight_kg?: number;
+  height_cm?: number;
+  conditions?: string[];
+  allergies?: string[];
+  drug_allergies?: string[];
+  current_meds?: ExtractedMed[];
+  past_meds?: ExtractedMed[];
+}
+export interface ExtractProfileResult {
+  fields: ExtractedProfile;
+  // A friendly reason the fields are empty (e.g. a scanned PDF), if any.
+  note?: string;
+}
+
+// Pull structured profile fields from an uploaded PDF/image so the app can
+// pre-fill a form the user reviews. Stateless on the server (no jwt needed —
+// works during onboarding before an account exists), only the API key. On any
+// failure returns empty fields so callers can fall back to manual entry.
+export async function extractProfile(
+  imageBase64?: string,
+  pdfBase64?: string
+): Promise<ExtractProfileResult> {
+  try {
+    const resp = await fetch(`${HERMES_URL}/profile/extract`, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        ...(HERMES_API_KEY ? { "X-Hermes-Api-Key": HERMES_API_KEY } : {}),
+      },
+      body: JSON.stringify({ image_base64: imageBase64, pdf_base64: pdfBase64 }),
+    });
+    if (!resp.ok) {
+      const detail = await resp.text().catch(() => "");
+      console.warn(`[dosewise] extractProfile: HTTP ${resp.status} from /profile/extract`, detail);
+      return { fields: {} };
+    }
+    const data = await resp.json();
+    return { fields: data.fields ?? {}, note: data.note ?? undefined };
+  } catch (err) {
+    console.warn("[dosewise] extractProfile: request failed before a reply", err);
+    return { fields: {} };
   }
 }
 

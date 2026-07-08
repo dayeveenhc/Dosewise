@@ -24,9 +24,8 @@ const FONT_SIZES: FontSize[] = ["small", "normal", "large", "xlarge", "xxlarge"]
 export function ElderlySettingsScreen({ patient, elderId, onUpdatePatient, onBack, onSignOut }: {
   patient: Patient; elderId?: string; onUpdatePatient: (p: Patient) => void; onBack: () => void; onSignOut: () => void;
 }) {
-  const { fontSize, setFontSize, highContrast, setHighContrast, colourBlind, setColourBlind } = useAccessibility();
+  const { fontSize, setFontSize, highContrast, setHighContrast, colourBlind, setColourBlind, voiceOutput, setVoiceOutput } = useAccessibility();
   const { language, setLanguage } = useLanguage();
-  const [voiceEnabled, setVoiceEnabled] = useState(true);
   const [notifications, setNotifications] = useState(true);
   const [showShapes, setShowShapes] = useState(false);
   const [showCallPrimary, setShowCallPrimary] = useState(false);
@@ -270,7 +269,7 @@ export function ElderlySettingsScreen({ patient, elderId, onUpdatePatient, onBac
               <p className="text-[15px] font-medium text-foreground">{t(language, "settings.readAloud")}</p>
               <p className="text-xs text-muted-foreground">{t(language, "settings.readAloudDesc")}</p>
             </div>
-            <Toggle on={voiceEnabled} onToggle={() => setVoiceEnabled(v => !v)} />
+            <Toggle on={voiceOutput} onToggle={() => setVoiceOutput(!voiceOutput)} />
           </div>
           <div className="px-4 py-4 flex items-center justify-between">
             <div>

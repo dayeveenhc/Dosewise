@@ -4,9 +4,10 @@ import { ArrowLeft, Loader2, Plus, X, Check, Coffee, Utensils, UtensilsCrossed, 
 import { supabase } from "../../lib/supabase";
 import { saveProfile } from "../../lib/profile";
 import { addMedication, archiveMedication, to24h } from "../../lib/medications";
-import { agentTurn, fileToBase64 } from "../../lib/hermes";
+import { extractProfile, fileToBase64 } from "../../lib/hermes";
+import type { ExtractedProfile } from "../../lib/hermes";
 import { MEDICATION_CATALOG, PRESET_TIMES, COMMON_CONDITIONS, COMMON_ALLERGIES, COMMON_DRUG_ALLERGIES } from "../../data/medications";
-import type { Role } from "../../lib/profile";
+import type { Role, WizardPrefill } from "../../lib/profile";
 
 // A small shared gender picker — icon + label per option, used both here and
 // in ElderlySettingsScreen's "edit what you answered" section.
@@ -83,22 +84,38 @@ function ContinueButton({ onClick, disabled, loading, children = "Continue" }: {
   );
 }
 
-export function TagList({ label, placeholder, items, suggestions, scanDemo, onAdd, onRemove }: {
-  label: string; placeholder: string; items: string[]; suggestions?: string[]; scanDemo?: string; onAdd: (v: string) => void; onRemove: (i: number) => void;
+export function TagList({ label, placeholder, items, suggestions, extractField, onAdd, onRemove }: {
+  label: string; placeholder: string; items: string[]; suggestions?: string[];
+  extractField?: "conditions" | "allergies" | "drug_allergies";
+  onAdd: (v: string) => void; onRemove: (i: number) => void;
 }) {
   const [value, setValue] = useState("");
   const [open, setOpen] = useState(false);
   const [scanning, setScanning] = useState(false);
+  const scanRef = useRef<HTMLInputElement>(null);
   const submit = (pick?: string) => {
     const val = (pick ?? value).trim();
     if (val) { onAdd(val); setValue(""); setOpen(false); }
   };
-  // Simulated label/photo scan — no real OCR yet, just fills in a plausible
-  // suggestion so the flow can be tried end to end.
-  const runScan = () => {
-    if (!scanDemo) return;
+  // Real scan: pull structured fields from an uploaded report/label and add the
+  // ones for THIS list (conditions / allergies / drug allergies). The person
+  // still sees each tag and can remove it before continuing.
+  const onScanFile = async (e: ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    e.target.value = "";
+    if (!file || !extractField) return;
     setScanning(true);
-    setTimeout(() => { setScanning(false); onAdd(scanDemo); }, 1100);
+    try {
+      const b64 = await fileToBase64(file);
+      const isPdf = file.type === "application/pdf";
+      const { fields } = await extractProfile(isPdf ? undefined : b64, isPdf ? b64 : undefined);
+      for (const v of fields[extractField] ?? []) {
+        const val = (v ?? "").trim();
+        if (val && !items.some(x => x.toLowerCase() === val.toLowerCase())) onAdd(val);
+      }
+    } finally {
+      setScanning(false);
+    }
   };
   const q = value.trim().toLowerCase();
   const matches = q && suggestions
@@ -133,11 +150,12 @@ export function TagList({ label, placeholder, items, suggestions, scanDemo, onAd
           <button onClick={() => submit()} disabled={!value.trim()} className="w-11 h-11 bg-primary rounded-xl flex items-center justify-center disabled:opacity-40 shrink-0">
             <Plus size={18} className="text-white" />
           </button>
-          {scanDemo && (
-            <button onClick={runScan} disabled={scanning} title="Scan a label or photo" className="w-11 h-11 bg-muted rounded-xl flex items-center justify-center disabled:opacity-60 shrink-0">
+          {extractField && (
+            <button onClick={() => scanRef.current?.click()} disabled={scanning} title="Scan a report or label" className="w-11 h-11 bg-muted rounded-xl flex items-center justify-center disabled:opacity-60 shrink-0">
               {scanning ? <Sparkles size={16} className="text-primary animate-pulse" /> : <Camera size={18} className="text-foreground" />}
             </button>
           )}
+          <input ref={scanRef} type="file" accept="image/*,application/pdf" className="hidden" onChange={onScanFile} />
         </div>
         {open && matches.length > 0 && (
           <div className="absolute z-20 left-0 right-0 mt-1 bg-card border border-border rounded-xl shadow-lg overflow-hidden max-h-48 overflow-y-auto">
@@ -155,54 +173,53 @@ export function TagList({ label, placeholder, items, suggestions, scanDemo, onAd
 
 interface DraftMed { name: string; dose: string; time: string }
 
-function MedList({ meds, onAdd, onRemove }: { meds: DraftMed[]; onAdd: (m: DraftMed) => void; onRemove: (i: number) => void }) {
+function MedList({ meds, extractKind, onAdd, onRemove }: { meds: DraftMed[]; extractKind: "current" | "past"; onAdd: (m: DraftMed) => void; onRemove: (i: number) => void }) {
   const [open, setOpen] = useState(false);
   const [name, setName] = useState("");
   const [dose, setDose] = useState("");
   const [time, setTime] = useState(PRESET_TIMES[0]);
   const [showSuggestions, setShowSuggestions] = useState(false);
   const [scanning, setScanning] = useState(false);
-  const [scannedPhoto, setScannedPhoto] = useState<string | null>(null);
   const [proposal, setProposal] = useState<string | null>(null);
   const fileRef = useRef<HTMLInputElement>(null);
 
   const submit = () => {
     if (!name.trim()) return;
     onAdd({ name: name.trim(), dose: dose.trim() || "as directed", time });
-    setName(""); setDose(""); setOpen(false); setProposal(null); setScannedPhoto(null);
+    setName(""); setDose(""); setOpen(false); setProposal(null);
   };
 
   const cancel = () => {
     setOpen(false);
     setProposal(null);
-    setScannedPhoto(null);
   };
 
-  // Real upload: the photo or PDF goes to the same Hermes agent used
-  // elsewhere in the app, which reads the label and replies in plain
-  // language. There's no structured-fields contract for this reply, so we
-  // just do a best-effort name match against the catalog to prefill the
-  // form — the person still reviews and confirms every field before it's added.
+  // Real upload: the photo/PDF goes to Hermes's structured /profile/extract
+  // endpoint, which returns the medications it read. We add each one to the list
+  // (reviewable + removable) rather than guessing from a catalog substring.
   const onFile = async (e: ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     e.target.value = "";
     if (!file) return;
     const isPdf = file.type === "application/pdf";
-    setScannedPhoto(isPdf ? null : URL.createObjectURL(file));
     setScanning(true);
     setProposal(null);
-    const b64 = await fileToBase64(file);
-    const { reply } = await agentTurn(
-      "Here is a photo of a prescription label. What medication is this, what's the usual dose, and what time is it usually taken?",
-      isPdf ? undefined : b64,
-      isPdf ? b64 : undefined
-    );
-    setProposal(reply);
-    setScanning(false);
-    const lower = reply.toLowerCase();
-    const match = MEDICATION_CATALOG.find(m => lower.includes(m.name.toLowerCase()));
-    if (match) { setName(match.name); setDose(match.dose); }
-    setOpen(true);
+    try {
+      const b64 = await fileToBase64(file);
+      const { fields, note } = await extractProfile(isPdf ? undefined : b64, isPdf ? b64 : undefined);
+      const found = (extractKind === "past" ? fields.past_meds : fields.current_meds) ?? [];
+      let added = 0;
+      for (const m of found) {
+        const medName = (m.name ?? "").trim();
+        if (!medName) continue;
+        onAdd({ name: medName, dose: (m.dose ?? "").trim() || "as directed", time: PRESET_TIMES[0] });
+        added++;
+      }
+      setProposal(added ? `Added ${added} from your upload — review and adjust below.` : (note ?? "I couldn't read a medication from that. Please add it manually."));
+      if (!added) setOpen(true);
+    } finally {
+      setScanning(false);
+    }
   };
 
   const q = name.trim().toLowerCase();

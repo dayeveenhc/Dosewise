@@ -6,7 +6,9 @@ import type { EMsg, ElderlyTab, DoctorQ } from "./types";
 import { agentTurn, fileToBase64 } from "../../lib/hermes";
 import { firstRoutableAction } from "../../lib/agentActions";
 import { useLanguage } from "../../lib/languageContext";
+import { useAccessibility } from "../../accessibility.tsx";
 import { t, LANGUAGE_OPTIONS, speechLangFor } from "../../lib/language";
+import { speak as speakUtterance } from "../../lib/speech";
 
 const nowLabel = () => new Date().toLocaleTimeString("en-SG", { hour: "2-digit", minute: "2-digit" });
 
@@ -60,12 +62,13 @@ function FeatureBtn({ icon: Icon, label, onClick, "data-tour": dataTour }: { ico
   );
 }
 
-export function ElderlyAIScreen({ patient, elderId, onLogDose, onNavigate, onMedsChanged, onOpenTravel, doctorQuestions, onAddDoctorQ, onMarkAnswered, onDeleteQuestion, autoMessage }: {
+export function ElderlyAIScreen({ patient, elderId, onLogDose, onNavigate, onMedsChanged, onMedAdded, onOpenTravel, doctorQuestions, onAddDoctorQ, onMarkAnswered, onDeleteQuestion, autoMessage }: {
   patient: Patient;
   elderId?: string;
   onLogDose: (id: number) => void;
   onNavigate: (tab: ElderlyTab) => void;
-  onMedsChanged?: () => void;
+  onMedsChanged?: () => void | Promise<void>;
+  onMedAdded?: (name: string) => void;
   onOpenTravel: () => void;
   doctorQuestions: DoctorQ[];
   onAddDoctorQ: (q: string) => void;
@@ -74,6 +77,7 @@ export function ElderlyAIScreen({ patient, elderId, onLogDose, onNavigate, onMed
   autoMessage?: string;
 }) {
   const { language, setLanguage } = useLanguage();
+  const { voiceOutput, setVoiceOutput } = useAccessibility();
   const nick = patient.nickname || patient.name.split(" ")[1];
   const buildGreeting = (): EMsg => {
     const h = new Date().getHours();
@@ -95,7 +99,6 @@ export function ElderlyAIScreen({ patient, elderId, onLogDose, onNavigate, onMed
   const [sending, setSending] = useState(false);
   const [isListening, setIsListening] = useState(false);
   const [isSpeaking, setIsSpeaking] = useState(false);
-  const [voiceOutput, setVoiceOutput] = useState(true);
   const [screenTab, setScreenTab] = useState<"chat" | "doctor">("chat");
   const [newQ, setNewQ] = useState("");
   const [showInput, setShowInput] = useState(false);
@@ -160,13 +163,10 @@ export function ElderlyAIScreen({ patient, elderId, onLogDose, onNavigate, onMed
   // (Hokkien falls back to Mandarin — no browser voice exists for it).
   const speak = (text: string) => {
     if (!voiceOutput || !hasTTS || !text) return;
-    speechSynthesis.cancel();
-    const utter = new SpeechSynthesisUtterance(text);
-    utter.lang = speechLangFor(language);
-    utter.onstart = () => setIsSpeaking(true);
-    utter.onend = () => setIsSpeaking(false);
-    utter.onerror = () => setIsSpeaking(false);
-    speechSynthesis.speak(utter);
+    speakUtterance(text, speechLangFor(language), {
+      onStart: () => setIsSpeaking(true),
+      onEnd: () => setIsSpeaking(false),
+    });
   };
 
   const pushAgent = (text: string, isClinic?: boolean) => {
@@ -194,10 +194,10 @@ export function ElderlyAIScreen({ patient, elderId, onLogDose, onNavigate, onMed
     rec.start();
   };
 
-  const send = async (text: string, imageBase64?: string, pdfBase64?: string) => {
+  const send = async (text: string, imageBase64?: string, pdfBase64?: string, displayImage?: string) => {
     const t = text.trim();
     if (!t || sending) return;
-    setMessages(prev => [...prev, { id: Date.now(), role: "user", text: t, time: nowLabel() }]);
+    setMessages(prev => [...prev, { id: Date.now(), role: "user", text: t, time: nowLabel(), image: displayImage }]);
     setQuickOpen(false);
     scrollToBottom();
     setSending(true);
@@ -206,13 +206,25 @@ export function ElderlyAIScreen({ patient, elderId, onLogDose, onNavigate, onMed
     setSending(false);
     scrollToBottom();
     speak(reply);
-    // Only fires when the agent *actually* committed a write this turn (not on a
-    // propose). Refresh the destination, confirm it in chat, then guide the user
-    // to the page that shows the change.
+    // Refresh medication state whenever the agent committed *any* write this turn
+    // (not only routable ones) — awaited + caught so a failed refetch surfaces
+    // instead of silently leaving screens (e.g. the timeline) stale.
+    if (actions.length) {
+      try {
+        await onMedsChanged?.();
+      } catch (err) {
+        console.warn("[dosewise] medication refresh after agent write failed:", err);
+      }
+    }
+    // Flag a freshly added prescription so the destination screen can highlight it
+    // as visible proof the dose really landed on the timeline.
+    const added = actions.find(a => a.tool === "add_prescription");
+    if (added?.name) onMedAdded?.(added.name);
+    // When the write has a destination screen, confirm it and guide the user there.
     const routed = firstRoutableAction(actions);
     if (routed) {
-      onMedsChanged?.();
-      setMessages(prev => [...prev, { id: Date.now() + 2, role: "agent", text: `✓ ${routed.target.done} — opening your ${routed.target.label}…`, time: nowLabel(), isConfirmation: true }]);
+      const detail = routed.action.tool === "add_prescription" && routed.action.summary ? `: ${routed.action.summary}` : "";
+      setMessages(prev => [...prev, { id: Date.now() + 2, role: "agent", text: `✓ ${routed.target.done}${detail} — opening your ${routed.target.label}…`, time: nowLabel(), isConfirmation: true }]);
       scrollToBottom();
       setTimeout(() => onNavigate(routed.target.elderly), 1200);
     }
@@ -225,7 +237,7 @@ export function ElderlyAIScreen({ patient, elderId, onLogDose, onNavigate, onMed
     e.target.value = "";
     if (!file) return;
     setQuickOpen(false);
-    send("📷 Here is a photo of my prescription.", await fileToBase64(file));
+    send("📷 Here is a photo of my prescription.", await fileToBase64(file), undefined, URL.createObjectURL(file));
   };
 
   const handleSend = () => {
@@ -257,11 +269,11 @@ export function ElderlyAIScreen({ patient, elderId, onLogDose, onNavigate, onMed
     const b64 = await fileToBase64(file);
     const msg = "📄 Here is my clinic report. Please update my medical profile from it.";
     if (file.type === "application/pdf") send(msg, undefined, b64);
-    else send(msg, b64);
+    else send(msg, b64, undefined, URL.createObjectURL(file));
   };
 
   return (
-    <div className="flex flex-col flex-1 overflow-hidden relative">
+    <div className="flex flex-col flex-1 min-h-0 overflow-hidden relative">
       <div className="px-4 pt-2 pb-0 shrink-0">
         <div className="flex gap-2 bg-muted rounded-xl p-1">
           <button onClick={() => setScreenTab("chat")} className={`flex-1 py-2.5 rounded-lg text-sm font-semibold transition-colors ${screenTab === "chat" ? "bg-card text-foreground shadow-sm" : "text-muted-foreground"}`}>
@@ -426,6 +438,9 @@ export function ElderlyAIScreen({ patient, elderId, onLogDose, onNavigate, onMed
                   </div>
                 )}
                 <div className={`max-w-[82%] flex flex-col gap-1 ${msg.role === "user" ? "items-end" : "items-start"}`}>
+                  {msg.image && (
+                    <img src={msg.image} alt="Attachment" className="max-w-[70%] rounded-2xl border border-border object-cover" />
+                  )}
                   <div className={`rounded-2xl px-4 py-3 ${msg.role === "user" ? "bg-primary text-primary-foreground rounded-tr-sm" : "bg-card border border-border rounded-tl-sm"}`}>
                     <p className={`text-[15px] leading-relaxed whitespace-pre-line ${msg.role === "user" ? "text-primary-foreground" : "text-foreground"}`}>{renderWithBold(msg.text)}</p>
                     {msg.isClinic && <p className="text-[11px] mt-2 opacity-60 italic">⚕️ Always verify with your doctor or pharmacist</p>}
@@ -505,7 +520,7 @@ export function ElderlyAIScreen({ patient, elderId, onLogDose, onNavigate, onMed
                     </button>
                   ))}
                 </div>
-                <button onClick={() => setVoiceOutput(v => !v)} className="w-full flex items-center justify-between bg-card border border-border rounded-xl px-4 py-3.5">
+                <button onClick={() => setVoiceOutput(!voiceOutput)} className="w-full flex items-center justify-between bg-card border border-border rounded-xl px-4 py-3.5">
                   <div className="flex items-center gap-2"><Volume2 size={18} className="text-primary" /><span className="text-[15px] font-semibold text-foreground">{t(language, "settings.readAloud")}</span></div>
                   <div className={`w-12 h-7 rounded-full transition-colors relative ${voiceOutput ? "bg-primary" : "bg-muted"}`}>
                     <div className={`absolute top-0.5 w-6 h-6 rounded-full bg-white shadow transition-all ${voiceOutput ? "left-[22px]" : "left-0.5"}`} />

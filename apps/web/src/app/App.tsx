@@ -3,11 +3,12 @@ import type { Session } from "@supabase/supabase-js";
 import { Droplets, ArrowLeft, Bell, MessageSquare, HelpCircle, UserRound } from "lucide-react";
 import type { AppMode, Screen, Patient, Medication, Notification, Message } from "./types";
 import { PATIENTS, NOTIFICATIONS } from "./data/patients";
-import { NAV_ITEMS } from "./nav";
+import { BottomNav } from "./components/BottomNav";
 import { LiveStatusBar, PatientSwitcher } from "./components/shared";
 import { supabase } from "./lib/supabase";
 import { ensureProfile, fetchElderMedications, fetchArchivedMedications, addMedication, archiveMedication, to24h } from "./lib/medications";
 import { fetchProfileRole, fetchProfile, calculateAge } from "./lib/profile";
+import type { WizardPrefill } from "./lib/profile";
 import { readStoredAppMode, persistAppMode } from "./lib/sessionState";
 import { WelcomeScreen } from "./screens/setup/WelcomeScreen";
 import { SetupMethodScreen } from "./screens/setup/SetupMethodScreen";
@@ -49,6 +50,10 @@ export default function App() {
   // without ever finishing setup) — routes back through the wizard instead of
   // treating the mode picker as a quick preview-mode switch.
   const [needsWizard, setNeedsWizard] = useState(false);
+  // Fields extracted from an uploaded record on the setup-method screen; seeds
+  // the guided wizard so the user reviews pre-filled answers instead of typing
+  // everything (undefined = manual guided setup).
+  const [wizardPrefill, setWizardPrefill] = useState<WizardPrefill | undefined>(undefined);
   const [screen, setScreen] = useState<Screen>("dashboard");
   const [selectedPatient, setSelectedPatient] = useState(0);
   const [patients, setPatients] = useState<Patient[]>(PATIENTS);
@@ -259,6 +264,17 @@ export default function App() {
     setPatients(prev => prev.map((p, i) => i !== selectedPatient ? p : { ...p, medications }));
   };
 
+  // Safety net for the chat's post-write refetch: if that never fired (e.g. the
+  // agent committed a write the client couldn't detect in `actions`), re-pull
+  // medications whenever the user lands on a screen that shows them, so the
+  // timeline/dashboard/patient view can't sit on stale data until a full reload.
+  useEffect(() => {
+    if (!elderId || appMode === "onboarding") return;
+    if (!["timeline", "patient", "dashboard"].includes(screen)) return;
+    void refreshMedications();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [screen, elderId, appMode]);
+
   // "Send reminder" is a caregiver-to-elder nudge — it should notify the care
   // recipient, not open the caregiver's own care-team chat thread. Opens a
   // compose sheet (default options + free text) instead of firing immediately.
@@ -336,14 +352,19 @@ export default function App() {
               />
             )}
             {preAuthStage === "method" && (
-              <SetupMethodScreen onBack={() => setPreAuthStage("mode")} onGuided={() => setPreAuthStage("wizard")} />
+              <SetupMethodScreen
+                onBack={() => setPreAuthStage("mode")}
+                onGuided={() => { setWizardPrefill(undefined); setPreAuthStage("wizard"); }}
+                onExtracted={(prefill) => { setWizardPrefill(prefill); setPreAuthStage("wizard"); }}
+              />
             )}
             {preAuthStage === "wizard" && (
               <GuidedSetupWizard
                 mode={pendingMode}
                 hasSession={!!session}
                 elderId={elderId}
-                onComplete={() => { setNeedsWizard(false); setScreen("dashboard"); setJustOnboarded(true); setAppMode(pendingMode); }}
+                prefill={wizardPrefill}
+                onComplete={() => { setNeedsWizard(false); setWizardPrefill(undefined); setScreen("dashboard"); setJustOnboarded(true); setAppMode(pendingMode); }}
                 onExit={() => setPreAuthStage("method")}
               />
             )}
@@ -362,7 +383,7 @@ export default function App() {
               <ElderlyApp
                 patient={patients[0]}
                 elderId={elderId}
-                onUpdatePatient={(p) => setPatients(prev => [p, ...prev.slice(1)])}
+                onUpdatePatient={(p) => setPatients(prev => [typeof p === "function" ? p(prev[0]) : p, ...prev.slice(1)])}
                 onBack={openModeSwitch}
                 onSignOut={() => supabase.auth.signOut()}
                 startTour={justOnboarded}
@@ -496,42 +517,7 @@ export default function App() {
           )}
 
           {/* Bottom navigation */}
-          <div className="shrink-0 bg-card/95 backdrop-blur-md border-t border-border px-2 pb-6 pt-2">
-            <div className="flex items-end">
-              {NAV_ITEMS.map(item => {
-                const isActive = activeTab === item.id;
-                if (item.fab) {
-                  return (
-                    <div key={item.id} className="flex-1 flex flex-col items-center">
-                      <button
-                        onClick={() => setScreen(item.id)}
-                        data-tour={`nav-${item.id}`}
-                        className={`w-14 h-14 rounded-full flex items-center justify-center -mt-7 shadow-lg active:scale-95 transition-transform bg-primary ${isActive ? "ring-4 ring-primary/25" : ""}`}
-                      >
-                        <item.icon size={24} className="text-primary-foreground" />
-                      </button>
-                      <span className={`text-[10px] font-medium mt-1 ${isActive ? "text-primary" : "text-muted-foreground"}`}>{item.label}</span>
-                    </div>
-                  );
-                }
-                return (
-                  <button
-                    key={item.id}
-                    onClick={() => setScreen(item.id)}
-                    data-tour={`nav-${item.id}`}
-                    className="flex-1 flex flex-col items-center gap-1 py-1 relative"
-                  >
-                    <div className={`w-10 h-7 rounded-2xl flex items-center justify-center transition-colors ${isActive ? "bg-primary" : ""}`}>
-                      <item.icon size={18} className={isActive ? "text-primary-foreground" : "text-muted-foreground"} />
-                    </div>
-                    <span className={`text-[10px] font-medium transition-colors ${isActive ? "text-primary" : "text-muted-foreground"}`}>
-                      {item.label}
-                    </span>
-                  </button>
-                );
-              })}
-            </div>
-          </div>
+          <BottomNav activeTab={activeTab} onSelect={setScreen} />
         </AccessibilityProvider>
         </div>
       </div>

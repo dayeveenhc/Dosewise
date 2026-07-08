@@ -1,9 +1,54 @@
-import { ArrowLeft, ClipboardList, Lock, ChevronRight } from "lucide-react";
+import { useRef, useState } from "react";
+import type { ChangeEvent } from "react";
+import { ArrowLeft, ClipboardList, Lock, ChevronRight, FileUp, Loader2 } from "lucide-react";
 import { useLanguage } from "../../lib/languageContext";
 import { t } from "../../lib/language";
+import { extractProfile, fileToBase64 } from "../../lib/hermes";
+import { buildWizardPrefill, type WizardPrefill } from "../../lib/profile";
 
-export function SetupMethodScreen({ onBack, onGuided }: { onBack: () => void; onGuided: () => void }) {
+export function SetupMethodScreen({
+  onBack,
+  onGuided,
+  onExtracted,
+}: {
+  onBack: () => void;
+  onGuided: () => void;
+  onExtracted: (prefill: WizardPrefill) => void;
+}) {
   const { language } = useLanguage();
+  const fileRef = useRef<HTMLInputElement>(null);
+  const [loading, setLoading] = useState(false);
+  const [note, setNote] = useState<string | null>(null);
+
+  const hasAnything = (p: WizardPrefill) =>
+    !!p.fullName || Object.keys(p.details).length > 0 || p.currentMeds.length > 0 || p.pastMeds.length > 0;
+
+  const onFile = async (e: ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    e.target.value = ""; // allow re-picking the same file
+    if (!file) return;
+    setLoading(true);
+    setNote(null);
+    try {
+      const b64 = await fileToBase64(file);
+      const isPdf = file.type === "application/pdf";
+      const { fields, note: serverNote } = await extractProfile(
+        isPdf ? undefined : b64,
+        isPdf ? b64 : undefined
+      );
+      const prefill = buildWizardPrefill(fields);
+      if (hasAnything(prefill)) {
+        onExtracted(prefill);
+      } else {
+        setNote(serverNote ?? t(language, "setup.uploadNothing"));
+      }
+    } catch {
+      setNote(t(language, "setup.uploadFailed"));
+    } finally {
+      setLoading(false);
+    }
+  };
+
   return (
     <div className="flex flex-col h-full bg-background">
       <div className="px-4 pt-4 pb-2">
@@ -35,6 +80,29 @@ export function SetupMethodScreen({ onBack, onGuided }: { onBack: () => void; on
             <p className="text-sm text-muted-foreground leading-relaxed">{t(language, "common.healthHubComingSoon")}</p>
           </div>
         </div>
+
+        {/* Upload records — auto-fill the guided questions from a PDF/image */}
+        <button
+          onClick={() => !loading && fileRef.current?.click()}
+          disabled={loading}
+          className="w-full text-left rounded-2xl bg-card shadow-sm p-5 flex items-start gap-4 active:scale-[0.98] transition-transform disabled:opacity-70"
+        >
+          <div className="w-11 h-11 rounded-xl bg-accent flex items-center justify-center shrink-0 mt-0.5">
+            {loading ? (
+              <Loader2 size={20} className="text-accent-foreground animate-spin" />
+            ) : (
+              <FileUp size={20} className="text-accent-foreground" />
+            )}
+          </div>
+          <div className="flex-1">
+            <p className="font-semibold text-foreground text-[15px] leading-snug">
+              {loading ? t(language, "setup.reading") : t(language, "setup.uploadRecords")}
+            </p>
+            <p className="text-sm text-muted-foreground leading-relaxed">{t(language, "setup.uploadRecordsDesc")}</p>
+          </div>
+        </button>
+        <input ref={fileRef} type="file" accept="image/*,application/pdf" className="hidden" onChange={onFile} />
+        {note && <p className="text-xs text-muted-foreground px-1 -mt-2">{note}</p>}
 
         {/* Guided questions */}
         <button

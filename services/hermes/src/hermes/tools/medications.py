@@ -69,7 +69,16 @@ _ADD_SCHEMA = {
             "times": {
                 "type": "array",
                 "items": {"type": "string"},
-                "description": "Daily dose times as HH:MM, e.g. ['08:00','20:00'].",
+                "description": "Daily dose times as HH:MM, e.g. ['08:00','20:00']. "
+                "Convert any 'every N hours' / 'N times a day' frequency into "
+                "explicit clock times and always include them.",
+            },
+            "frequency": {
+                "type": "string",
+                "description": "Plain-language cadence for display, e.g. 'every 8 "
+                "hours', 'twice daily', 'at night'. The `times` list is what "
+                "actually schedules the doses; this is the human label shown "
+                "alongside them.",
             },
             "confirmed": {
                 "type": "boolean",
@@ -90,6 +99,7 @@ async def add_prescription(
     purpose: str | None = None,
     instructions: str | None = None,
     times: list[str] | None = None,
+    frequency: str | None = None,
 ) -> str:
     proposal = {
         "name": name,
@@ -97,6 +107,7 @@ async def add_prescription(
         "purpose": purpose,
         "instructions": instructions,
         "times": times or [],
+        "frequency": frequency,
     }
 
     if not confirmed:
@@ -118,6 +129,8 @@ async def add_prescription(
         readback = f"{name}" + (f" {dosage}" if dosage else "")
         if times:
             readback += f", taken at {', '.join(times)}"
+        if frequency:
+            readback += f" ({frequency})"
         if purpose:
             readback += f", for {purpose}"
         warning = await _interaction_warning(ctx, name)
@@ -135,13 +148,22 @@ async def add_prescription(
             "yes before saving."
         )
 
+    # Prefer freshly-supplied values, else fall back to the matched proposal that was
+    # read back and confirmed — so a tap/short "yes" that doesn't resupply every
+    # field still saves the times and cadence the user actually agreed to.
+    times = times or list(pending.get("times") or [])
+    frequency = frequency or pending.get("frequency")
+    dosage = dosage or pending.get("dosage")
+    purpose = purpose or pending.get("purpose")
+    instructions = instructions or pending.get("instructions")
+
     row = {
         "elder_id": ctx.elder_id,
         "name": name,
         "dosage": dosage,
         "purpose": purpose,
         "instructions": instructions,
-        "schedule": {"times": times or [], "frequency": "daily"},
+        "schedule": {"times": times or [], "frequency": frequency or "daily"},
         "verified_by": ctx.elder_id,
         "verified_at": datetime.now(UTC).isoformat(),
     }
@@ -167,7 +189,13 @@ async def add_prescription(
         ctx.session.pending_image = None
         ctx.session.awaiting_confirmation = False
     summary = name + (f" {dosage}" if dosage else "")
-    ctx.committed_actions.append({"tool": "add_prescription", "summary": summary})
+    if times:
+        summary += f" — {', '.join(times)}"
+    if frequency:
+        summary += f" ({frequency})"
+    ctx.committed_actions.append(
+        {"tool": "add_prescription", "summary": summary, "name": name}
+    )
     return f"Saved {name} to the medication list and marked it confirmed."
 
 
@@ -380,7 +408,7 @@ async def set_medication_reminder(
         ctx.session.pending_reminder = None
         ctx.session.awaiting_confirmation = False
     ctx.committed_actions.append(
-        {"tool": "set_medication_reminder", "summary": f"{name} at {', '.join(valid)}"}
+        {"tool": "set_medication_reminder", "summary": f"{name} at {', '.join(valid)}", "name": name}
     )
     return (
         f"Saved. I'll remind you to take {name} at "

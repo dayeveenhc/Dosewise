@@ -24,6 +24,17 @@ def test_system_prompt_omits_profile_when_absent():
     assert _INJECT_MARKER not in system_prompt_for().lower()
 
 
+def test_reply_language_injected_firmly():
+    out = system_prompt_for(reply_language="Malay")
+    assert "Malay" in out
+    # Firm, whole-reply directive (not the old soft "reply in X unless they switch").
+    assert "ENTIRE reply in Malay" in out
+
+
+def test_reply_language_omitted_when_absent():
+    assert "ENTIRE reply" not in system_prompt_for()
+
+
 async def test_loader_reads_and_caches_profile():
     db = FakeDB({"profiles": [{"id": ELDER_A, "accessibility": {"medical_profile": "Has COPD."}}]})
     session = SessionState(elder_id=ELDER_A)

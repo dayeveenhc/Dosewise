@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { Plus, BookOpen, ChevronDown, Play, Eye, History } from "lucide-react";
+import { Plus, BookOpen, ChevronDown, Play, Eye, History, Check } from "lucide-react";
 import { useAccessibility } from "../../accessibility.tsx";
 import type { Patient } from "../../types";
 import { MED_PLAIN, MED_SIMPLE, MED_SHAPES, EYEDROP_STEPS } from "../../data/medications";
@@ -7,7 +7,7 @@ import { MedAvatar } from "../../components/shared";
 import { useLanguage } from "../../lib/languageContext";
 import { t } from "../../lib/language";
 
-export function ElderlyPrescriptionScreen({ patient, onOpenAI, onAddRx }: { patient: Patient; onOpenAI: (msg?: string) => void; onAddRx: () => void }) {
+export function ElderlyPrescriptionScreen({ patient, onOpenAI, onAddRx, justAddedMed }: { patient: Patient; onOpenAI: (msg?: string) => void; onAddRx: () => void; justAddedMed?: string | null }) {
   const { colourBlind } = useAccessibility();
   const { language } = useLanguage();
   const [helpOpen, setHelpOpen] = useState<number | null>(null);
@@ -46,15 +46,23 @@ export function ElderlyPrescriptionScreen({ patient, onOpenAI, onAddRx }: { pati
           const supplyPct   = Math.min(100, Math.round((supplyDays / 30) * 100));
           const isEyeDrop   = m.name === "Latanoprost Eye Drops";
           const isHelpOpen  = helpOpen === m.id;
+          const justAdded   = !!justAddedMed && m.name === justAddedMed;
 
           return (
-            <div key={m.id} className="bg-card rounded-2xl border border-border overflow-hidden shadow-sm">
+            <div key={m.id} className={`bg-card rounded-2xl border overflow-hidden shadow-sm ${justAdded ? "border-2 border-emerald-400 ring-2 ring-emerald-300/50" : "border-border"}`}>
               <div className="p-4">
                 <div className="flex items-start gap-3">
                   <MedAvatar name={m.name} size={62} className="rounded-xl shrink-0" />
                   <div className="flex-1 min-w-0">
                     <div className="flex items-start justify-between gap-2">
-                      <p className="font-bold text-[17px] text-foreground leading-snug">{m.name}</p>
+                      <div className="flex items-center gap-1.5 flex-wrap min-w-0">
+                        <p className="font-bold text-[17px] text-foreground leading-snug">{m.name}</p>
+                        {justAdded && (
+                          <span className="flex items-center gap-1 bg-emerald-100 text-emerald-700 text-[10px] font-bold px-2 py-0.5 rounded-full">
+                            <Check size={9} strokeWidth={3} />{t(language, "prescription.justAdded")}
+                          </span>
+                        )}
+                      </div>
                       {lowRefill && (
                         <span className="shrink-0 text-xs font-bold text-red-600 bg-red-100 px-2.5 py-1 rounded-full whitespace-nowrap">
                           {t(language, "prescription.daysLeftBadge", { days: m.refillDaysLeft ?? 0 })}

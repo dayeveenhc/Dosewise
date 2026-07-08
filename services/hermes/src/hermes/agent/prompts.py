@@ -87,8 +87,12 @@ def system_prompt_for(
         )
     if reply_language:
         prompt += (
-            f"\nThe patient is communicating in {reply_language}. Reply in "
-            f"{reply_language} using warm, simple language, unless they switch.\n"
+            f"\nLANGUAGE: The patient has chosen to communicate in {reply_language}. "
+            f"Write your ENTIRE reply in {reply_language} — every sentence, including "
+            "greetings, confirmations, questions, and any summary of what a tool did. "
+            "Do not fall back to English unless the patient themselves switches to "
+            "English. Keep grounded medication facts accurate; a drug's name may stay "
+            f"in its original form, but explain everything around it in {reply_language}.\n"
         )
     if recent_memory:
         prompt += (

@@ -119,6 +119,23 @@ async def test_actions_defaults_empty_when_nothing_committed(monkeypatch):
     assert resp.json()["actions"] == []
 
 
+async def test_turn_error_returns_friendly_reply_not_500(monkeypatch):
+    async def boom(client, ctx, message, *, image_bytes=None, history=None, **_):
+        raise RuntimeError("provider exploded")
+
+    app = _make_app(monkeypatch, boom)
+    async with _client(app) as c:
+        resp = await c.post("/agent/turn", json={"message": "hi", "elder_id": ELDER})
+    # A mid-turn provider/DB error is caught + logged server-side and returns a
+    # friendly 200 reply, instead of a bare 500 the browser would hide behind its
+    # own generic fallback.
+    assert resp.status_code == 200
+    data = resp.json()
+    assert "trouble" in data["reply"].lower()
+    assert data["tools_used"] == []
+    assert data["actions"] == []
+
+
 async def test_cors_preflight_allows_configured_web_origin(monkeypatch):
     async def fake_turn(client, ctx, message, *, image_bytes=None, history=None, **_):
         return "ok", [], history or []

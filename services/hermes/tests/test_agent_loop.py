@@ -11,7 +11,7 @@ from fakes import (
     tool_use_block,
     use_anthropic,
 )
-from hermes.agent.loop import run_agent_turn
+from hermes.agent.loop import _RETRY_REPLY, run_agent_turn
 from hermes.channels.session import SessionState
 from hermes.tools.base import ToolContext
 
@@ -100,7 +100,7 @@ async def test_loop_injects_dialect_slang(monkeypatch):
     assert "pang sai = bowel movement" in system_text
 
 
-async def test_loop_iteration_cap_falls_back_to_human(monkeypatch):
+async def test_loop_iteration_cap_recovers_with_retry(monkeypatch):
     use_anthropic(monkeypatch)
     db = FakeDB({"profiles": [{"dialect": "en"}], "medications": [],
                  "conversation_turns": []})
@@ -109,7 +109,8 @@ async def test_loop_iteration_cap_falls_back_to_human(monkeypatch):
         response("tool_use", [tool_use_block("list_medications", {})]),
     ])
     reply, tools_used, _ = await run_agent_turn(anthropic, _ctx(db), "loop forever")
-    assert "person" in reply.lower()
+    # Hitting the cap now recovers with a gentle retry, not a human handoff.
+    assert reply == _RETRY_REPLY
     assert len(tools_used) >= 8  # one dispatch per capped iteration
 
 

@@ -88,6 +88,56 @@ long-polls the **same Telegram bot token**, so a local `hermes-serve` (even on :
 will start a second poller — kill it promptly after verifying to avoid getUpdates
 409s. Kill by the exact PID bound to your test port, never a broad `pkill hermes-serve`.
 
+## 2026-07-08 — Four-issue fix pass: timeline sync, voice, language, fallback
+
+User-directed cross-cutting pass (web + hermes; explicit go-ahead to cross
+`apps/web/CLAUDE.md`'s no-hermes rule). Fixes:
+
+1. **Timeline stale after an agent-added prescription.** Root cause: `TimelineScreen`
+   has no store — it renders prop-drilled `patient.medications`, refreshed only by
+   `onMedsChanged`, which was single-gated on a *routable* `actions`, unawaited, and
+   uncaught. Now the chat `send()` refetches on **any** non-empty `actions`, awaited
+   + `try/catch` (both chat screens). Added a **safety-net refetch** on screen focus:
+   `App.tsx` effect refetches when caregiver `screen` ∈ {timeline,patient,dashboard};
+   `ElderlyApp.tsx` effect when elder `tab` ∈ {home,prescriptions} — covers the
+   `actions`-empty case. Elder has **no timeline tab** — the "timeline" is the
+   caregiver screen; the elder equivalent is the Home schedule. Also fixed a latent
+   clobber: `ElderlyApp.refreshMeds` spread a closed-over `patient`; now uses a
+   functional update (elder `onUpdatePatient` widened to accept `prev => next`).
+2. **AI voice output dead.** The "Read Aloud" toggles in both Settings screens were
+   inert local `useState` (never persisted/read); the real gate was a separate
+   ephemeral per-chat `voiceOutput`. Now there's **one persisted source of truth**:
+   `voiceOutput` lives on `AccessibilityProvider` (`accessibility.tsx`, key
+   `dosewise:accessibility`, DEFAULTS-merge = backward-compatible). Both Settings
+   toggles + both chats + the in-chat "Language & voice" switch read/write it.
+   Extracted `lib/speech.ts` with the shared `speak()`: fixes the cancel()→speak()
+   race (defer to next tick) and picks an installed voice via `voiceschanged`.
+3. **Reply language drift.** apps/web wiring was already correct (same
+   `dosewise-language` key → `reply_language` → prompt). Firmed the directive in
+   `prompts.py` ("Write your ENTIRE reply in {lang}…, do not fall back to English
+   unless the patient switches"). Test: `test_medical_profile.py`.
+4. **"Ask a person" fallback.** (a) `hermes.ts` collapsed no-session/401/429/5xx/
+   network into one opaque English string with no logging — now distinguishes the
+   four classes, `console.warn`s each, returns a class-specific message. (b)
+   `routes.py` `/agent/turn` now wraps `run_agent_turn` in try/except + `log.exception`
+   and returns a friendly 200 (not a bare 500 the client hides). (c) `loop.py`
+   iteration-cap / empty-reply now `log.warning` + recover with a gentle **retry**
+   line (`_RETRY_REPLY`), not the old "let me get a person" handoff — a cap-hit is a
+   stuck tool loop, not a safety event. Applied across all 3 provider branches. (d)
+   `soul.md` rail #5 tightened against over-escalation (answer ordinary label
+   questions; escalate only for real safety) — other safety rails untouched.
+
+Note: `config.py` `anthropic_model = "claude-sonnet-5"` is a **valid** id — an
+explore agent flagged it as suspect; it is not. Don't "fix" it.
+
+Verification: full hermes suite green (`uv run pytest`, 177 passed / 5 integration
+skipped) incl. rewritten iteration-cap tests (assert `_RETRY_REPLY`), new
+reply_language-injection tests, and a route-error test (raise mid-turn → friendly
+200, not 500). Web `npm run build` clean. **Not** live-driven through a browser this
+pass (no test-user password on hand; a real drive also spawns a Telegram poller +
+needs LLM keys) — the in-app timeline refresh and actual TTS still want a manual
+click-through on the 5173/ngrok dev server.
+
 ## 2026-07-08 — Live UI↔agent test found two more real bugs
 
 Asked to verify the chatbot is actually reachable from the UI, not just that

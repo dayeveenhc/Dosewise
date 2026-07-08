@@ -28,6 +28,15 @@ log = logging.getLogger("hermes.agent")
 
 _MAX_ITERATIONS = 8
 _MAX_TOKENS = 4096
+
+# Shown when the tool-calling loop ends without the model producing a final
+# answer (iteration cap reached, or an empty reply). Deliberately NOT a
+# human-handoff line: this is usually a stuck tool loop, not a safety event, so
+# invite a simpler retry instead of dead-ending the person to "ask a person."
+_RETRY_REPLY = (
+    "Sorry, I didn't quite catch that. "
+    "Could you say it once more, a little more simply?"
+)
 _CACHE = {"type": "ephemeral"}
 
 
@@ -236,8 +245,12 @@ async def _run_openai(
 
     reply = (msg.content or "").strip() if msg is not None else ""
     if msg is not None and msg.tool_calls:
-        # Hit the iteration cap mid-loop; give a safe fallback.
-        reply = reply or "Let me get a person to help you with that."
+        # Hit the iteration cap mid-loop; recover with a gentle retry, not a handoff.
+        log.warning("agent loop hit iteration cap (openai); tools_used=%s", tools_used)
+        reply = reply or _RETRY_REPLY
+    elif not reply:
+        log.warning("agent loop produced an empty reply (openai); tools_used=%s", tools_used)
+        reply = _RETRY_REPLY
 
     messages.append({"role": "assistant", "content": reply})
     _strip_images(messages)
@@ -313,8 +326,12 @@ async def _run_anthropic(
 
     reply = _anthropic_text(response) if response is not None else ""
     if response is not None and response.stop_reason == "tool_use":
-        # Hit the iteration cap mid-loop; give a safe fallback.
-        reply = reply or "Let me get a person to help you with that."
+        # Hit the iteration cap mid-loop; recover with a gentle retry, not a handoff.
+        log.warning("agent loop hit iteration cap (anthropic); tools_used=%s", tools_used)
+        reply = reply or _RETRY_REPLY
+    elif not reply:
+        log.warning("agent loop produced an empty reply (anthropic); tools_used=%s", tools_used)
+        reply = _RETRY_REPLY
 
     messages.append({"role": "assistant", "content": reply})
     # The photo was needed only for this turn's iterations; drop it from the history
@@ -407,7 +424,12 @@ async def _run_gemini(
 
     reply = _gemini_text(response)
     if not reply and calls:
-        reply = "Let me get a person to help you with that."
+        # Hit the iteration cap mid-loop; recover with a gentle retry, not a handoff.
+        log.warning("agent loop hit iteration cap (gemini); tools_used=%s", tools_used)
+        reply = _RETRY_REPLY
+    elif not reply:
+        log.warning("agent loop produced an empty reply (gemini); tools_used=%s", tools_used)
+        reply = _RETRY_REPLY
     contents.append(types.Content(role="model", parts=[types.Part.from_text(text=reply)]))
     return reply, tools_used, contents
 

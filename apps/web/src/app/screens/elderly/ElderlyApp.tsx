@@ -19,7 +19,7 @@ import { t } from "../../lib/language";
 export function ElderlyApp({ patient, elderId, onUpdatePatient, onBack, onSignOut, startTour, careMessages }: {
   patient: Patient;
   elderId?: string;
-  onUpdatePatient: (p: Patient) => void;
+  onUpdatePatient: (p: Patient | ((prev: Patient) => Patient)) => void;
   onBack: () => void;
   onSignOut: () => void;
   startTour?: boolean;
@@ -32,7 +32,18 @@ export function ElderlyApp({ patient, elderId, onUpdatePatient, onBack, onSignOu
   const [showTravel, setShowTravel] = useState(false);
   const [showTour, setShowTour] = useState(!!startTour);
   const [showTourConfirm, setShowTourConfirm] = useState(false);
+  // Name of a just-added medication, so the schedule/prescription screens can show a
+  // "Just added" highlight as visible proof it landed. Auto-clears after a few seconds.
+  const [justAddedMed, setJustAddedMed] = useState<string | null>(null);
+  const justAddedTimer = useRef<number>();
   const { language } = useLanguage();
+
+  const flagJustAdded = (name?: string) => {
+    if (!name) return;
+    setJustAddedMed(name);
+    window.clearTimeout(justAddedTimer.current);
+    justAddedTimer.current = window.setTimeout(() => setJustAddedMed(null), 6000);
+  };
 
   useEffect(() => {
     const intervalId = window.setInterval(() => setCurrentTime(new Date()), 1000);
@@ -135,15 +146,27 @@ export function ElderlyApp({ patient, elderId, onUpdatePatient, onBack, onSignOu
       ? await addMedication(elderId, { name: med.name, dosage: med.dose, purpose: med.purpose, timeHHMMs, refillDays: med.refillDaysLeft })
       : undefined;
     onUpdatePatient({ ...patient, medications: [...patient.medications, { ...med, id: nextId, medicationId, status: "upcoming" as MedStatus }] });
+    flagJustAdded(med.name);
   };
 
   // After the agent writes a medication change server-side (photo prescription,
-  // chat-logged dose/refill), refetch so the local list isn't stale.
+  // chat-logged dose/refill), refetch so the local list isn't stale. Merge with a
+  // functional update rather than spreading a closed-over `patient`, so a
+  // concurrent change (e.g. a dose just logged) isn't clobbered by a stale copy.
   const refreshMeds = async () => {
     if (!elderId) return;
     const medications = await fetchElderMedications(elderId);
-    onUpdatePatient({ ...patient, medications });
+    onUpdatePatient(prev => ({ ...prev, medications }));
   };
+
+  // Safety net (mirrors the caregiver App): re-pull medications when returning to
+  // a screen that shows them, so an agent write the chat couldn't detect in
+  // `actions` can't leave the home schedule or prescription list stale.
+  useEffect(() => {
+    if (tab !== "home" && tab !== "prescriptions") return;
+    void refreshMeds();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [tab, elderId]);
 
   const handleAddDoctorQ = (q: string) => {
     setDoctorQuestions(prev => [{ id: Date.now(), question: q, addedAt: `Added by Mei · ${new Date().toLocaleTimeString("en-SG", { hour: "2-digit", minute: "2-digit" })}`, answered: false }, ...prev]);
@@ -192,9 +215,9 @@ export function ElderlyApp({ patient, elderId, onUpdatePatient, onBack, onSignOu
       </div>
 
       {/* Screen content */}
-      <div className="flex-1 overflow-hidden flex flex-col">
-        {tab === "home"          && <ElderlyHomeScreen         patient={patient} onLogDose={handleLogDose} onOpenTravel={() => setShowTravel(true)} />}
-        {tab === "prescriptions" && <ElderlyPrescriptionScreen patient={patient} onOpenAI={openAI} onAddRx={() => setAddRx("manual")} />}
+      <div className="flex-1 min-h-0 overflow-hidden flex flex-col">
+        {tab === "home"          && <ElderlyHomeScreen         patient={patient} onLogDose={handleLogDose} onOpenTravel={() => setShowTravel(true)} justAddedMed={justAddedMed} />}
+        {tab === "prescriptions" && <ElderlyPrescriptionScreen patient={patient} onOpenAI={openAI} onAddRx={() => setAddRx("manual")} justAddedMed={justAddedMed} />}
         {tab === "ai"            && (
           <ElderlyAIScreen
             patient={patient}
@@ -202,6 +225,7 @@ export function ElderlyApp({ patient, elderId, onUpdatePatient, onBack, onSignOu
             onLogDose={handleLogDose}
             onNavigate={setTab}
             onMedsChanged={refreshMeds}
+            onMedAdded={flagJustAdded}
             onOpenTravel={() => setShowTravel(true)}
             doctorQuestions={doctorQuestions}
             onAddDoctorQ={handleAddDoctorQ}
@@ -244,7 +268,7 @@ export function ElderlyApp({ patient, elderId, onUpdatePatient, onBack, onSignOu
         </div>
       </div>
 
-      {addRx && <AddPrescriptionSheet initialTab={addRx} onClose={() => setAddRx(null)} onAdd={handleAddPrescription} onAdded={() => setTab("prescriptions")} onAgentAdded={refreshMeds} />}
+      {addRx && <AddPrescriptionSheet initialTab={addRx} onClose={() => setAddRx(null)} onAdd={handleAddPrescription} onAdded={() => setTab("prescriptions")} onAgentAdded={(name?: string) => { void refreshMeds(); flagJustAdded(name); setTab("prescriptions"); }} />}
       {showTravel && (
         <TravelModeSheet
           patient={patient}
