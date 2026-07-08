@@ -1,7 +1,7 @@
 import { useEffect, useState } from "react";
 import type { Session } from "@supabase/supabase-js";
 import { Droplets, ArrowLeft, Bell, MessageSquare, HelpCircle, UserRound } from "lucide-react";
-import type { AppMode, Screen, Patient, Medication } from "./types";
+import type { AppMode, Screen, Patient, Medication, Notification, Message } from "./types";
 import { PATIENTS, NOTIFICATIONS } from "./data/patients";
 import { NAV_ITEMS } from "./nav";
 import { LiveStatusBar, PatientSwitcher } from "./components/shared";
@@ -28,6 +28,9 @@ import { AccessibilityProvider } from "./accessibility.tsx";
 import { GuidedTour } from "./components/GuidedTour";
 import type { TourStep } from "./components/GuidedTour";
 import { ConfirmDialog } from "./components/ConfirmDialog";
+import { ToastStack } from "./components/Toast";
+import type { ToastItem } from "./components/Toast";
+import { SendReminderSheet } from "./screens/SendReminderSheet";
 import { LanguageProvider } from "./lib/languageContext";
 
 export default function App() {
@@ -53,6 +56,29 @@ export default function App() {
   const [justOnboarded, setJustOnboarded] = useState(false);
   const [showCaregiverTour, setShowCaregiverTour] = useState(false);
   const [showCaregiverTourConfirm, setShowCaregiverTourConfirm] = useState(false);
+  const [toasts, setToasts] = useState<ToastItem[]>([]);
+  const [elderToasts, setElderToasts] = useState<ToastItem[]>([]);
+  const [notifications, setNotifications] = useState<Notification[]>(NOTIFICATIONS);
+  // Lifted out of ElderlyApp so a caregiver-sent reminder (created while the
+  // caregiver view is showing) can be pushed into the elder's own Notifications
+  // tab too, not just a transient toast.
+  const [careMessages, setCareMessages] = useState<Message[]>([
+    { id: 1, author: "Tan Wei Ming", role: "Son",      body: "Hi Ah Ma, remember your Celecoxib after lunch today. Dr. Priya called — blood test is next Tuesday at 10am.", time: "10:30 AM",  isMe: false },
+    { id: 2, author: "Tan Shu Fen",  role: "Daughter", body: "Ma, I refilled your Atorvastatin — it's in the cabinet above the stove 💙",                                   time: "Yesterday", isMe: false },
+  ]);
+  const [showSendReminder, setShowSendReminder] = useState<{ medName?: string } | null>(null);
+
+  // Demo pop-up notifications — fires a couple of sample alerts a little
+  // after landing in the caregiver app, so the top-of-screen toast UI has
+  // something to show (there's no live push infra behind this yet).
+  useEffect(() => {
+    if (appMode !== "caregiver") return;
+    const timers = [
+      window.setTimeout(() => setToasts(prev => [...prev, { id: Date.now(), title: "Missed dose — Celecoxib", body: "Mdm Tan did not take her 12:00 PM Celecoxib 200mg dose." }]), 4000),
+      window.setTimeout(() => setToasts(prev => [...prev, { id: Date.now() + 1, title: "Refill needed soon — Metformin", body: "Metformin 500mg has ~4 days remaining." }]), 16000),
+    ];
+    return () => timers.forEach(window.clearTimeout);
+  }, [appMode]);
 
   useEffect(() => {
     if (!justOnboarded) return;
@@ -208,6 +234,24 @@ export default function App() {
     setPatients(prev => prev.map((p, i) => i !== selectedPatient ? p : { ...p, medications }));
   };
 
+  // "Send reminder" is a caregiver-to-elder nudge — it should notify the care
+  // recipient, not open the caregiver's own care-team chat thread. Opens a
+  // compose sheet (default options + free text) instead of firing immediately.
+  const handleSendReminder = (medName?: string) => setShowSendReminder({ medName });
+
+  // No live push infra exists, so "sent" means: log it in the caregiver's own
+  // Notifications tab, add it to the elder's own Notifications tab (persists,
+  // unlike the toast below), and queue a pop-up toast for whenever the
+  // elderly interface is next shown (this is a single-device demo, not real delivery).
+  const handleReminderSent = (text: string) => {
+    setNotifications(prev => [{
+      id: Date.now(), type: "reminder", title: "Reminder sent", body: text,
+      time: "Just now", read: true, patientId: patients[selectedPatient].id,
+    }, ...prev]);
+    setCareMessages(prev => [{ id: Date.now() + 1, author: "Your caregiver", role: "Reminder", body: text, time: "Just now", isMe: false }, ...prev]);
+    setElderToasts(prev => [...prev, { id: Date.now() + 2, title: "Reminder from your caregiver", body: text }]);
+  };
+
   const handleDeleteMedication = async (id: number) => {
     const med = patients[selectedPatient].medications.find(m => m.id === id);
     if (med?.medicationId) await archiveMedication(med.medicationId);
@@ -224,7 +268,7 @@ export default function App() {
     setPatients(prev => prev.map((p, i) => i === selectedPatient ? updated : p));
   };
 
-  const unreadCount = NOTIFICATIONS.filter(n => !n.read).length;
+  const unreadCount = notifications.filter(n => !n.read).length;
   const activeTab = ["dashboard", "timeline", "ai", "patient"].includes(screen)
     ? screen
     : "settings";
@@ -290,8 +334,13 @@ export default function App() {
                 onBack={openModeSwitch}
                 onSignOut={() => supabase.auth.signOut()}
                 startTour={justOnboarded}
+                careMessages={careMessages}
               />
             </AccessibilityProvider>
+            <ToastStack
+              toasts={elderToasts}
+              onDismiss={id => setElderToasts(prev => prev.filter(t => t.id !== id))}
+            />
           </div>
         </div>
       </LanguageProvider>
@@ -303,6 +352,7 @@ export default function App() {
       <div className="min-h-screen bg-stone-300 flex items-center justify-center p-4" style={{ fontFamily: "'DM Sans', system-ui, sans-serif" }}>
         {/* Phone frame */}
         <div className="w-[390px] h-[844px] bg-background relative overflow-hidden rounded-[3rem] shadow-2xl border-[6px] border-stone-800 flex flex-col">
+        <AccessibilityProvider>
           {/* Status bar */}
           <LiveStatusBar className="bg-background/80 backdrop-blur-sm" />
 
@@ -349,7 +399,7 @@ export default function App() {
 
           {/* Screen content */}
           <div className={`flex-1 ${screen === "ai" ? "overflow-hidden flex flex-col" : "overflow-y-auto scrollbar-none"}`}>
-            {screen === "dashboard" && <DashboardScreen patient={patient} onNavigate={setScreen} />}
+            {screen === "dashboard" && <DashboardScreen patient={patient} onNavigate={setScreen} onSendReminder={handleSendReminder} />}
             {screen === "patient" && (
               <PatientScreen
                 patient={patient}
@@ -358,11 +408,17 @@ export default function App() {
                 onDeleteMedication={handleDeleteMedication}
               />
             )}
-            {screen === "timeline" && <TimelineScreen patient={patient} />}
-            {screen === "notifications" && <NotificationsScreen />}
+            {screen === "timeline" && <TimelineScreen patient={patient} onSendReminder={handleSendReminder} />}
+            {screen === "notifications" && (
+              <NotificationsScreen
+                notifications={notifications}
+                onMarkAllRead={() => setNotifications(prev => prev.map(n => ({ ...n, read: true })))}
+                onDismiss={id => setNotifications(prev => prev.filter(n => n.id !== id))}
+              />
+            )}
             {screen === "ai" && <AskMeiScreen patient={patient} elderId={elderId} onUpdatePatient={handleUpdatePatient} onNavigate={setScreen} onMedsChanged={refreshMedications} />}
             {screen === "messages" && <MessagesScreen />}
-            {screen === "settings" && <SettingsScreen onSwitchMode={openModeSwitch} onSignOut={() => supabase.auth.signOut()} onEditProfile={() => setShowEditProfile(true)} />}
+            {screen === "settings" && <SettingsScreen patient={patient} onSwitchMode={openModeSwitch} onSignOut={() => supabase.auth.signOut()} onEditProfile={() => setShowEditProfile(true)} />}
           </div>
 
           {/* Modals */}
@@ -381,6 +437,20 @@ export default function App() {
               onSave={handleUpdatePatient}
             />
           )}
+          {showSendReminder && (
+            <SendReminderSheet
+              patientName={patient.nickname}
+              medName={showSendReminder.medName}
+              onClose={() => setShowSendReminder(null)}
+              onSend={handleReminderSent}
+            />
+          )}
+          <ToastStack
+            toasts={toasts}
+            onDismiss={id => setToasts(prev => prev.filter(t => t.id !== id))}
+            onClick={id => { setToasts(prev => prev.filter(t => t.id !== id)); setScreen("notifications"); }}
+          />
+
           {showCaregiverTour && <GuidedTour steps={caregiverTourSteps} onFinish={() => setShowCaregiverTour(false)} />}
           {showCaregiverTourConfirm && (
             <ConfirmDialog
@@ -429,6 +499,7 @@ export default function App() {
               })}
             </div>
           </div>
+        </AccessibilityProvider>
         </div>
       </div>
     </LanguageProvider>

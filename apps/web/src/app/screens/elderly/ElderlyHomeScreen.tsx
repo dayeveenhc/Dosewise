@@ -1,8 +1,9 @@
-import { useState, useEffect, useRef, useMemo } from "react";
+import { useState, useEffect, useLayoutEffect, useRef, useMemo } from "react";
 import { RefreshCw, CheckCircle2, ChevronLeft, ChevronRight, Clock, AlertTriangle, Check, LocateFixed, X, Plane } from "lucide-react";
 import { useAccessibility } from "../../accessibility.tsx";
 import type { Patient, Medication, MedStatus } from "../../types";
-import { MED_PHOTOS, MED_SIMPLE, MED_SHAPES, MEAL_TIMES } from "../../data/medications";
+import { MED_SIMPLE, MED_SHAPES, MEAL_TIMES } from "../../data/medications";
+import { MedAvatar } from "../../components/shared";
 
 // --- timeline window: morning (6 AM) to night (11 PM) ----------------------
 const START_HOUR = 6;
@@ -90,6 +91,13 @@ export function ElderlyHomeScreen({ patient, onLogDose, onOpenTravel }: {
   const [showJump, setShowJump] = useState(false);
   const [expandedSlots, setExpandedSlots] = useState<Record<number, boolean>>({});
   const scrollRef = useRef<HTMLDivElement>(null);
+  // Real rendered height per slot, keyed by its resolved minute — a card's true
+  // height varies a lot by variant (taken vs. next/missed vs. multi-med), so a
+  // single flat estimate under-counts tall cards and lets the next slot start
+  // too early, overlapping it. Measured after paint, replacing the estimate
+  // used for the very first render before any measurement exists yet.
+  const slotRefs = useRef<Map<number, HTMLDivElement>>(new Map());
+  const [measuredHeights, setMeasuredHeights] = useState<Record<number, number>>({});
 
   useEffect(() => {
     const syncNow = () => setNow(getLiveNow());
@@ -145,10 +153,13 @@ export function ElderlyHomeScreen({ patient, onLogDose, onOpenTravel }: {
   }, [dayMeds]);
 
   const getSlotHeightPx = (slot: { minutes: number; clock: string; vague: boolean; note?: string; meds: (Medication & { status: MedStatus })[] }, expanded: boolean) => {
+    const measured = measuredHeights[slot.minutes];
+    if (measured) return measured;
+    // Rough estimate used only until the real height is measured post-paint.
     if (slot.meds.length > 1) {
       return expanded ? Math.min(340, 54 + slot.meds.length * 86) : 54;
     }
-    return 126;
+    return 108;
   };
 
   const slotLayout = useMemo(() => {
@@ -163,7 +174,35 @@ export function ElderlyHomeScreen({ patient, onLogDose, onOpenTravel }: {
       cursorTop = top + height + 12;
       return acc;
     }, []);
-  }, [slots, expandedSlots]);
+    // measuredHeights is read inside getSlotHeightPx above — it must be a
+    // dependency here too, or this memo keeps returning stale, estimate-based
+    // positions forever once the real heights come in from the effect below.
+  }, [slots, expandedSlots, measuredHeights]);
+
+  // Measure each slot's true rendered height after paint and correct the
+  // estimate used above — the slot wrapper itself has no natural height (its
+  // children are all absolutely positioned), so nothing constrains it to the
+  // estimate; an undercount lets the next slot's cards visually overlap this one.
+  useLayoutEffect(() => {
+    const next: Record<number, number> = {};
+    let changed = false;
+    slotRefs.current.forEach((el, minutes) => {
+      const h = el.offsetHeight;
+      if (h > 0) {
+        next[minutes] = h;
+        if (measuredHeights[minutes] !== h) changed = true;
+      }
+    });
+    if (changed) setMeasuredHeights(prev => ({ ...prev, ...next }));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [slots, expandedSlots, colourBlind]);
+
+  // A different day's medications can land on the same time-of-day key with a
+  // different card mix — drop stale heights so a leftover value from another
+  // day never gets reused for even one frame before re-measuring.
+  useEffect(() => {
+    setMeasuredHeights({});
+  }, [selectedDay]);
 
   // --- scroll: snap to now on load / day change ----------------------------
   const jumpToNow = (behavior: ScrollBehavior = "smooth") => {
@@ -220,7 +259,6 @@ export function ElderlyHomeScreen({ patient, onLogDose, onOpenTravel }: {
     const isNext = m.id === nextMedId && confirmedId === null;
     const isTaken = m.status === "taken";
     const isMissed = m.status === "missed";
-    const photo = MED_PHOTOS[m.name] ?? "https://images.unsplash.com/photo-1584308666744-24d5c474f2ae?w=120&h=120&fit=crop&auto=format";
     const direction = MED_SIMPLE[m.name] ?? "Take as directed by your doctor.";
     const shape = MED_SHAPES[m.name];
     const clock = resolveDose(m).clock;
@@ -229,9 +267,7 @@ export function ElderlyHomeScreen({ patient, onLogDose, onOpenTravel }: {
     if (isTaken) {
       return (
         <div key={m.id} className="rounded-xl border border-border bg-card flex items-center gap-3 px-3 py-2.5 opacity-60">
-          <div className="w-9 h-9 rounded-lg overflow-hidden shrink-0 bg-muted">
-            <img src={photo} alt={m.name} className="w-full h-full object-cover" />
-          </div>
+          <MedAvatar name={m.name} size={36} className="rounded-lg shrink-0" />
           <div className="flex-1 min-w-0">
             <p className="text-sm font-semibold text-muted-foreground line-through leading-snug">{m.name}</p>
             <p className="text-xs text-muted-foreground/70">{m.takenAt ? `Taken at ${m.takenAt}` : "Taken"}</p>
@@ -251,26 +287,24 @@ export function ElderlyHomeScreen({ patient, onLogDose, onOpenTravel }: {
 
     return (
       <div key={m.id} className={`rounded-2xl overflow-hidden ${cardCls}`}>
-        <div className="p-4">
-          <div className="flex items-start gap-3">
-            <div className="w-[62px] h-[62px] rounded-xl overflow-hidden shrink-0 bg-muted">
-              <img src={photo} alt={m.name} className="w-full h-full object-cover" />
-            </div>
+        <div className="p-3">
+          <div className="flex items-start gap-2.5">
+            <MedAvatar name={m.name} size={52} className="rounded-xl shrink-0" />
             <div className="flex-1 min-w-0">
               <div className="flex items-start justify-between gap-2">
                 <div className="flex items-center gap-1.5 flex-wrap">
-                  <p className="font-bold text-[17px] text-foreground leading-snug">{m.name}</p>
+                  <p className="font-bold text-[16px] text-foreground leading-snug">{m.name}</p>
                   {isMissed && (
                     <span className="flex items-center gap-1 bg-orange-100 text-orange-700 text-[10px] font-bold px-2 py-0.5 rounded-full">
                       <AlertTriangle size={9} />Missed
                     </span>
                   )}
                 </div>
-                <span className={`text-base font-bold px-2.5 py-0.5 rounded-xl shrink-0 whitespace-nowrap ${timeCls}`}>{clock}</span>
+                <span className={`text-sm font-bold px-2 py-0.5 rounded-xl shrink-0 whitespace-nowrap ${timeCls}`}>{clock}</span>
               </div>
-              <p className="text-sm text-muted-foreground mt-1.5">{direction}</p>
-              {vague && <p className="text-xs text-primary/80 mt-1">🕒 {note} · around {minutesToClock(resolveDose(m).minutes)}</p>}
-              {colourBlind && shape && <p className="text-xs text-muted-foreground mt-1">{shape.shape} · {shape.marking}</p>}
+              <p className="text-sm text-muted-foreground mt-1">{direction}</p>
+              {vague && <p className="text-xs text-primary/80 mt-0.5">🕒 {note} · around {minutesToClock(resolveDose(m).minutes)}</p>}
+              {colourBlind && shape && <p className="text-xs text-muted-foreground mt-0.5">{shape.shape} · {shape.marking}</p>}
             </div>
           </div>
         </div>
@@ -278,17 +312,17 @@ export function ElderlyHomeScreen({ patient, onLogDose, onOpenTravel }: {
         {isSelectedToday && (isNext || isMissed) ? (
           <button
             onClick={() => openTakeDialog(m)}
-            className={`w-full flex items-center justify-center gap-2.5 py-3.5 border-t font-bold text-[15px] active:opacity-80 transition-opacity ${
+            className={`w-full flex items-center justify-center gap-2 py-2.5 border-t font-bold text-[15px] active:opacity-80 transition-opacity ${
               isNext ? "border-primary/20 bg-primary/10 text-primary" : "border-orange-200 bg-orange-100/60 text-orange-700"
             }`}
           >
-            <div className={`w-6 h-6 rounded-full border-2 flex items-center justify-center ${isNext ? "border-primary" : "border-orange-500"}`}>
-              <Check size={12} strokeWidth={3} className={isNext ? "text-primary" : "text-orange-600"} />
+            <div className={`w-5 h-5 rounded-full border-2 flex items-center justify-center ${isNext ? "border-primary" : "border-orange-500"}`}>
+              <Check size={11} strokeWidth={3} className={isNext ? "text-primary" : "text-orange-600"} />
             </div>
             I Took It ✓
           </button>
         ) : (
-          <div className="w-full flex items-center justify-center gap-2 py-2.5 border-t border-border/40">
+          <div className="w-full flex items-center justify-center gap-2 py-2 border-t border-border/40">
             <Clock size={13} className="text-muted-foreground" />
             <p className="text-xs text-muted-foreground font-medium">{isFuture(selectedDay) ? "Scheduled" : "Coming up"}</p>
           </div>
@@ -392,7 +426,10 @@ export function ElderlyHomeScreen({ patient, onLogDose, onOpenTravel }: {
                     {formatSlotTime(slot.minutes)}
                   </p>
                 </div>
-                <div className="absolute left-14 right-3">
+                <div
+                  className="absolute left-14 right-3"
+                  ref={el => { if (el) slotRefs.current.set(slot.minutes, el); else slotRefs.current.delete(slot.minutes); }}
+                >
                 {isMulti && (
                   <button
                     type="button"
@@ -459,9 +496,7 @@ export function ElderlyHomeScreen({ patient, onLogDose, onOpenTravel }: {
             </div>
 
             <div className="flex items-center gap-3 mb-5">
-              <div className="w-12 h-12 rounded-xl overflow-hidden bg-muted shrink-0">
-                <img src={MED_PHOTOS[pendingDose.name] ?? ""} alt={pendingDose.name} className="w-full h-full object-cover" />
-              </div>
+              <MedAvatar name={pendingDose.name} size={48} className="rounded-xl shrink-0" />
               <div>
                 <p className="font-bold text-[17px] text-foreground">{pendingDose.name}</p>
                 <p className="text-sm text-muted-foreground">Scheduled for {resolveDose(pendingDose).clock}</p>

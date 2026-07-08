@@ -106,6 +106,7 @@ export function ElderlyAIScreen({ patient, elderId, onLogDose, onNavigate, onMed
   const reportRef = useRef<HTMLInputElement>(null);
   const rxPhotoRef = useRef<HTMLInputElement>(null);
   const recognitionRef = useRef<any>(null);
+  const inputRef = useRef<HTMLTextAreaElement>(null);
 
   const flagged  = doctorQuestions.filter(q => !q.answered && q.addedAt.includes("Mei"));
   const manual   = doctorQuestions.filter(q => !q.answered && !q.addedAt.includes("Mei"));
@@ -129,6 +130,17 @@ export function ElderlyAIScreen({ patient, elderId, onLogDose, onNavigate, onMed
     scrollToBottom();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
+
+  // Grow the input with its content instead of staying pinned to one row —
+  // without this, once text wraps to a second line the textarea's fixed
+  // single-row height just auto-scrolls to keep the caret in view, hiding the
+  // first line rather than actually showing both.
+  useEffect(() => {
+    const el = inputRef.current;
+    if (!el) return;
+    el.style.height = "auto";
+    el.style.height = `${Math.min(el.scrollHeight, 96)}px`; // matches max-h-24
+  }, [input]);
 
   // Force-expire the session after SESSION_TTL_MS even if the person never
   // leaves this screen, not just on the next remount.
@@ -231,7 +243,7 @@ export function ElderlyAIScreen({ patient, elderId, onLogDose, onNavigate, onMed
   // Quick-help feature actions ----------------------------------------------
   const handleSetup = () => {
     setQuickOpen(false);
-    pushAgent(`Let's get you set up, ${nick}! Here's what I can do:\n\n📷 Add a medication — tap “Add prescription” and snap a photo of the box.\n📄 Update your health profile — upload a clinic report and I'll read it.\n💊 Ask about a medication — tap “Ask a medication” and pick one.\n🌐 Change language or turn my voice on/off.\n\nWhat would you like to do first?`);
+    pushAgent(`Let's get you set up, ${nick}! Here's what I can do:\n\n📷 Add a medication — tap “Add prescription” and snap a photo of the box.\n📄 Update your health profile — upload a clinic report and I'll read it.\n💊 Ask about a medication — tap “Ask about a medication” and pick one.\n🌐 Change language or turn my voice on/off.\n\nWhat would you like to do first?`);
   };
 
   // "Update profile": the clinic report goes to the real agent — a PDF's text is
@@ -368,7 +380,7 @@ export function ElderlyAIScreen({ patient, elderId, onLogDose, onNavigate, onMed
                 <div className="grid grid-cols-2 gap-1.5">
                   <FeatureBtn icon={Camera}   label="Add prescription" onClick={() => rxPhotoRef.current?.click()} />
                   <FeatureBtn icon={FileText} label="Update profile"   onClick={() => reportRef.current?.click()} />
-                  <FeatureBtn icon={Pill}     label="Ask a medication" onClick={() => setShowMedPicker(v => !v)} />
+                  <FeatureBtn icon={Pill}     label="Ask about a medication" onClick={() => setShowMedPicker(v => !v)} />
                   <FeatureBtn icon={Globe}    label="Language & voice" onClick={() => setShowLangSheet(true)} />
                   <FeatureBtn icon={Plane}    label="Travel Mode"      onClick={onOpenTravel} />
                 </div>
@@ -433,7 +445,10 @@ export function ElderlyAIScreen({ patient, elderId, onLogDose, onNavigate, onMed
           </div>
 
           <div className="px-4 pb-2 shrink-0">
-            <div className="flex gap-2 overflow-x-auto scrollbar-none pb-1">
+            <div
+              className="flex gap-2 overflow-x-auto scrollbar-none pb-1"
+              onWheel={e => { if (Math.abs(e.deltaY) > Math.abs(e.deltaX)) e.currentTarget.scrollLeft += e.deltaY; }}
+            >
               {["I took my medication", "What do I take?", "Check refills", "Help"].map(s => (
                 <button key={s} onClick={() => setInput(s)} className="shrink-0 bg-muted text-muted-foreground rounded-full px-3 py-1.5 text-xs font-semibold whitespace-nowrap active:bg-primary/10 active:text-primary transition-colors">
                   {s}
@@ -454,8 +469,9 @@ export function ElderlyAIScreen({ patient, elderId, onLogDose, onNavigate, onMed
               </button>
               <div className="flex-1 bg-input-background rounded-2xl px-3.5 py-2">
                 <textarea
+                  ref={inputRef}
                   value={input}
-                  onChange={e => setInput(e.target.value)}
+                  onChange={e => { const v = e.target.value; setInput(v); if (v.trim() && quickOpen) setQuickOpen(false); }}
                   onKeyDown={e => { if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); handleSend(); } }}
                   placeholder="Type or tap the mic to speak..."
                   className="w-full bg-transparent text-foreground text-[15px] resize-none outline-none max-h-24 leading-relaxed placeholder:text-muted-foreground"

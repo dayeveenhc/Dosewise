@@ -16,13 +16,14 @@ import { logDoseTaken, addMedication, fetchElderMedications, to24h } from "../..
 import { useLanguage } from "../../lib/languageContext";
 import { t } from "../../lib/language";
 
-export function ElderlyApp({ patient, elderId, onUpdatePatient, onBack, onSignOut, startTour }: {
+export function ElderlyApp({ patient, elderId, onUpdatePatient, onBack, onSignOut, startTour, careMessages }: {
   patient: Patient;
   elderId?: string;
   onUpdatePatient: (p: Patient) => void;
   onBack: () => void;
   onSignOut: () => void;
   startTour?: boolean;
+  careMessages: Message[];
 }) {
   const [tab, setTab] = useState<ElderlyTab>("home");
   const [currentTime, setCurrentTime] = useState(new Date());
@@ -148,11 +149,6 @@ export function ElderlyApp({ patient, elderId, onUpdatePatient, onBack, onSignOu
     setDoctorQuestions(prev => [{ id: Date.now(), question: q, addedAt: `Added by Mei · ${new Date().toLocaleTimeString("en-SG", { hour: "2-digit", minute: "2-digit" })}`, answered: false }, ...prev]);
   };
 
-  const CARE_MSGS: Message[] = [
-    { id: 1, author: "Tan Wei Ming", role: "Son",      body: "Hi Ah Ma, remember your Celecoxib after lunch today. Dr. Priya called — blood test is next Tuesday at 10am.", time: "10:30 AM",  isMe: false },
-    { id: 2, author: "Tan Shu Fen",  role: "Daughter", body: "Ma, I refilled your Atorvastatin — it's in the cabinet above the stove 💙",                                   time: "Yesterday", isMe: false },
-  ];
-
   const unasked = doctorQuestions.filter(q => !q.answered).length;
 
   const NAV: { id: ElderlyTab; icon: any; label: string; fab?: boolean }[] = [
@@ -214,18 +210,19 @@ export function ElderlyApp({ patient, elderId, onUpdatePatient, onBack, onSignOu
             autoMessage={pendingAIMessage}
           />
         )}
-        {tab === "notifications" && <ElderlyNotificationsScreen careMessages={CARE_MSGS} />}
+        {tab === "notifications" && <ElderlyNotificationsScreen careMessages={careMessages} />}
         {tab === "settings"      && <ElderlySettingsScreen     patient={patient} elderId={elderId} onUpdatePatient={onUpdatePatient} onBack={onBack} onSignOut={onSignOut} />}
       </div>
 
-      {/* Bottom nav */}
-      <div className="shrink-0 bg-card/95 backdrop-blur-md border-t border-border px-2 pb-6 pt-2">
+      {/* Bottom nav — z-40 keeps it (and the Ask Mei FAB peeking above it) painting
+          over any scrolled content behind it, regardless of that content's own layout. */}
+      <div className="relative z-40 shrink-0 bg-card/95 backdrop-blur-md border-t border-border px-2 pb-6 pt-2">
         <div className="flex items-end">
           {NAV.map(item => {
             if (item.fab) {
               return (
-                <div key={item.id} className="flex-1 flex flex-col items-center">
-                  <button onClick={() => setTab(item.id)} data-tour={`nav-${item.id}`} className={`relative w-14 h-14 rounded-full flex items-center justify-center -mt-7 shadow-lg active:scale-95 transition-transform bg-primary ${tab === item.id ? "ring-4 ring-primary/25" : ""}`}>
+                <div key={item.id} className="relative z-40 flex-1 flex flex-col items-center">
+                  <button onClick={() => setTab(item.id)} data-tour={`nav-${item.id}`} className={`relative z-40 w-14 h-14 rounded-full flex items-center justify-center -mt-7 shadow-lg active:scale-95 transition-transform bg-primary ${tab === item.id ? "ring-4 ring-primary/25" : ""}`}>
                     <Brain size={24} className="text-primary-foreground" />
                     {unasked > 0 && (
                       <div className="absolute -top-1 -right-0.5 w-4 h-4 bg-amber-500 rounded-full text-[9px] font-bold text-white flex items-center justify-center">{unasked}</div>

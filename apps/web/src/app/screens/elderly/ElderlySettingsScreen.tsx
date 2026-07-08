@@ -3,9 +3,10 @@ import { Shield, ChevronDown, Eye, Phone, RefreshCw, LogOut, Check, Loader2, Cof
 import { useAccessibility } from "../../accessibility.tsx";
 import type { FontSize } from "../../accessibility.tsx";
 import type { Patient } from "../../types";
-import { MED_SHAPES, MED_PHOTOS, COMMON_CONDITIONS, COMMON_ALLERGIES, COMMON_DRUG_ALLERGIES } from "../../data/medications";
+import { MED_SHAPES, COMMON_CONDITIONS, COMMON_ALLERGIES, COMMON_DRUG_ALLERGIES } from "../../data/medications";
 import { fetchProfile, saveProfile } from "../../lib/profile";
-import { TagList, fieldCls } from "../setup/GuidedSetupWizard";
+import { TagList, fieldCls, GenderPicker } from "../setup/GuidedSetupWizard";
+import { MedAvatar } from "../../components/shared";
 import { useLanguage } from "../../lib/languageContext";
 import { LANGUAGE_OPTIONS, t } from "../../lib/language";
 
@@ -17,7 +18,7 @@ export function Toggle({ on, onToggle }: { on: boolean; onToggle: () => void }) 
   );
 }
 
-const FONT_SIZES: FontSize[] = ["normal", "large", "xlarge"];
+const FONT_SIZES: FontSize[] = ["small", "normal", "large", "xlarge", "xxlarge"];
 
 export function ElderlySettingsScreen({ patient, elderId, onUpdatePatient, onBack, onSignOut }: {
   patient: Patient; elderId?: string; onUpdatePatient: (p: Patient) => void; onBack: () => void; onSignOut: () => void;
@@ -130,17 +131,7 @@ export function ElderlySettingsScreen({ patient, elderId, onUpdatePatient, onBac
             </div>
             <div className="flex-1">
               <label className="block text-xs font-semibold text-foreground mb-1.5">{t(language, "settings.gender")}</label>
-              <div className="flex gap-2">
-                {(["Female", "Male"] as const).map(g => (
-                  <button
-                    key={g}
-                    onClick={() => setGenderDraft(g)}
-                    className={`flex-1 py-3.5 rounded-xl border text-sm font-semibold transition-colors ${genderDraft === g ? "bg-primary text-primary-foreground border-primary" : "bg-input-background text-foreground border-border"}`}
-                  >
-                    {g}
-                  </button>
-                ))}
-              </div>
+              <GenderPicker value={genderDraft} onChange={setGenderDraft} size="sm" />
             </div>
           </div>
 
@@ -254,9 +245,7 @@ export function ElderlySettingsScreen({ patient, elderId, onUpdatePatient, onBac
                       if (!shape) return null;
                       return (
                         <div key={m.id} className="flex items-start gap-3 py-1">
-                          <div className="w-9 h-9 rounded-lg overflow-hidden shrink-0 bg-muted">
-                            <img src={MED_PHOTOS[m.name] ?? ""} alt={m.name} className="w-full h-full object-cover grayscale" />
-                          </div>
+                          <MedAvatar name={m.name} size={36} className="rounded-lg shrink-0 grayscale" />
                           <div className="flex-1 min-w-0">
                             <p className="text-sm font-semibold text-foreground">{m.name}</p>
                             <p className="text-xs text-muted-foreground">{shape.shape}</p>

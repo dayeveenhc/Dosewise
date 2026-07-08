@@ -2,7 +2,8 @@ import { useState } from "react";
 import { Plus, BookOpen, ChevronDown, Play, Eye, History } from "lucide-react";
 import { useAccessibility } from "../../accessibility.tsx";
 import type { Patient } from "../../types";
-import { MED_PLAIN, MED_PHOTOS, MED_SIMPLE, MED_SHAPES, EYEDROP_STEPS } from "../../data/medications";
+import { MED_PLAIN, MED_SIMPLE, MED_SHAPES, EYEDROP_STEPS } from "../../data/medications";
+import { MedAvatar } from "../../components/shared";
 
 export function ElderlyPrescriptionScreen({ patient, onOpenAI, onAddRx }: { patient: Patient; onOpenAI: (msg?: string) => void; onAddRx: () => void }) {
   const { colourBlind } = useAccessibility();
@@ -35,7 +36,6 @@ export function ElderlyPrescriptionScreen({ patient, onOpenAI, onAddRx }: { pati
         )}
         {patient.medications.map(m => {
           const plain       = MED_PLAIN[m.name];
-          const photo       = MED_PHOTOS[m.name] ?? "https://images.unsplash.com/photo-1584308666744-24d5c474f2ae?w=120&h=120&fit=crop&auto=format";
           const direction   = MED_SIMPLE[m.name] ?? "Take as directed by your doctor.";
           const shape       = MED_SHAPES[m.name];
           const lowRefill   = m.refillDaysLeft !== undefined && m.refillDaysLeft <= 7;
@@ -48,9 +48,7 @@ export function ElderlyPrescriptionScreen({ patient, onOpenAI, onAddRx }: { pati
             <div key={m.id} className="bg-card rounded-2xl border border-border overflow-hidden shadow-sm">
               <div className="p-4">
                 <div className="flex items-start gap-3">
-                  <div className="w-[62px] h-[62px] rounded-xl overflow-hidden shrink-0 bg-muted">
-                    <img src={photo} alt={m.name} className="w-full h-full object-cover" />
-                  </div>
+                  <MedAvatar name={m.name} size={62} className="rounded-xl shrink-0" />
                   <div className="flex-1 min-w-0">
                     <div className="flex items-start justify-between gap-2">
                       <p className="font-bold text-[17px] text-foreground leading-snug">{m.name}</p>

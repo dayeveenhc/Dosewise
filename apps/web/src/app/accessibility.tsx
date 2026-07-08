@@ -1,6 +1,6 @@
 import { createContext, useContext, useEffect, useState, type ReactNode } from "react";
 
-export type FontSize = "normal" | "large" | "xlarge";
+export type FontSize = "small" | "normal" | "large" | "xlarge" | "xxlarge";
 
 interface AccessibilitySettings {
   fontSize: FontSize;
@@ -19,9 +19,11 @@ const STORAGE_KEY = "dosewise:accessibility";
 // html { font-size: var(--font-size) } in theme.css drives every rem-based
 // Tailwind text utility, so changing this one variable rescales the app.
 const FONT_SIZE_PX: Record<FontSize, string> = {
+  small: "13px",
   normal: "15px",
   large: "17px",
   xlarge: "19px",
+  xxlarge: "21px",
 };
 
 const DEFAULTS: AccessibilitySettings = { fontSize: "large", highContrast: false, colourBlind: false };

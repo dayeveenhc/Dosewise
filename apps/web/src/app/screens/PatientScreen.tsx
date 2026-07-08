@@ -1,7 +1,7 @@
 import { Activity, AlertTriangle, Info, Star, User, Phone, Plus, Trash2, History } from "lucide-react";
 import type { Patient } from "../types";
-import { Card, SectionHeader } from "../components/shared";
-import { MED_PHOTOS, MED_FREQUENCY } from "../data/medications";
+import { Card, SectionHeader, MedAvatar } from "../components/shared";
+import { MED_FREQUENCY } from "../data/medications";
 import type { Medication } from "../types";
 import { useLanguage } from "../lib/languageContext";
 import { t } from "../lib/language";
@@ -105,13 +105,7 @@ export function PatientScreen({ patient, onEditProfile, onAddPrescription, onDel
         <Card className="divide-y divide-border" data-tour="cg-medlist">
           {groupedMedications.map((m) => (
             <div key={m.name} className="px-4 py-3 flex items-center gap-3">
-              <div className="w-8 h-8 rounded-full overflow-hidden shrink-0 bg-muted">
-                <img
-                  src={MED_PHOTOS[m.name] ?? "https://images.unsplash.com/photo-1584308666744-24d5c474f2ae?w=120&h=120&fit=crop&auto=format"}
-                  alt={m.name}
-                  className="w-full h-full object-cover"
-                />
-              </div>
+              <MedAvatar name={m.name} size={32} className="rounded-full shrink-0" />
               <div className="flex-1 min-w-0">
                 <p className="text-sm font-semibold text-foreground">{m.name} <span className="text-xs font-normal text-muted-foreground">{m.dose}</span></p>
                 <p className="text-[11px] text-muted-foreground">{m.purpose} · {m.times.join(" & ")}</p>

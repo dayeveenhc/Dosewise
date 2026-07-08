@@ -1,22 +1,23 @@
-import { useState } from "react";
-import { AlertTriangle, RefreshCw, Brain, Bell, Phone, CheckCircle2 } from "lucide-react";
+import { AlertTriangle, RefreshCw, Brain, Bell, Phone, CheckCircle2, Send } from "lucide-react";
 import type { Notification } from "../types";
-import { NOTIFICATIONS } from "../data/patients";
 import { useLanguage } from "../lib/languageContext";
 import { t } from "../lib/language";
 
-export function NotificationsScreen() {
+export function NotificationsScreen({ notifications, onMarkAllRead, onDismiss }: {
+  notifications: Notification[]; onMarkAllRead: () => void; onDismiss: (id: number) => void;
+}) {
   const { language } = useLanguage();
-  const [notifs, setNotifs] = useState(NOTIFICATIONS);
+  const notifs = notifications;
   const unread = notifs.filter(n => !n.read).length;
 
-  const markAllRead = () => setNotifs(prev => prev.map(n => ({ ...n, read: true })));
-  const dismiss = (id: number) => setNotifs(prev => prev.filter(n => n.id !== id));
+  const markAllRead = onMarkAllRead;
+  const dismiss = onDismiss;
 
   const iconFor = (type: Notification["type"]) => {
     if (type === "missed") return <AlertTriangle size={16} className="text-orange-600" />;
     if (type === "refill") return <RefreshCw size={16} className="text-amber-600" />;
     if (type === "info") return <Brain size={16} className="text-primary" />;
+    if (type === "reminder") return <Send size={16} className="text-primary" />;
     return <Bell size={16} className="text-muted-foreground" />;
   };
 
@@ -24,6 +25,7 @@ export function NotificationsScreen() {
     if (type === "missed") return "bg-orange-50 border-orange-200";
     if (type === "refill") return "bg-amber-50 border-amber-200";
     if (type === "info") return "bg-secondary border-primary/20";
+    if (type === "reminder") return "bg-secondary border-primary/20";
     return "bg-card border-border";
   };
 

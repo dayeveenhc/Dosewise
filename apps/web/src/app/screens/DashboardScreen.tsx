@@ -31,7 +31,7 @@ function AdherenceRing({ value }: { value: number }) {
   );
 }
 
-export function DashboardScreen({ patient, onNavigate }: { patient: Patient; onNavigate: (s: Screen) => void }) {
+export function DashboardScreen({ patient, onNavigate, onSendReminder }: { patient: Patient; onNavigate: (s: Screen) => void; onSendReminder: (medName?: string) => void }) {
   const { language } = useLanguage();
   const taken = patient.medications.filter(m => m.status === "taken").length;
   const missed = patient.medications.filter(m => m.status === "missed").length;
@@ -83,7 +83,7 @@ export function DashboardScreen({ patient, onNavigate }: { patient: Patient; onN
                 <p key={m.id} className="text-xs text-orange-700 mt-0.5">{m.name} {m.dose} — was due at {m.time}</p>
               ))}
             </div>
-            <button onClick={() => onNavigate("messages")} className="shrink-0 bg-orange-600 text-white text-xs font-semibold rounded-xl px-3 py-1.5 flex items-center gap-1">
+            <button onClick={() => onSendReminder(patient.medications.find(m => m.status === "missed")?.name)} className="shrink-0 bg-orange-600 text-white text-xs font-semibold rounded-xl px-3 py-1.5 flex items-center gap-1">
               <Send size={11} /> Remind
             </button>
           </div>
@@ -123,7 +123,7 @@ export function DashboardScreen({ patient, onNavigate }: { patient: Patient; onN
             icon={<Send size={20} className="text-primary" />}
             label={t(language, "common.sendReminder")}
             colour="bg-secondary"
-            onClick={() => onNavigate("messages")}
+            onClick={() => onSendReminder()}
           />
           <QuickAction
             icon={<MessageSquare size={20} className="text-accent" />}
@@ -135,6 +135,7 @@ export function DashboardScreen({ patient, onNavigate }: { patient: Patient; onN
             icon={<AlertTriangle size={20} className="text-red-600" />}
             label={t(language, "common.emergency")}
             colour="bg-red-50"
+            onClick={() => onNavigate("settings")}
           />
         </div>
       </Card>

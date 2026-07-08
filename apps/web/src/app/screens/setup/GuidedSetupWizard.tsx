@@ -1,11 +1,33 @@
-import { useState } from "react";
-import type { ReactNode } from "react";
-import { ArrowLeft, Loader2, Plus, X, Check, Coffee, Utensils, Moon, PartyPopper, Users, Camera, Sparkles } from "lucide-react";
+import { useRef, useState } from "react";
+import type { ReactNode, ChangeEvent } from "react";
+import { ArrowLeft, Loader2, Plus, X, Check, Coffee, Utensils, UtensilsCrossed, Moon, PartyPopper, Users, Camera, Sparkles, Venus, Mars } from "lucide-react";
 import { supabase } from "../../lib/supabase";
 import { saveProfile } from "../../lib/profile";
 import { addMedication, archiveMedication, to24h } from "../../lib/medications";
+import { agentTurn, fileToBase64 } from "../../lib/hermes";
 import { MEDICATION_CATALOG, PRESET_TIMES, COMMON_CONDITIONS, COMMON_ALLERGIES, COMMON_DRUG_ALLERGIES } from "../../data/medications";
 import type { Role } from "../../lib/profile";
+
+// A small shared gender picker — icon + label per option, used both here and
+// in ElderlySettingsScreen's "edit what you answered" section.
+export function GenderPicker({ value, onChange, size = "base" }: { value: string; onChange: (g: string) => void; size?: "base" | "sm" }) {
+  const options = [{ g: "Female", Icon: Venus }, { g: "Male", Icon: Mars }] as const;
+  return (
+    <div className="flex gap-2">
+      {options.map(({ g, Icon }) => (
+        <button
+          key={g}
+          type="button"
+          onClick={() => onChange(g)}
+          className={`flex-1 flex flex-col items-center gap-1 rounded-xl border transition-colors ${size === "sm" ? "py-2.5" : "py-3"} ${value === g ? "bg-primary text-primary-foreground border-primary" : "bg-input-background text-foreground border-border"}`}
+        >
+          <Icon size={size === "sm" ? 16 : 20} />
+          <span className={`font-semibold ${size === "sm" ? "text-sm" : "text-base"}`}>{g}</span>
+        </button>
+      ))}
+    </div>
+  );
+}
 
 const fieldBase = "w-full bg-input-background rounded-xl px-4 py-3.5 text-base text-foreground placeholder:text-muted-foreground outline-none transition-colors border";
 export const fieldCls = `${fieldBase} border-border focus:border-primary`;
@@ -139,23 +161,47 @@ function MedList({ meds, onAdd, onRemove }: { meds: DraftMed[]; onAdd: (m: Draft
   const [time, setTime] = useState(PRESET_TIMES[0]);
   const [showSuggestions, setShowSuggestions] = useState(false);
   const [scanning, setScanning] = useState(false);
+  const [scannedPhoto, setScannedPhoto] = useState<string | null>(null);
+  const [proposal, setProposal] = useState<string | null>(null);
+  const fileRef = useRef<HTMLInputElement>(null);
 
   const submit = () => {
     if (!name.trim()) return;
     onAdd({ name: name.trim(), dose: dose.trim() || "as directed", time });
-    setName(""); setDose(""); setOpen(false);
+    setName(""); setDose(""); setOpen(false); setProposal(null); setScannedPhoto(null);
   };
 
-  // Simulated label scan — no real OCR yet, just pre-fills the form with a
-  // plausible result (matching AddPrescriptionSheet's demo scan) for review.
-  const runScan = () => {
+  const cancel = () => {
+    setOpen(false);
+    setProposal(null);
+    setScannedPhoto(null);
+  };
+
+  // Real upload: the photo or PDF goes to the same Hermes agent used
+  // elsewhere in the app, which reads the label and replies in plain
+  // language. There's no structured-fields contract for this reply, so we
+  // just do a best-effort name match against the catalog to prefill the
+  // form — the person still reviews and confirms every field before it's added.
+  const onFile = async (e: ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    e.target.value = "";
+    if (!file) return;
+    const isPdf = file.type === "application/pdf";
+    setScannedPhoto(isPdf ? null : URL.createObjectURL(file));
     setScanning(true);
-    setTimeout(() => {
-      const demo = MEDICATION_CATALOG[0];
-      setName(demo.name); setDose(demo.dose); setTime(PRESET_TIMES[0]);
-      setScanning(false);
-      setOpen(true);
-    }, 1200);
+    setProposal(null);
+    const b64 = await fileToBase64(file);
+    const { reply } = await agentTurn(
+      "Here is a photo of a prescription label. What medication is this, what's the usual dose, and what time is it usually taken?",
+      isPdf ? undefined : b64,
+      isPdf ? b64 : undefined
+    );
+    setProposal(reply);
+    setScanning(false);
+    const lower = reply.toLowerCase();
+    const match = MEDICATION_CATALOG.find(m => lower.includes(m.name.toLowerCase()));
+    if (match) { setName(match.name); setDose(match.dose); }
+    setOpen(true);
   };
 
   const q = name.trim().toLowerCase();
@@ -163,6 +209,7 @@ function MedList({ meds, onAdd, onRemove }: { meds: DraftMed[]; onAdd: (m: Draft
 
   return (
     <div>
+      <input ref={fileRef} type="file" accept="image/*,application/pdf" capture="environment" className="hidden" onChange={onFile} />
       {meds.length > 0 && (
         <div className="space-y-2 mb-3">
           {meds.map((m, i) => (
@@ -181,6 +228,21 @@ function MedList({ meds, onAdd, onRemove }: { meds: DraftMed[]; onAdd: (m: Draft
 
       {open ? (
         <div className="bg-card border border-border rounded-2xl p-4 space-y-3">
+          {(scanning || proposal) && (
+            <div className="rounded-xl border border-primary/20 bg-primary/5 p-3 flex gap-3">
+              {scannedPhoto && <img src={scannedPhoto} alt="Scanned label" className="w-12 h-12 rounded-lg object-cover shrink-0" />}
+              <div className="flex-1 min-w-0">
+                {scanning ? (
+                  <p className="text-xs text-primary font-semibold flex items-center gap-1.5"><Sparkles size={12} className="animate-pulse" />Reading…</p>
+                ) : (
+                  <>
+                    <p className="text-xs font-semibold text-primary mb-1">Mei's read of this label</p>
+                    <p className="text-xs text-muted-foreground leading-relaxed">{proposal}</p>
+                  </>
+                )}
+              </div>
+            </div>
+          )}
           <div className="relative">
             <label className="block text-xs font-semibold text-foreground mb-1.5">Medication name</label>
             <input
@@ -222,7 +284,7 @@ function MedList({ meds, onAdd, onRemove }: { meds: DraftMed[]; onAdd: (m: Draft
             </div>
           </div>
           <div className="flex gap-2 pt-1">
-            <button onClick={() => setOpen(false)} className="flex-1 h-10 rounded-xl border border-border text-muted-foreground text-sm font-semibold">Cancel</button>
+            <button onClick={cancel} className="flex-1 h-10 rounded-xl border border-border text-muted-foreground text-sm font-semibold">Cancel</button>
             <button onClick={submit} disabled={!name.trim()} className="flex-1 h-10 rounded-xl bg-primary text-primary-foreground text-sm font-bold disabled:opacity-40">Add</button>
           </div>
         </div>
@@ -231,9 +293,9 @@ function MedList({ meds, onAdd, onRemove }: { meds: DraftMed[]; onAdd: (m: Draft
           <button onClick={() => setOpen(true)} className="flex-1 h-12 rounded-2xl border-2 border-dashed border-border text-muted-foreground text-sm font-medium flex items-center justify-center gap-2 active:scale-[0.98] transition-transform">
             <Plus size={15} />Add a medication
           </button>
-          <button onClick={runScan} disabled={scanning} className="flex-1 h-12 rounded-2xl border-2 border-dashed border-primary/40 text-primary text-sm font-medium flex items-center justify-center gap-2 active:scale-[0.98] transition-transform disabled:opacity-60">
+          <button onClick={() => fileRef.current?.click()} disabled={scanning} className="flex-1 h-12 rounded-2xl border-2 border-dashed border-primary/40 text-primary text-sm font-medium flex items-center justify-center gap-2 active:scale-[0.98] transition-transform disabled:opacity-60">
             {scanning ? <Sparkles size={15} className="animate-pulse" /> : <Camera size={15} />}
-            {scanning ? "Reading…" : "Scan a label"}
+            {scanning ? "Reading…" : "Scan or upload"}
           </button>
         </div>
       )}
@@ -368,17 +430,7 @@ export function GuidedSetupWizard({ mode, hasSession, elderId: initialElderId, o
               </div>
               <div className="flex-1">
                 <label className="block text-xs font-semibold text-foreground mb-1.5">Gender</label>
-                <div className="flex gap-2">
-                  {(["Female", "Male"] as const).map(g => (
-                    <button
-                      key={g}
-                      onClick={() => setGender(g)}
-                      className={`flex-1 py-3.5 rounded-xl border text-base font-semibold transition-colors ${gender === g ? "bg-primary text-primary-foreground border-primary" : "bg-input-background text-foreground border-border"}`}
-                    >
-                      {g}
-                    </button>
-                  ))}
-                </div>
+                <GenderPicker value={gender} onChange={setGender} />
               </div>
             </div>
             <div className="flex gap-3">
@@ -456,7 +508,7 @@ export function GuidedSetupWizard({ mode, hasSession, elderId: initialElderId, o
               </div>
             </div>
             <div className="flex items-center gap-3">
-              <div className="w-9 h-9 rounded-xl bg-secondary flex items-center justify-center shrink-0"><Utensils size={16} className="text-primary" /></div>
+              <div className="w-9 h-9 rounded-xl bg-secondary flex items-center justify-center shrink-0"><UtensilsCrossed size={16} className="text-primary" /></div>
               <div className="flex-1">
                 <label className="block text-xs font-semibold text-foreground mb-1">Dinner</label>
                 <input type="time" value={dinner} onChange={e => setDinner(e.target.value)} className={fieldCls} />

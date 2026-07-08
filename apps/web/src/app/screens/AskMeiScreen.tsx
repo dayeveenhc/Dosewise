@@ -1,16 +1,24 @@
-import { useRef, useState } from "react";
-import { Send, TrendingUp, Plane, Check } from "lucide-react";
+import { useEffect, useRef, useState } from "react";
+import type { ChangeEvent } from "react";
+import { Send, TrendingUp, Plane, Check, Sparkles, ChevronDown, Camera, FileText, Pill, Globe, Mic, Volume2, X } from "lucide-react";
 import type { Patient, Screen } from "../types";
-import { agentTurn } from "../lib/hermes";
+import { agentTurn, fileToBase64 } from "../lib/hermes";
 import { firstRoutableAction } from "../lib/agentActions";
 import { WeeklySummarySheet } from "./WeeklySummarySheet";
 import { TravelModeSheet } from "./TravelModeSheet";
 import { useLanguage } from "../lib/languageContext";
-import { t } from "../lib/language";
+import { t, LANGUAGE_OPTIONS, speechLangFor } from "../lib/language";
 
 interface ChatMsg { id: number; role: "user" | "agent"; text: string; time: string; isConfirmation?: boolean }
 
 const nowLabel = () => new Date().toLocaleTimeString("en-SG", { hour: "2-digit", minute: "2-digit" });
+
+// Browser speech APIs (Web Speech). Both degrade gracefully when unsupported:
+// no SpeechRecognition -> the mic button hides; no speechSynthesis -> replies
+// are text-only. Voice itself is client-side; the agent turn stays text+image.
+const SpeechRecognitionImpl: any =
+  typeof window !== "undefined" && ((window as any).SpeechRecognition || (window as any).webkitSpeechRecognition);
+const hasTTS = typeof window !== "undefined" && "speechSynthesis" in window;
 
 // Mei's replies are meant to be plain text (soul.md), but LLMs sometimes slip
 // in markdown anyway — render **bold** as real bold instead of showing the
@@ -25,8 +33,18 @@ function renderWithBold(text: string) {
   );
 }
 
+// A single feature tile in the "Quick help" launcher.
+function FeatureBtn({ icon: Icon, label, onClick }: { icon: any; label: string; onClick: () => void }) {
+  return (
+    <button onClick={onClick} className="flex items-center gap-2 bg-card border border-border rounded-xl p-2.5 text-left active:bg-muted transition-colors">
+      <div className="w-7 h-7 rounded-lg bg-primary/10 flex items-center justify-center shrink-0"><Icon size={14} className="text-primary" /></div>
+      <span className="text-[12px] font-bold text-foreground leading-tight">{label}</span>
+    </button>
+  );
+}
+
 export function AskMeiScreen({ patient, elderId, onUpdatePatient, onNavigate, onMedsChanged }: { patient: Patient; elderId?: string; onUpdatePatient: (p: Patient) => void; onNavigate?: (screen: Screen) => void; onMedsChanged?: () => void }) {
-  const { language } = useLanguage();
+  const { language, setLanguage } = useLanguage();
   const [messages, setMessages] = useState<ChatMsg[]>(() => [
     {
       id: 1,
@@ -39,23 +57,79 @@ export function AskMeiScreen({ patient, elderId, onUpdatePatient, onNavigate, on
   const [sending, setSending] = useState(false);
   const [showSummary, setShowSummary] = useState(false);
   const [showTravel, setShowTravel] = useState(false);
+  const [quickOpen, setQuickOpen] = useState(true);
+  const [showMedPicker, setShowMedPicker] = useState(false);
+  const [showLangSheet, setShowLangSheet] = useState(false);
+  const [isListening, setIsListening] = useState(false);
+  const [isSpeaking, setIsSpeaking] = useState(false);
+  const [voiceOutput, setVoiceOutput] = useState(true);
   const scrollRef = useRef<HTMLDivElement>(null);
+  const inputRef = useRef<HTMLTextAreaElement>(null);
+  const reportRef = useRef<HTMLInputElement>(null);
+  const rxPhotoRef = useRef<HTMLInputElement>(null);
+  const recognitionRef = useRef<any>(null);
+
+  const uniqueMeds = [...new Set(patient.medications.map(m => m.name))];
 
   const scrollToBottom = () => setTimeout(() => {
     if (scrollRef.current) scrollRef.current.scrollTop = scrollRef.current.scrollHeight;
   }, 60);
 
-  const handleSend = async () => {
-    const text = input.trim();
-    if (!text || sending) return;
-    setInput("");
-    setMessages(prev => [...prev, { id: Date.now(), role: "user", text, time: nowLabel() }]);
+  // Grow the input with its content instead of staying pinned to one row —
+  // without this, once text wraps to a second line the textarea's fixed
+  // single-row height just auto-scrolls to keep the caret in view, hiding the
+  // first line rather than actually showing both.
+  useEffect(() => {
+    const el = inputRef.current;
+    if (!el) return;
+    el.style.height = "auto";
+    el.style.height = `${Math.min(el.scrollHeight, 96)}px`; // matches max-h-24
+  }, [input]);
+
+  // Real TTS via the browser's speechSynthesis, in the chosen language
+  // (Hokkien falls back to Mandarin — no browser voice exists for it).
+  const speak = (text: string) => {
+    if (!voiceOutput || !hasTTS || !text) return;
+    speechSynthesis.cancel();
+    const utter = new SpeechSynthesisUtterance(text);
+    utter.lang = speechLangFor(language);
+    utter.onstart = () => setIsSpeaking(true);
+    utter.onend = () => setIsSpeaking(false);
+    utter.onerror = () => setIsSpeaking(false);
+    speechSynthesis.speak(utter);
+  };
+
+  // Real dictation via the browser's SpeechRecognition (mic button is hidden
+  // when the browser doesn't support it).
+  const handleMic = () => {
+    if (!SpeechRecognitionImpl) return;
+    if (isListening) {
+      recognitionRef.current?.stop();
+      return;
+    }
+    const rec = new SpeechRecognitionImpl();
+    recognitionRef.current = rec;
+    rec.lang = speechLangFor(language);
+    rec.interimResults = false;
+    rec.onresult = (e: any) => setInput(e.results[0]?.[0]?.transcript ?? "");
+    rec.onend = () => setIsListening(false);
+    rec.onerror = () => setIsListening(false);
+    setIsListening(true);
+    rec.start();
+  };
+
+  const send = async (text: string, imageBase64?: string, pdfBase64?: string) => {
+    const trimmed = text.trim();
+    if (!trimmed || sending) return;
+    setMessages(prev => [...prev, { id: Date.now(), role: "user", text: trimmed, time: nowLabel() }]);
+    setQuickOpen(false);
     scrollToBottom();
     setSending(true);
-    const { reply, actions } = await agentTurn(text);
+    const { reply, actions } = await agentTurn(trimmed, imageBase64, pdfBase64);
     setMessages(prev => [...prev, { id: Date.now() + 1, role: "agent", text: reply, time: nowLabel() }]);
     setSending(false);
     scrollToBottom();
+    speak(reply);
     // Only when the agent actually committed a write this turn: refresh, confirm,
     // and guide the caregiver to the page that shows the change.
     const routed = firstRoutableAction(actions);
@@ -67,24 +141,83 @@ export function AskMeiScreen({ patient, elderId, onUpdatePatient, onNavigate, on
     }
   };
 
+  const handleSend = () => {
+    const text = input.trim();
+    if (!text) return;
+    setInput("");
+    send(text);
+  };
+
+  // "Add prescription" quick-help: snap/choose a photo, then let the agent read
+  // the label and propose it in the chat (confirm with a simple "yes").
+  const onRxPhotoFile = async (e: ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    e.target.value = "";
+    if (!file) return;
+    setQuickOpen(false);
+    send("📷 Here is a photo of the prescription.", await fileToBase64(file));
+  };
+
+  // "Update profile": the clinic report goes to the real agent — a PDF's text is
+  // extracted server-side; an image goes through the vision path. The agent
+  // proposes the profile update and saves only after a confirming "yes".
+  const onReportFile = async (e: ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    e.target.value = "";
+    if (!file) return;
+    setQuickOpen(false);
+    const b64 = await fileToBase64(file);
+    const msg = "📄 Here is a clinic report. Please update the medical profile from it.";
+    if (file.type === "application/pdf") send(msg, undefined, b64);
+    else send(msg, b64);
+  };
+
   return (
     <div className="flex flex-col flex-1 overflow-hidden relative">
-      <div className="px-4 py-2.5 border-b border-border shrink-0 flex gap-2" data-tour="cg-askmei">
-        <button
-          onClick={() => setShowSummary(true)}
-          className="flex-1 flex items-center justify-center gap-1.5 bg-secondary text-primary text-xs font-semibold rounded-full px-3 py-2 active:opacity-80 transition-opacity"
-        >
-          <TrendingUp size={13} /> {t(language, "common.weeklySummary")}
+      {/* Quick help feature launcher */}
+      <div className="px-4 pt-2.5 shrink-0" data-tour="cg-askmei">
+        <button onClick={() => setQuickOpen(o => !o)} className="w-full flex items-center gap-1.5 mb-2">
+          <Sparkles size={15} className="text-primary" />
+          <span className="text-sm font-bold text-foreground">Quick help</span>
+          <ChevronDown size={16} className={`ml-auto text-muted-foreground transition-transform ${quickOpen ? "rotate-180" : ""}`} />
         </button>
-        <button
-          onClick={() => setShowTravel(true)}
-          className="flex-1 flex items-center justify-center gap-1.5 bg-secondary text-primary text-xs font-semibold rounded-full px-3 py-2 active:opacity-80 transition-opacity"
-        >
-          <Plane size={13} /> {t(language, "common.travelMode")}
-        </button>
+        {quickOpen && (
+          <div className="space-y-2 pb-1">
+            <div className="grid grid-cols-2 gap-1.5">
+              <FeatureBtn icon={TrendingUp} label={t(language, "common.weeklySummary")} onClick={() => setShowSummary(true)} />
+              <FeatureBtn icon={Plane}      label={t(language, "common.travelMode")}   onClick={() => setShowTravel(true)} />
+              <FeatureBtn icon={Camera}     label="Add prescription"  onClick={() => rxPhotoRef.current?.click()} />
+              <FeatureBtn icon={FileText}   label="Update profile"    onClick={() => reportRef.current?.click()} />
+              <FeatureBtn icon={Pill}       label="Ask about a medication"  onClick={() => setShowMedPicker(v => !v)} />
+              <FeatureBtn icon={Globe}      label="Language & voice"  onClick={() => setShowLangSheet(true)} />
+            </div>
+            {showMedPicker && (
+              <div className="bg-card border border-border rounded-xl p-2.5">
+                <p className="text-[11px] text-muted-foreground font-semibold px-0.5 pb-1.5">Which medication would you like to know about?</p>
+                <div className="flex flex-wrap gap-1.5">
+                  {uniqueMeds.map(n => (
+                    <button key={n} onClick={() => { setShowMedPicker(false); send(`What is ${n} for?`); }} className="text-xs font-semibold bg-muted text-foreground rounded-full px-3 py-1.5 active:bg-primary/10 active:text-primary transition-colors">
+                      {n}
+                    </button>
+                  ))}
+                </div>
+              </div>
+            )}
+          </div>
+        )}
       </div>
 
-      <div ref={scrollRef} className="flex-1 overflow-y-auto scrollbar-none px-4 py-3 space-y-3">
+      {/* Speaking indicator */}
+      {isSpeaking && (
+        <div className="px-4 pb-1 shrink-0">
+          <div className="flex items-center gap-1.5 text-primary">
+            <Volume2 size={13} />
+            <span className="text-xs font-semibold">Speaking{language !== "en" ? ` in ${LANGUAGE_OPTIONS.find(o => o.id === language)?.label}` : ""}…</span>
+          </div>
+        </div>
+      )}
+
+      <div ref={scrollRef} className="flex-1 overflow-y-auto scrollbar-none px-4 py-3 space-y-3 border-t border-border">
         {messages.map(msg => msg.isConfirmation ? (
           <div key={msg.id} className="flex justify-center">
             <div className="flex items-center gap-1.5 bg-emerald-50 border border-emerald-200 text-emerald-800 rounded-full px-3.5 py-1.5">
@@ -107,10 +240,21 @@ export function AskMeiScreen({ patient, elderId, onUpdatePatient, onNavigate, on
             </div>
           </div>
         ))}
+        {isListening && (
+          <div className="flex justify-center py-2">
+            <div className="flex items-center gap-2 bg-red-50 border border-red-200 rounded-full px-4 py-2">
+              <div className="w-2.5 h-2.5 bg-red-500 rounded-full animate-pulse" />
+              <span className="text-sm text-red-700 font-semibold">Listening...</span>
+            </div>
+          </div>
+        )}
       </div>
 
       <div className="px-4 pb-2 shrink-0">
-        <div className="flex gap-2 overflow-x-auto scrollbar-none pb-1">
+        <div
+          className="flex gap-2 overflow-x-auto scrollbar-none pb-1"
+          onWheel={e => { if (Math.abs(e.deltaY) > Math.abs(e.deltaX)) e.currentTarget.scrollLeft += e.deltaY; }}
+        >
           {["How's adherence today?", "Any missed doses?", "Check refills"].map(s => (
             <button
               key={s}
@@ -125,10 +269,19 @@ export function AskMeiScreen({ patient, elderId, onUpdatePatient, onNavigate, on
 
       <div className="px-4 pb-4 pt-1 border-t border-border shrink-0">
         <div className="flex gap-2 items-end">
-          <div className="flex-1 bg-input-background rounded-2xl px-4 py-3">
+          {SpeechRecognitionImpl && (
+            <button onClick={handleMic} className={`w-10 h-10 rounded-full flex items-center justify-center shrink-0 transition-colors ${isListening ? "bg-red-500 text-white" : "bg-muted text-foreground"}`}>
+              <Mic size={17} />
+            </button>
+          )}
+          <button onClick={() => rxPhotoRef.current?.click()} className="w-10 h-10 rounded-full bg-muted text-foreground flex items-center justify-center shrink-0">
+            <Camera size={17} />
+          </button>
+          <div className="flex-1 bg-input-background rounded-2xl px-3.5 py-2">
             <textarea
+              ref={inputRef}
               value={input}
-              onChange={e => setInput(e.target.value)}
+              onChange={e => { const v = e.target.value; setInput(v); if (v.trim() && quickOpen) setQuickOpen(false); }}
               onKeyDown={e => { if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); handleSend(); } }}
               placeholder={t(language, "common.askMeiPlaceholder")}
               className="w-full bg-transparent text-foreground text-[15px] resize-none outline-none max-h-24 leading-relaxed placeholder:text-muted-foreground"
@@ -138,12 +291,17 @@ export function AskMeiScreen({ patient, elderId, onUpdatePatient, onNavigate, on
           <button
             onClick={handleSend}
             disabled={!input.trim() || sending}
-            className="w-12 h-12 rounded-full bg-primary text-primary-foreground flex items-center justify-center shrink-0 disabled:opacity-30 active:scale-95 transition-transform"
+            className="w-10 h-10 rounded-full bg-primary text-primary-foreground flex items-center justify-center shrink-0 disabled:opacity-30 active:scale-95 transition-transform"
           >
-            <Send size={18} />
+            <Send size={16} />
           </button>
         </div>
+        <p className="text-center text-[10px] text-muted-foreground mt-2">Mei is an AI helper. Always check with a doctor or pharmacist for medical advice.</p>
       </div>
+
+      {/* hidden inputs used by "Update profile" and "Add prescription" */}
+      <input ref={reportRef} type="file" accept="image/*,application/pdf" className="hidden" onChange={onReportFile} />
+      <input ref={rxPhotoRef} type="file" accept="image/*" capture="environment" className="hidden" onChange={onRxPhotoFile} />
 
       {showSummary && <WeeklySummarySheet patient={patient} onClose={() => setShowSummary(false)} />}
       {showTravel && (
@@ -153,6 +311,33 @@ export function AskMeiScreen({ patient, elderId, onUpdatePatient, onNavigate, on
           onClose={() => setShowTravel(false)}
           onSaved={plan => onUpdatePatient({ ...patient, travelPlan: plan })}
         />
+      )}
+
+      {/* Language & voice sheet */}
+      {showLangSheet && (
+        <div className="absolute inset-0 z-50 flex items-end bg-black/40" onClick={() => setShowLangSheet(false)}>
+          <div className="w-full bg-background rounded-t-3xl p-5 pb-7 animate-in slide-in-from-bottom duration-200" onClick={e => e.stopPropagation()}>
+            <div className="flex items-center justify-between mb-4">
+              <h3 className="font-['Fraunces'] text-xl font-semibold text-foreground">{t(language, "ai.languageVoice")}</h3>
+              <button onClick={() => setShowLangSheet(false)} className="w-8 h-8 rounded-full bg-muted flex items-center justify-center"><X size={16} className="text-muted-foreground" /></button>
+            </div>
+            <p className="text-sm font-semibold text-foreground mb-2">{t(language, "settings.language")}</p>
+            <div className="grid grid-cols-3 gap-2 mb-5">
+              {LANGUAGE_OPTIONS.map(l => (
+                <button key={l.id} onClick={() => setLanguage(l.id)} className={`py-3 rounded-xl text-[14px] font-bold border transition-colors ${language === l.id ? "bg-primary text-white border-primary" : "bg-card text-foreground border-border"}`}>
+                  {l.label}
+                </button>
+              ))}
+            </div>
+            <button onClick={() => setVoiceOutput(v => !v)} className="w-full flex items-center justify-between bg-card border border-border rounded-xl px-4 py-3.5">
+              <div className="flex items-center gap-2"><Volume2 size={18} className="text-primary" /><span className="text-[15px] font-semibold text-foreground">{t(language, "settings.readAloud")}</span></div>
+              <div className={`w-12 h-7 rounded-full transition-colors relative ${voiceOutput ? "bg-primary" : "bg-muted"}`}>
+                <div className={`absolute top-0.5 w-6 h-6 rounded-full bg-white shadow transition-all ${voiceOutput ? "left-[22px]" : "left-0.5"}`} />
+              </div>
+            </button>
+            <p className="text-xs text-muted-foreground mt-3">Mei can read her replies aloud in your chosen language.</p>
+          </div>
+        </div>
       )}
     </div>
   );

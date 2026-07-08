@@ -1,13 +1,13 @@
 import { useEffect, useState } from "react";
 import { ChevronLeft, ChevronRight, Clock, Send } from "lucide-react";
 import type { Patient, Medication, MedStatus } from "../types";
-import { StatusPill } from "../components/shared";
-import { MED_PHOTOS, MED_SIMPLE } from "../data/medications";
+import { StatusPill, MedAvatar } from "../components/shared";
+import { MED_SIMPLE } from "../data/medications";
 import { DASH_DAYS } from "../lib/constants";
 import { useLanguage } from "../lib/languageContext";
 import { t } from "../lib/language";
 
-export function TimelineScreen({ patient }: { patient: Patient }) {
+export function TimelineScreen({ patient, onSendReminder }: { patient: Patient; onSendReminder: (medName?: string) => void }) {
   const { language } = useLanguage();
   const [view, setView] = useState<"daily" | "weekly">("daily");
   const today = new Date();
@@ -157,7 +157,6 @@ export function TimelineScreen({ patient }: { patient: Patient }) {
         <div className="relative">
           {dayMeds.map((med, i) => {
             const cfg = statusConfig[med.status];
-            const photo = MED_PHOTOS[med.name] ?? "https://images.unsplash.com/photo-1584308666744-24d5c474f2ae?w=120&h=120&fit=crop&auto=format";
             const direction = MED_SIMPLE[med.name] ?? "Take as directed by your doctor.";
             const lowRefill = med.refillDaysLeft !== undefined && med.refillDaysLeft <= 7;
             const supplyDays = med.refillDaysLeft ?? 30;
@@ -172,9 +171,7 @@ export function TimelineScreen({ patient }: { patient: Patient }) {
                 {/* Entry — home-page schedule card styling */}
                 <div className={`flex-1 mb-4 bg-card rounded-2xl border ${cfg.line} shadow-sm overflow-hidden`}>
                   <div className="flex items-start gap-3 px-4 py-3">
-                    <div className="w-11 h-11 rounded-lg overflow-hidden shrink-0 bg-muted">
-                      <img src={photo} alt={med.name} className="w-full h-full object-cover" />
-                    </div>
+                    <MedAvatar name={med.name} size={44} className="rounded-lg shrink-0" />
                     <div className="flex-1 min-w-0">
                       <p className="text-sm font-semibold text-foreground">{med.name}</p>
                       <p className="text-xs text-muted-foreground">{direction}</p>
@@ -198,7 +195,7 @@ export function TimelineScreen({ patient }: { patient: Patient }) {
                   </div>
                   {med.status === "missed" && (
                     <div className="px-4 pb-3">
-                      <button className="w-full bg-orange-50 border border-orange-200 text-orange-700 text-xs font-semibold rounded-xl py-2 flex items-center justify-center gap-1.5">
+                      <button onClick={() => onSendReminder(med.name)} className="w-full bg-orange-50 border border-orange-200 text-orange-700 text-xs font-semibold rounded-xl py-2 flex items-center justify-center gap-1.5">
                         <Send size={11} /> {t(language, "common.sendReminder")} to patient
                       </button>
                     </div>

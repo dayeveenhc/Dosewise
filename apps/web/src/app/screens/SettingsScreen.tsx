@@ -1,12 +1,21 @@
 import { useState } from "react";
-import { ChevronRight, Lock, Shield, Edit3, RefreshCw, Plus, CheckCircle2, LogOut } from "lucide-react";
+import { ChevronRight, Lock, Shield, Edit3, RefreshCw, Plus, CheckCircle2, LogOut, Phone, Star, User } from "lucide-react";
 import { Card, SectionHeader } from "../components/shared";
 import { Switch } from "../components/ui/switch";
 import { useLanguage } from "../lib/languageContext";
 import { LANGUAGE_OPTIONS, t } from "../lib/language";
+import { useAccessibility } from "../accessibility.tsx";
+import type { FontSize } from "../accessibility.tsx";
+import type { Patient, Contact } from "../types";
+import { CallMockup } from "../components/CallMockup";
 
-export function SettingsScreen({ onSwitchMode, onSignOut, onEditProfile }: { onSwitchMode: () => void; onSignOut: () => void; onEditProfile: () => void }) {
+const FONT_SIZES: FontSize[] = ["small", "normal", "large", "xlarge", "xxlarge"];
+
+export function SettingsScreen({ patient, onSwitchMode, onSignOut, onEditProfile }: { patient: Patient; onSwitchMode: () => void; onSignOut: () => void; onEditProfile: () => void }) {
   const { language, setLanguage } = useLanguage();
+  const { fontSize, setFontSize, highContrast, setHighContrast } = useAccessibility();
+  const [callTarget, setCallTarget] = useState<Contact | null>(null);
+  const [voiceEnabled, setVoiceEnabled] = useState(true);
   const [notifMissed, setNotifMissed] = useState(true);
   const [notifRefill, setNotifRefill] = useState(true);
   const [notifSummary, setNotifSummary] = useState(true);
@@ -31,11 +40,63 @@ export function SettingsScreen({ onSwitchMode, onSignOut, onEditProfile }: { onS
         </Card>
       </div>
 
+      {/* Emergency contacts */}
+      <div data-tour="cg-emergency">
+        <SectionHeader title="Emergency Contacts" />
+        <Card className="divide-y divide-border">
+          {patient.contacts.map((c, i) => (
+            <div key={i} className="flex items-center gap-3 px-4 py-3">
+              <div className={`w-8 h-8 rounded-full flex items-center justify-center shrink-0 ${c.isPrimary ? "bg-primary text-primary-foreground" : "bg-muted"}`}>
+                {c.isPrimary ? <Star size={13} /> : <User size={13} className="text-muted-foreground" />}
+              </div>
+              <div className="flex-1 min-w-0">
+                <p className="text-sm font-semibold text-foreground">{c.name}</p>
+                <p className="text-[11px] text-muted-foreground">{c.role}</p>
+              </div>
+              <button onClick={() => setCallTarget(c)} className="w-8 h-8 bg-emerald-50 border border-emerald-200 rounded-full flex items-center justify-center active:scale-95 transition-transform">
+                <Phone size={13} className="text-emerald-700" />
+              </button>
+            </div>
+          ))}
+        </Card>
+      </div>
+
+      {/* Accessibility */}
+      <div>
+        <SectionHeader title="Accessibility" />
+        <Card className="divide-y divide-border">
+          <div className="px-4 py-4">
+            <p className="text-sm font-medium text-foreground mb-0.5">Text size</p>
+            <p className="text-xs text-muted-foreground mb-3">Make text throughout the app bigger or smaller</p>
+            <div className="flex items-center gap-3">
+              <span className="text-xs font-semibold text-muted-foreground shrink-0">A</span>
+              <input
+                type="range"
+                min={0}
+                max={FONT_SIZES.length - 1}
+                step={1}
+                value={FONT_SIZES.indexOf(fontSize)}
+                onChange={e => setFontSize(FONT_SIZES[Number(e.target.value)])}
+                className="flex-1 accent-primary h-2"
+              />
+              <span className="text-xl font-semibold text-muted-foreground shrink-0">A</span>
+            </div>
+          </div>
+          <div className="px-4 py-4 flex items-center justify-between gap-3">
+            <div className="flex-1">
+              <p className="text-sm font-medium text-foreground">High contrast</p>
+              <p className="text-xs text-muted-foreground">Stronger colours and borders for easier reading</p>
+            </div>
+            <Switch checked={highContrast} onCheckedChange={setHighContrast} />
+          </div>
+        </Card>
+      </div>
+
       {/* Language */}
       <div>
         <SectionHeader title={t(language, "settings.voiceAndLanguage")} />
-        <Card className="px-4 py-4">
-          <div className="flex items-center justify-between gap-3">
+        <Card className="divide-y divide-border">
+          <div className="px-4 py-4 flex items-center justify-between gap-3">
             <div>
               <p className="text-sm font-medium text-foreground">{t(language, "settings.language")}</p>
               <p className="text-xs text-muted-foreground">{t(language, "settings.languageDesc")}</p>
@@ -43,6 +104,13 @@ export function SettingsScreen({ onSwitchMode, onSignOut, onEditProfile }: { onS
             <select value={language} onChange={e => setLanguage(e.target.value as any)} className="bg-muted rounded-xl px-3 py-2 text-sm font-medium text-foreground outline-none">
               {LANGUAGE_OPTIONS.map(option => <option key={option.id} value={option.id}>{option.label}</option>)}
             </select>
+          </div>
+          <div className="px-4 py-4 flex items-center justify-between gap-3">
+            <div className="flex-1">
+              <p className="text-sm font-medium text-foreground">{t(language, "settings.readAloud")}</p>
+              <p className="text-xs text-muted-foreground">{t(language, "settings.readAloudDesc")}</p>
+            </div>
+            <Switch checked={voiceEnabled} onCheckedChange={setVoiceEnabled} />
           </div>
         </Card>
       </div>
@@ -138,6 +206,8 @@ export function SettingsScreen({ onSwitchMode, onSignOut, onEditProfile }: { onS
       </button>
 
       <p className="text-center text-[11px] text-muted-foreground pb-4">DOSEWISE v1.0 · Made with care in Singapore</p>
+
+      {callTarget && <CallMockup name={callTarget.name} role={callTarget.role} onEnd={() => setCallTarget(null)} />}
     </div>
   );
 }

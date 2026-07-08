@@ -1,6 +1,31 @@
 import { useEffect, useState } from "react";
-import { CheckCircle2, AlertTriangle, Circle, X, ChevronDown, Plus, Droplets } from "lucide-react";
+import { CheckCircle2, AlertTriangle, Circle, X, ChevronDown, Plus, Droplets, Pill } from "lucide-react";
 import type { MedStatus, Patient } from "../types";
+import { MED_PHOTOS, MED_COLOURS } from "../data/medications";
+
+// Deterministic colour per medication name — so a medicine with no bundled
+// photo (most of MEDICATION_CATALOG, or anything freeform) still gets a
+// distinct, stable look instead of every unphotographed med sharing one
+// generic fallback image.
+function medColour(name: string) {
+  let hash = 0;
+  for (let i = 0; i < name.length; i++) hash = (hash * 31 + name.charCodeAt(i)) | 0;
+  return MED_COLOURS[Math.abs(hash) % MED_COLOURS.length];
+}
+
+export function MedAvatar({ name, size, className = "" }: { name: string; size: number; className?: string }) {
+  const photo = MED_PHOTOS[name];
+  const style = { width: size, height: size };
+  if (photo) {
+    return <img src={photo} alt={name} style={style} className={`object-cover bg-muted ${className}`} />;
+  }
+  const colour = medColour(name);
+  return (
+    <div style={{ ...style, backgroundColor: `${colour.hex}22` }} className={`flex items-center justify-center ${className}`}>
+      <Pill size={Math.round(size * 0.5)} style={{ color: colour.hex }} />
+    </div>
+  );
+}
 
 export function LiveStatusBar({ className = "" }: { className?: string }) {
   const [currentTime, setCurrentTime] = useState(new Date());
