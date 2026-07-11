@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { ChevronLeft, ChevronRight, Clock, Send } from "lucide-react";
+import { ChevronLeft, ChevronRight, Clock, Send, Check } from "lucide-react";
 import type { Patient, Medication, MedStatus } from "../types";
 import { StatusPill, MedAvatar } from "../components/shared";
 import { MED_SIMPLE } from "../data/medications";
@@ -7,7 +7,7 @@ import { DASH_DAYS } from "../lib/constants";
 import { useLanguage } from "../lib/languageContext";
 import { t } from "../lib/language";
 
-export function TimelineScreen({ patient, onSendReminder }: { patient: Patient; onSendReminder: (medName?: string) => void }) {
+export function TimelineScreen({ patient, justAddedMed, onSendReminder }: { patient: Patient; justAddedMed?: string | null; onSendReminder: (medName?: string) => void }) {
   const { language } = useLanguage();
   const [view, setView] = useState<"daily" | "weekly">("daily");
   const today = new Date();
@@ -157,10 +157,13 @@ export function TimelineScreen({ patient, onSendReminder }: { patient: Patient; 
         <div className="relative">
           {dayMeds.map((med, i) => {
             const cfg = statusConfig[med.status];
-            const direction = MED_SIMPLE[med.name] ?? "Take as directed by your doctor.";
+            const direction = MED_SIMPLE[med.name] ?? t(language, "home.takeAsDirected");
             const lowRefill = med.refillDaysLeft !== undefined && med.refillDaysLeft <= 7;
             const supplyDays = med.refillDaysLeft ?? 30;
             const supplyPct = Math.min(100, Math.round((supplyDays / 30) * 100));
+            // Highlight (and prove) a just-added medication is on the timeline —
+            // keyed by name because the slot id re-hashes on refetch.
+            const justAdded = isSelectedToday && !!justAddedMed && med.name === justAddedMed;
             return (
               <div key={med.id} className="flex gap-4 mb-1">
                 {/* Timeline rail */}
@@ -169,11 +172,18 @@ export function TimelineScreen({ patient, onSendReminder }: { patient: Patient; 
                   {i < dayMeds.length - 1 && <div className="w-px flex-1 bg-border mt-1" />}
                 </div>
                 {/* Entry — home-page schedule card styling */}
-                <div className={`flex-1 mb-4 bg-card rounded-2xl border ${cfg.line} shadow-sm overflow-hidden`}>
+                <div className={`flex-1 mb-4 bg-card rounded-2xl border shadow-sm overflow-hidden ${justAdded ? "border-2 border-emerald-400 ring-2 ring-emerald-300/50" : cfg.line}`}>
                   <div className="flex items-start gap-3 px-4 py-3">
                     <MedAvatar name={med.name} size={44} className="rounded-lg shrink-0" />
                     <div className="flex-1 min-w-0">
-                      <p className="text-sm font-semibold text-foreground">{med.name}</p>
+                      <div className="flex items-center gap-2 flex-wrap">
+                        <p className="text-sm font-semibold text-foreground">{med.name}{med.dose ? ` · ${med.dose}` : ""}</p>
+                        {justAdded && (
+                          <span className="flex items-center gap-1 bg-emerald-100 text-emerald-700 text-[10px] font-bold px-2 py-0.5 rounded-full">
+                            <Check size={9} strokeWidth={3} />{t(language, "prescription.justAdded")}
+                          </span>
+                        )}
+                      </div>
                       <p className="text-xs text-muted-foreground">{direction}</p>
                       <p className="text-[11px] text-muted-foreground font-mono mt-0.5 whitespace-nowrap">
                         {med.status === "taken" ? `Taken at ${med.takenAt}` : `Scheduled ${med.time}`}
@@ -183,7 +193,7 @@ export function TimelineScreen({ patient, onSendReminder }: { patient: Patient; 
                   </div>
                   <div className="px-4 pb-3">
                     <div className="flex items-center justify-between mb-1">
-                      <p className="text-[10px] text-muted-foreground">Supply remaining</p>
+                      <p className="text-[10px] text-muted-foreground">{t(language, "prescription.supply")}</p>
                       <p className={`text-[10px] font-bold ${lowRefill ? "text-red-600" : "text-foreground"}`}>{supplyDays}/30 days</p>
                     </div>
                     <div className="w-full h-1.5 bg-muted rounded-full overflow-hidden">

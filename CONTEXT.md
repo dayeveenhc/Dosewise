@@ -86,7 +86,10 @@ switch (don't reintroduce a separate per-chat voice `useState`).
 FastAPI service, `uv`-managed. Key files:
 - `main.py` — app factory, lifespan (wires LLM client, Supabase, Telegram,
   rate limiter, CORS), `hermes-serve` entry point.
-- `api/routes.py` — `/health`, `/agent/turn`, `/telegram/webhook`.
+- `api/routes.py` — `/health`, `/agent/turn`, `/telegram/webhook`, and
+  `/profile/extract` (the structured "pull" API: reads an uploaded PDF/photo and
+  returns `{fields}` for onboarding autofill; API-key gated but **jwt-free** since
+  it's stateless — no Supabase/identity; impl in `agent/extract.py`).
 - `agent/loop.py` — the provider-agnostic tool-calling loop (OpenAI default,
   Gemini/Anthropic alternatives; Anthropic is the automatic silent-key fallback).
 - `agent/soul.md` + `agent/prompts.py` — the Dosewise persona/system prompt.

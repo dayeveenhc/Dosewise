@@ -45,14 +45,14 @@ function FeatureBtn({ icon: Icon, label, onClick }: { icon: any; label: string; 
   );
 }
 
-export function AskMeiScreen({ patient, elderId, onUpdatePatient, onNavigate, onMedsChanged }: { patient: Patient; elderId?: string; onUpdatePatient: (p: Patient) => void; onNavigate?: (screen: Screen) => void; onMedsChanged?: () => void | Promise<void> }) {
+export function AskMeiScreen({ patient, elderId, onUpdatePatient, onNavigate, onMedsChanged, onMedAdded }: { patient: Patient; elderId?: string; onUpdatePatient: (p: Patient) => void; onNavigate?: (screen: Screen) => void; onMedsChanged?: () => void | Promise<void>; onMedAdded?: (name: string) => void }) {
   const { language, setLanguage } = useLanguage();
   const { voiceOutput, setVoiceOutput } = useAccessibility();
   const [messages, setMessages] = useState<ChatMsg[]>(() => [
     {
       id: 1,
       role: "agent",
-      text: `Hi! I'm Mei, your AI care assistant for ${patient.name}. Ask me about today's adherence, missed doses, refills, or any medication.`,
+      text: t(language, "ai.greeting", { name: patient.name }),
       time: nowLabel(),
     },
   ]);
@@ -139,11 +139,17 @@ export function AskMeiScreen({ patient, elderId, onUpdatePatient, onNavigate, on
         console.warn("[dosewise] medication refresh after agent write failed:", err);
       }
     }
+    // Flag a freshly added prescription so the timeline/patient list highlights
+    // it as visible proof the dose (and its dosage) really landed.
+    const added = actions.find(a => a.tool === "add_prescription");
+    if (added?.name) onMedAdded?.(added.name);
     // When the write has a destination screen, confirm it and guide the caregiver there.
     const routed = firstRoutableAction(actions);
     if (routed) {
       const detail = routed.action.tool === "add_prescription" && routed.action.summary ? `: ${routed.action.summary}` : "";
-      setMessages(prev => [...prev, { id: Date.now() + 2, role: "agent", text: `✓ ${routed.target.done}${detail} — opening ${routed.target.label}…`, time: nowLabel(), isConfirmation: true }]);
+      const done = t(language, routed.target.doneKey);
+      const label = t(language, routed.target.labelKey);
+      setMessages(prev => [...prev, { id: Date.now() + 2, role: "agent", text: t(language, "ai.openingLabel", { done, detail, label }), time: nowLabel(), isConfirmation: true }]);
       scrollToBottom();
       if (onNavigate) setTimeout(() => onNavigate(routed.target.caregiver), 1200);
     }
@@ -163,7 +169,7 @@ export function AskMeiScreen({ patient, elderId, onUpdatePatient, onNavigate, on
     e.target.value = "";
     if (!file) return;
     setQuickOpen(false);
-    send("📷 Here is a photo of the prescription.", await fileToBase64(file), undefined, URL.createObjectURL(file));
+    send(t(language, "ai.rxPhotoMsg"), await fileToBase64(file), undefined, URL.createObjectURL(file));
   };
 
   // "Update profile": the clinic report goes to the real agent — a PDF's text is
@@ -175,7 +181,7 @@ export function AskMeiScreen({ patient, elderId, onUpdatePatient, onNavigate, on
     if (!file) return;
     setQuickOpen(false);
     const b64 = await fileToBase64(file);
-    const msg = "📄 Here is a clinic report. Please update the medical profile from it.";
+    const msg = t(language, "ai.reportMsg");
     if (file.type === "application/pdf") send(msg, undefined, b64);
     else send(msg, b64, undefined, URL.createObjectURL(file));
   };
@@ -186,7 +192,7 @@ export function AskMeiScreen({ patient, elderId, onUpdatePatient, onNavigate, on
       <div className="px-4 pt-2.5 shrink-0" data-tour="cg-askmei">
         <button onClick={() => setQuickOpen(o => !o)} className="w-full flex items-center gap-1.5 mb-2">
           <Sparkles size={15} className="text-primary" />
-          <span className="text-sm font-bold text-foreground">Quick help</span>
+          <span className="text-sm font-bold text-foreground">{t(language, "ai.quickHelp")}</span>
           <ChevronDown size={16} className={`ml-auto text-muted-foreground transition-transform ${quickOpen ? "rotate-180" : ""}`} />
         </button>
         {quickOpen && (
@@ -194,14 +200,14 @@ export function AskMeiScreen({ patient, elderId, onUpdatePatient, onNavigate, on
             <div className="grid grid-cols-2 gap-1.5">
               <FeatureBtn icon={TrendingUp} label={t(language, "common.weeklySummary")} onClick={() => setShowSummary(true)} />
               <FeatureBtn icon={Plane}      label={t(language, "common.travelMode")}   onClick={() => setShowTravel(true)} />
-              <FeatureBtn icon={Camera}     label="Add prescription"  onClick={() => rxPhotoRef.current?.click()} />
-              <FeatureBtn icon={FileText}   label="Update profile"    onClick={() => reportRef.current?.click()} />
-              <FeatureBtn icon={Pill}       label="Ask about a medication"  onClick={() => setShowMedPicker(v => !v)} />
-              <FeatureBtn icon={Globe}      label="Language & voice"  onClick={() => setShowLangSheet(true)} />
+              <FeatureBtn icon={Camera}     label={t(language, "common.addPrescription")}  onClick={() => rxPhotoRef.current?.click()} />
+              <FeatureBtn icon={FileText}   label={t(language, "ai.updateProfile")}    onClick={() => reportRef.current?.click()} />
+              <FeatureBtn icon={Pill}       label={t(language, "ai.askAboutMed")}  onClick={() => setShowMedPicker(v => !v)} />
+              <FeatureBtn icon={Globe}      label={t(language, "ai.languageVoice")}  onClick={() => setShowLangSheet(true)} />
             </div>
             {showMedPicker && (
               <div className="bg-card border border-border rounded-xl p-2.5">
-                <p className="text-[11px] text-muted-foreground font-semibold px-0.5 pb-1.5">Which medication would you like to know about?</p>
+                <p className="text-[11px] text-muted-foreground font-semibold px-0.5 pb-1.5">{t(language, "ai.whichMedication")}</p>
                 <div className="flex flex-wrap gap-1.5">
                   {uniqueMeds.map(n => (
                     <button key={n} onClick={() => { setShowMedPicker(false); send(`What is ${n} for?`); }} className="text-xs font-semibold bg-muted text-foreground rounded-full px-3 py-1.5 active:bg-primary/10 active:text-primary transition-colors">
@@ -220,7 +226,7 @@ export function AskMeiScreen({ patient, elderId, onUpdatePatient, onNavigate, on
         <div className="px-4 pb-1 shrink-0">
           <div className="flex items-center gap-1.5 text-primary">
             <Volume2 size={13} />
-            <span className="text-xs font-semibold">Speaking{language !== "en" ? ` in ${LANGUAGE_OPTIONS.find(o => o.id === language)?.label}` : ""}…</span>
+            <span className="text-xs font-semibold">{t(language, "ai.speaking")}{language !== "en" ? ` in ${LANGUAGE_OPTIONS.find(o => o.id === language)?.label}` : ""}…</span>
           </div>
         </div>
       )}
@@ -242,7 +248,7 @@ export function AskMeiScreen({ patient, elderId, onUpdatePatient, onNavigate, on
             )}
             <div className={`max-w-[82%] flex flex-col gap-1 ${msg.role === "user" ? "items-end" : "items-start"}`}>
               {msg.image && (
-                <img src={msg.image} alt="Attachment" className="max-w-[70%] rounded-2xl border border-border object-cover" />
+                <img src={msg.image} alt={t(language, "ai.attachment")} className="max-w-[70%] rounded-2xl border border-border object-cover" />
               )}
               <div className={`rounded-2xl px-4 py-3 ${msg.role === "user" ? "bg-primary text-primary-foreground rounded-tr-sm" : "bg-card border border-border rounded-tl-sm"}`}>
                 <p className={`text-[15px] leading-relaxed whitespace-pre-line ${msg.role === "user" ? "text-primary-foreground" : "text-foreground"}`}>{renderWithBold(msg.text)}</p>
@@ -255,7 +261,7 @@ export function AskMeiScreen({ patient, elderId, onUpdatePatient, onNavigate, on
           <div className="flex justify-center py-2">
             <div className="flex items-center gap-2 bg-red-50 border border-red-200 rounded-full px-4 py-2">
               <div className="w-2.5 h-2.5 bg-red-500 rounded-full animate-pulse" />
-              <span className="text-sm text-red-700 font-semibold">Listening...</span>
+              <span className="text-sm text-red-700 font-semibold">{t(language, "ai.listening")}</span>
             </div>
           </div>
         )}
@@ -266,7 +272,7 @@ export function AskMeiScreen({ patient, elderId, onUpdatePatient, onNavigate, on
           className="flex gap-2 overflow-x-auto scrollbar-none pb-1"
           onWheel={e => { if (Math.abs(e.deltaY) > Math.abs(e.deltaX)) e.currentTarget.scrollLeft += e.deltaY; }}
         >
-          {["How's adherence today?", "Any missed doses?", "Check refills"].map(s => (
+          {[t(language, "ai.suggestAdherence"), t(language, "ai.suggestMissed"), t(language, "ai.suggestRefills")].map(s => (
             <button
               key={s}
               onClick={() => setInput(s)}
@@ -307,7 +313,7 @@ export function AskMeiScreen({ patient, elderId, onUpdatePatient, onNavigate, on
             <Send size={16} />
           </button>
         </div>
-        <p className="text-center text-[10px] text-muted-foreground mt-2">Mei is an AI helper. Always check with a doctor or pharmacist for medical advice.</p>
+        <p className="text-center text-[10px] text-muted-foreground mt-2">{t(language, "ai.disclaimer")}</p>
       </div>
 
       {/* hidden inputs used by "Update profile" and "Add prescription" */}
@@ -346,7 +352,7 @@ export function AskMeiScreen({ patient, elderId, onUpdatePatient, onNavigate, on
                 <div className={`absolute top-0.5 w-6 h-6 rounded-full bg-white shadow transition-all ${voiceOutput ? "left-[22px]" : "left-0.5"}`} />
               </div>
             </button>
-            <p className="text-xs text-muted-foreground mt-3">Mei can read her replies aloud in your chosen language.</p>
+            <p className="text-xs text-muted-foreground mt-3">{t(language, "ai.voiceHint")}</p>
           </div>
         </div>
       )}

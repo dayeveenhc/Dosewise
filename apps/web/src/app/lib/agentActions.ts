@@ -9,16 +9,16 @@ import type { AgentAction } from "./hermes";
 interface ActionTarget {
   elderly: ElderlyTab;
   caregiver: Screen;
-  done: string; // short confirmation shown in chat, e.g. "Added to your schedule"
-  label: string; // page name used in "opening your {label}…"
+  doneKey: string; // t() key for the short confirmation shown in chat, e.g. "Added to your schedule"
+  labelKey: string; // t() key for the page name used in "opening your {label}…"
 }
 
 export const ACTION_TARGETS: Record<string, ActionTarget> = {
-  add_prescription:        { elderly: "prescriptions", caregiver: "patient",  done: "Added to your schedule", label: "medications" },
-  log_dose:                { elderly: "home",          caregiver: "timeline", done: "Marked as taken",        label: "schedule" },
-  update_medical_profile:  { elderly: "settings",      caregiver: "patient",  done: "Profile updated",        label: "profile" },
-  set_medication_reminder: { elderly: "prescriptions", caregiver: "patient",  done: "Reminder set",           label: "medications" },
-  log_refill:              { elderly: "prescriptions", caregiver: "patient",  done: "Refill logged",          label: "medications" },
+  add_prescription:        { elderly: "prescriptions", caregiver: "patient",  doneKey: "ai.doneAddPrescription", labelKey: "ai.labelMedications" },
+  log_dose:                { elderly: "home",          caregiver: "timeline", doneKey: "ai.doneLogDose",         labelKey: "ai.labelSchedule" },
+  update_medical_profile:  { elderly: "settings",      caregiver: "patient",  doneKey: "ai.doneUpdateProfile",   labelKey: "ai.labelProfile" },
+  set_medication_reminder: { elderly: "prescriptions", caregiver: "patient",  doneKey: "ai.doneSetReminder",     labelKey: "ai.labelMedications" },
+  log_refill:              { elderly: "prescriptions", caregiver: "patient",  doneKey: "ai.doneLogRefill",       labelKey: "ai.labelMedications" },
 };
 
 // First committed action that has a known destination, if any.

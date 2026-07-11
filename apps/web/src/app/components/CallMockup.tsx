@@ -1,9 +1,12 @@
 import { useEffect, useState } from "react";
 import { PhoneOff } from "lucide-react";
+import { useLanguage } from "../lib/languageContext";
+import { t } from "../lib/language";
 
 // A mockup calling screen — tel: links go nowhere useful in a desktop browser,
 // so this gives visible feedback that the call button actually did something.
 export function CallMockup({ name, role, onEnd }: { name: string; role?: string; onEnd: () => void }) {
+  const { language } = useLanguage();
   const [connected, setConnected] = useState(false);
   const [seconds, setSeconds] = useState(0);
   const initials = name.split(" ").map(w => w[0]).slice(0, 2).join("").toUpperCase();
@@ -25,7 +28,7 @@ export function CallMockup({ name, role, onEnd }: { name: string; role?: string;
   return (
     <div className="absolute inset-0 z-[250] bg-gradient-to-b from-emerald-900 via-emerald-950 to-black flex flex-col items-center justify-between py-16 px-6 text-white">
       <div className="flex flex-col items-center gap-2 mt-10">
-        <p className="text-sm text-emerald-200 uppercase tracking-widest font-medium">{connected ? "Connected" : "Calling…"}</p>
+        <p className="text-sm text-emerald-200 uppercase tracking-widest font-medium">{connected ? t(language, "call.connected") : t(language, "call.calling")}</p>
         <div className={`w-24 h-24 rounded-full bg-white/10 flex items-center justify-center text-3xl font-bold mt-4 ${connected ? "" : "animate-pulse"}`}>
           {initials}
         </div>

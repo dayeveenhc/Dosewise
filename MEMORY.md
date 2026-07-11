@@ -9,6 +9,87 @@ letting this grow forever — it's a memory aid, not an audit log.
 
 ---
 
+## 2026-07-11 — i18n D2/D3 completed: full primary-flow translation, all 6 languages
+
+Finished the i18n workstream flagged as remaining on 2026-07-09. Converted every
+hardcoded string in the primary-flow surface to `t()` and added the matching
+key in all 6 languages: `GuidedSetupWizard.tsx` (~45 strings, was 0% translated),
+both chat screens (`AskMeiScreen`/`ElderlyAIScreen`, ~40 combined — greetings,
+quick-help tiles, doctor tab, chips, disclaimers), shared components
+(`ConfirmDialog`, `GuidedTour`, `CallMockup`, `PatientSwitcher` in `shared.tsx`),
+`LoginScreen`/`OnboardingScreen` gaps, and the `App.tsx`/`ElderlyApp.tsx`
+tour-step + toast + "Replay tour?" dialog copy. Also converted
+`lib/agentActions.ts`'s `ACTION_TARGETS` from literal `done`/`label` strings to
+`doneKey`/`labelKey` translation keys (both chat screens' confirm+redirect
+messages were previously hardcoded English).
+
+**Gotcha:** `App.tsx` owns/mounts `LanguageProvider` itself, so it sits *above*
+the provider in the tree and cannot call the `useLanguage()` hook (throws).
+Fixed by reading `readStoredLanguage()` (point-in-time, non-reactive — same
+helper `lib/hermes.ts` already uses) at the top of the render body instead.
+This is "eventually consistent" on a live toggle (updates on App's next
+re-render, not instantly) — acceptable for demo tour/toast copy. Any *screen*
+component (rendered as a child of the provider) should use the real
+`useLanguage()` hook, not this pattern — `ElderlyApp.tsx` already did.
+
+**Verification:** wrote a node completeness gate
+(`scratchpad/i18n-check.mjs` pattern — not checked into the repo, recreate if
+needed) that asserts (a) all 6 language tables have identical key sets and
+(b) every string-literal key used in a `t(lang, "key")` call across the repo
+resolves. Final state: **326 keys × 6 languages, exact parity**, 311 keys
+actively used, zero missing/orphaned keys. `npm run build` clean throughout.
+
+**Still out of scope (unchanged from 2026-07-09):** `AIScreen.tsx`/
+`WeeklySummarySheet.tsx`, `EditProfileSheet.tsx`, `TravelModeSheet.tsx`,
+`SendReminderSheet.tsx`, `MessagesScreen.tsx`, `SettingsScreen.tsx` seed/mock
+data — deferred by explicit user choice ("primary flow + structural" scope).
+
+## 2026-07-09 — Structured profile-extract "pull" API + autofill + timeline proof + i18n backfill
+
+User-directed cross-cutting pass (web + hermes). Four threads:
+
+1. **New `POST /profile/extract` (the "pull" API).** `services/hermes/src/hermes/
+   agent/extract.py::extract_profile_fields` — provider-agnostic (mirrors loop.py's
+   3 branches), forces a single `record_profile` tool call and returns structured
+   `ProfileDetails`-shaped fields from an uploaded PDF text / photo (vision). Route
+   in `api/routes.py` is **API-key gated but NOT jwt-required** on purpose — it's
+   stateless (no Supabase, no identity) so it works during onboarding before an
+   account exists. Sniffs image media-type (PNG/JPEG/WebP) since the browser strips
+   the data-URL mime. Tests: `tests/test_profile_extract.py`.
+2. **Onboarding autofill.** New "Upload my records" card on `SetupMethodScreen`
+   (between the disabled MediHub card and Guided questions) → `extractProfile()`
+   (`lib/hermes.ts`) → `buildWizardPrefill` (`lib/profile.ts`) → seeds
+   `GuidedSetupWizard` state; user reviews (emerald "Autofilled — review" badge).
+   Killed the fake stubs: `TagList` scan + `MedList.onFile` now call the real
+   endpoint (were a `setTimeout` fake OCR + catalog substring-match). Elder AI
+   "Update profile" tile (`ElderlyAIScreen.onReportFile`) now extracts → merges
+   (`mergeProfileDetails`, existing scalars win, arrays union) → `saveProfile` →
+   redirects to Settings (was: only wrote the free-text `medical_profile` blob).
+3. **Caregiver timeline proof.** Mirrored the elder `justAddedMed` highlight into
+   `App.tsx` (state+6s timer) → `AskMeiScreen` (`onMedAdded`), `TimelineScreen`
+   (now renders the **dose** + emerald "Just added" chip — previously omitted dose),
+   `PatientScreen`. Keyed by med **name** (slotId re-hashes on refetch). Normalized
+   `set_medication_reminder`'s committed action to carry `name` (parity w/ add).
+4. **i18n structural fix.** `yue`/`ta`/`ms` were missing the whole `common.*`
+   namespace (62 keys → silent English fallback); backfilled all three. Fixed a
+   build break: `ElderlyHomeScreen` imported `localizeMedText` that didn't exist in
+   `lib/language.ts` — added it (safety-conscious: falls back to the curated English
+   med direction, does NOT machine-translate dosing text). Caregiver bottom-nav was
+   hardcoded English → extracted `components/BottomNav.tsx` (uses `t()`, reuses
+   `common.*` keys). All 6 language tables now at **182 keys, exact parity** — a
+   node gate (`scratchpad/i18n-check.mjs`) asserts parity + that every `t()`-literal
+   key is defined. **Still hardcoded (next batch):** GuidedSetupWizard body (~45),
+   AskMeiScreen/ElderlyAIScreen (~40), and secondary sheets — these don't use `t()`
+   yet, so they stay English regardless of toggle.
+
+**ngrok architecture (corrects an earlier misread):** the fixed domain
+`neomi-unimprinted-shelton.ngrok-free.dev` → **`:5010` is the hermes-demo BACKEND**
+(that's why `GET /` returns 404 — it has no root route; that is NOT "down"). The
+frontend has a **separate** tunnel → `:5173`. Do **not** repoint the fixed domain to
+5173 — it would break `VITE_HERMES_URL`. Use `scripts/post.sh` to manage services
+(see CLAUDE.md POST policy). Local verification server: `TELEGRAM_BOT_TOKEN=
+HERMES_PORT=8901 uv run hermes-serve` (empty token = no 409 poller).
+
 ## 2026-07-07 — `isabel-tried` merged into `main`; web app becomes primary demo surface
 
 `main` was fast-forwarded through the `assistant-fixes` branch (rate limiting,

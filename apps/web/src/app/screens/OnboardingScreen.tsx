@@ -56,7 +56,7 @@ export function OnboardingScreen({ onSelect, onBack }: { onSelect: (mode: "careg
           </div>
           <div>
             <p className="font-semibold text-foreground text-[15px] leading-snug mb-1">{t(language, "common.forLovedOne")}</p>
-            <p className="text-sm text-muted-foreground leading-relaxed">Manage schedules, prescriptions, and monitor progress</p>
+            <p className="text-sm text-muted-foreground leading-relaxed">{t(language, "common.forLovedOneDesc")}</p>
           </div>
           <ChevronRight size={18} className="text-muted-foreground mt-1.5 ml-auto shrink-0" />
         </button>
@@ -71,7 +71,7 @@ export function OnboardingScreen({ onSelect, onBack }: { onSelect: (mode: "careg
           </div>
           <div>
             <p className="font-semibold text-foreground text-[15px] leading-snug mb-1">{t(language, "common.forMyself")}</p>
-            <p className="text-sm text-muted-foreground leading-relaxed">Manage my daily medications and ask for help</p>
+            <p className="text-sm text-muted-foreground leading-relaxed">{t(language, "common.forMyselfDesc")}</p>
           </div>
           <ChevronRight size={18} className="text-muted-foreground mt-1.5 ml-auto shrink-0" />
         </button>

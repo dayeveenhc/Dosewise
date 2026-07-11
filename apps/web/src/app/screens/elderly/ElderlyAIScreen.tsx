@@ -3,7 +3,8 @@ import type { ChangeEvent } from "react";
 import { Volume2, Mic, Send, AlertTriangle, Brain, Circle, Check, Trash2, Plus, Camera, FileText, Pill, Globe, Sparkles, ChevronDown, X, Plane } from "lucide-react";
 import type { Patient } from "../../types";
 import type { EMsg, ElderlyTab, DoctorQ } from "./types";
-import { agentTurn, fileToBase64 } from "../../lib/hermes";
+import { agentTurn, extractProfile, fileToBase64 } from "../../lib/hermes";
+import { fetchProfile, saveProfile, toProfileDetails, mergeProfileDetails } from "../../lib/profile";
 import { firstRoutableAction } from "../../lib/agentActions";
 import { useLanguage } from "../../lib/languageContext";
 import { useAccessibility } from "../../accessibility.tsx";
@@ -81,11 +82,14 @@ export function ElderlyAIScreen({ patient, elderId, onLogDose, onNavigate, onMed
   const nick = patient.nickname || patient.name.split(" ")[1];
   const buildGreeting = (): EMsg => {
     const h = new Date().getHours();
-    const g = h < 12 ? "morning" : h < 17 ? "afternoon" : "evening";
+    const g = h < 12 ? t(language, "home.morning") : h < 17 ? t(language, "home.afternoon") : t(language, "home.evening");
     const next = patient.medications.find(m => m.status === "upcoming");
+    const nextInfo = next
+      ? t(language, "ai.elderGreetingNext", { name: next.name, dose: next.dose, time: next.time })
+      : t(language, "ai.elderGreetingAllDone");
     return {
       id: 1, role: "agent",
-      text: `Good ${g}, ${nick}! 😊\n\nI'm Mei, your medication helper. ${next ? `Your next medication is ${next.name} (${next.dose}) at ${next.time}.` : "You've taken all your medications today — well done! 🌟"}\n\nTap a button above for quick help, or just type your question below.`,
+      text: t(language, "ai.elderGreeting", { timeOfDay: g, nick, nextInfo }),
       time: nowLabel(),
     };
   };
@@ -224,7 +228,9 @@ export function ElderlyAIScreen({ patient, elderId, onLogDose, onNavigate, onMed
     const routed = firstRoutableAction(actions);
     if (routed) {
       const detail = routed.action.tool === "add_prescription" && routed.action.summary ? `: ${routed.action.summary}` : "";
-      setMessages(prev => [...prev, { id: Date.now() + 2, role: "agent", text: `✓ ${routed.target.done}${detail} — opening your ${routed.target.label}…`, time: nowLabel(), isConfirmation: true }]);
+      const done = t(language, routed.target.doneKey);
+      const label = t(language, routed.target.labelKey);
+      setMessages(prev => [...prev, { id: Date.now() + 2, role: "agent", text: t(language, "ai.openingYourLabel", { done, detail, label }), time: nowLabel(), isConfirmation: true }]);
       scrollToBottom();
       setTimeout(() => onNavigate(routed.target.elderly), 1200);
     }
@@ -237,7 +243,7 @@ export function ElderlyAIScreen({ patient, elderId, onLogDose, onNavigate, onMed
     e.target.value = "";
     if (!file) return;
     setQuickOpen(false);
-    send("📷 Here is a photo of my prescription.", await fileToBase64(file), undefined, URL.createObjectURL(file));
+    send(t(language, "ai.rxPhotoMsgMine"), await fileToBase64(file), undefined, URL.createObjectURL(file));
   };
 
   const handleSend = () => {
@@ -255,21 +261,65 @@ export function ElderlyAIScreen({ patient, elderId, onLogDose, onNavigate, onMed
   // Quick-help feature actions ----------------------------------------------
   const handleSetup = () => {
     setQuickOpen(false);
-    pushAgent(`Let's get you set up, ${nick}! Here's what I can do:\n\n📷 Add a medication — tap “Add prescription” and snap a photo of the box.\n📄 Update your health profile — upload a clinic report and I'll read it.\n💊 Ask about a medication — tap “Ask about a medication” and pick one.\n🌐 Change language or turn my voice on/off.\n\nWhat would you like to do first?`);
+    pushAgent(t(language, "ai.setupIntro", { nick }));
   };
 
-  // "Update profile": the clinic report goes to the real agent — a PDF's text is
-  // extracted server-side; an image goes through the vision path. The agent
-  // proposes the profile update and saves only after a confirming "yes".
+  // "Update profile": the clinic report goes to Hermes's structured
+  // /profile/extract endpoint, and the fields it reads are merged into the saved
+  // profile (existing values kept; new conditions/allergies unioned). We then
+  // redirect to Settings so the change is visible + auditable. If nothing
+  // structured comes back, fall back to the conversational agent path.
   const onReportFile = async (e: ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     e.target.value = "";
     if (!file) return;
     setQuickOpen(false);
     const b64 = await fileToBase64(file);
-    const msg = "📄 Here is my clinic report. Please update my medical profile from it.";
-    if (file.type === "application/pdf") send(msg, undefined, b64);
-    else send(msg, b64, undefined, URL.createObjectURL(file));
+    const isPdf = file.type === "application/pdf";
+    const msg = t(language, "ai.reportMsgMine");
+    setMessages(prev => [...prev, { id: Date.now(), role: "user", text: msg, time: nowLabel(), image: isPdf ? undefined : URL.createObjectURL(file) }]);
+    scrollToBottom();
+
+    // No identity yet → can't persist; let the agent handle it conversationally.
+    if (!elderId) {
+      send(msg, isPdf ? undefined : b64, isPdf ? b64 : undefined);
+      return;
+    }
+
+    setSending(true);
+    try {
+      const { fields } = await extractProfile(isPdf ? undefined : b64, isPdf ? b64 : undefined);
+      const details = toProfileDetails(fields);
+      if (Object.keys(details).length === 0) {
+        setSending(false);
+        // Nothing structured we can save — fall back to the conversational agent.
+        send(msg, isPdf ? undefined : b64, isPdf ? b64 : undefined);
+        return;
+      }
+      const prof = await fetchProfile(elderId);
+      const merged = mergeProfileDetails(prof?.details ?? {}, details);
+      await saveProfile(elderId, "elder", prof?.fullName ?? fields.full_name ?? "", merged);
+
+      const parts: string[] = [];
+      if (details.conditions?.length) parts.push(t(language, "settings.medicalConditions"));
+      if (details.allergies?.length) parts.push(t(language, "settings.generalAllergies"));
+      if (details.drugAllergies?.length) parts.push(t(language, "settings.medicationAllergies"));
+      if (details.dob) parts.push(t(language, "settings.dob"));
+      if (details.gender) parts.push(t(language, "settings.gender"));
+      if (details.weightKg != null) parts.push(t(language, "settings.weightKg"));
+      if (details.heightCm != null) parts.push(t(language, "settings.heightCm"));
+      const summary = parts.join(", ");
+      const confirmText = t(language, "ai.profileUpdated", { summary });
+      setMessages(prev => [...prev, { id: Date.now() + 1, role: "agent", text: confirmText, time: nowLabel(), isConfirmation: true }]);
+      setSending(false);
+      scrollToBottom();
+      speak(confirmText);
+      setTimeout(() => onNavigate("settings"), 1400);
+    } catch (err) {
+      console.warn("[dosewise] profile autofill failed:", err);
+      setSending(false);
+      send(msg, isPdf ? undefined : b64, isPdf ? b64 : undefined);
+    }
   };
 
   return (
@@ -293,7 +343,7 @@ export function ElderlyAIScreen({ patient, elderId, onLogDose, onNavigate, onMed
             <div>
               <div className="flex items-center gap-2 px-1 pb-2">
                 <AlertTriangle size={14} className="text-amber-600 shrink-0" />
-                <p className="text-sm font-bold text-amber-900">Mei wasn't sure — ask your doctor</p>
+                <p className="text-sm font-bold text-amber-900">{t(language, "ai.notSureAskDoctor")}</p>
                 <span className="ml-auto text-xs font-bold text-amber-700 bg-amber-100 px-2 py-0.5 rounded-full">{flagged.length}</span>
               </div>
               <div className="space-y-2">
@@ -302,17 +352,17 @@ export function ElderlyAIScreen({ patient, elderId, onLogDose, onNavigate, onMed
                     <div className="flex-1">
                       <div className="flex items-center gap-1.5 mb-1">
                         <Brain size={11} className="text-amber-600" />
-                        <p className="text-[10px] text-amber-600 font-semibold uppercase tracking-wide">From your chat with Mei</p>
+                        <p className="text-[10px] text-amber-600 font-semibold uppercase tracking-wide">{t(language, "ai.fromChatWithMei")}</p>
                       </div>
                       <p className="text-[15px] text-foreground leading-relaxed">{q.question}</p>
                       <p className="text-xs text-amber-700 mt-1">{q.addedAt}</p>
                     </div>
                     <div className="flex flex-col gap-1.5 shrink-0">
                       <button onClick={() => onMarkAnswered(q.id)} className="text-xs font-bold text-primary bg-primary/10 rounded-xl px-3 py-2 active:scale-95 transition-transform whitespace-nowrap">
-                        Asked ✓
+                        {t(language, "ai.askedMark")}
                       </button>
                       <button onClick={() => onDeleteQuestion(q.id)} className="text-xs font-medium text-destructive bg-destructive/10 rounded-xl px-3 py-2 active:scale-95 transition-transform whitespace-nowrap">
-                        Delete
+                        {t(language, "common.delete")}
                       </button>
                     </div>
                   </div>
@@ -333,10 +383,10 @@ export function ElderlyAIScreen({ patient, elderId, onLogDose, onNavigate, onMed
               </div>
               <div className="flex flex-col gap-1.5 shrink-0">
                 <button onClick={() => onMarkAnswered(q.id)} className="text-xs font-bold text-primary bg-primary/10 rounded-xl px-3 py-2 active:scale-95 transition-transform whitespace-nowrap">
-                  Asked ✓
+                  {t(language, "ai.askedMark")}
                 </button>
                 <button onClick={() => onDeleteQuestion(q.id)} className="text-xs font-medium text-destructive bg-destructive/10 rounded-xl px-3 py-2 active:scale-95 transition-transform whitespace-nowrap">
-                  Delete
+                  {t(language, "common.delete")}
                 </button>
               </div>
             </div>
@@ -345,22 +395,22 @@ export function ElderlyAIScreen({ patient, elderId, onLogDose, onNavigate, onMed
           {/* Add question */}
           {showInput ? (
             <div className="bg-card rounded-2xl border border-border p-4">
-              <textarea value={newQ} onChange={e => setNewQ(e.target.value)} placeholder="Type your question for the doctor..." className="w-full bg-transparent text-foreground text-[15px] outline-none resize-none leading-relaxed placeholder:text-muted-foreground min-h-[80px]" autoFocus />
+              <textarea value={newQ} onChange={e => setNewQ(e.target.value)} placeholder={t(language, "ai.questionForDoctorPlaceholder")} className="w-full bg-transparent text-foreground text-[15px] outline-none resize-none leading-relaxed placeholder:text-muted-foreground min-h-[80px]" autoFocus />
               <div className="flex gap-2 mt-3">
-                <button onClick={() => { setShowInput(false); setNewQ(""); }} className="flex-1 h-11 rounded-xl border border-border text-muted-foreground text-sm font-semibold">Cancel</button>
-                <button onClick={() => { if (newQ.trim()) { onAddDoctorQ(newQ.trim()); setNewQ(""); setShowInput(false); } }} className="flex-1 h-11 rounded-xl bg-primary text-primary-foreground text-sm font-bold">Save</button>
+                <button onClick={() => { setShowInput(false); setNewQ(""); }} className="flex-1 h-11 rounded-xl border border-border text-muted-foreground text-sm font-semibold">{t(language, "common.cancel")}</button>
+                <button onClick={() => { if (newQ.trim()) { onAddDoctorQ(newQ.trim()); setNewQ(""); setShowInput(false); } }} className="flex-1 h-11 rounded-xl bg-primary text-primary-foreground text-sm font-bold">{t(language, "common.save")}</button>
               </div>
             </div>
           ) : (
             <button onClick={() => setShowInput(true)} className="w-full h-12 rounded-2xl border-2 border-dashed border-border text-muted-foreground text-sm font-medium flex items-center justify-center gap-2 active:scale-[0.98] transition-transform">
-              <Plus size={15} />Add your own question
+              <Plus size={15} />{t(language, "ai.addOwnQuestion")}
             </button>
           )}
 
           {/* Already asked */}
           {answered.length > 0 && (
             <div>
-              <p className="text-xs text-muted-foreground font-semibold uppercase tracking-wider mb-2">Already asked</p>
+              <p className="text-xs text-muted-foreground font-semibold uppercase tracking-wider mb-2">{t(language, "ai.alreadyAsked")}</p>
               {answered.map(q => (
                 <div key={q.id} className="bg-muted/40 rounded-xl border border-border p-3 mb-2 flex items-start gap-3">
                   <div className="w-4 h-4 rounded-full bg-emerald-500 flex items-center justify-center shrink-0 mt-0.5">
@@ -390,15 +440,15 @@ export function ElderlyAIScreen({ patient, elderId, onLogDose, onNavigate, onMed
                   <Sparkles size={16} />{t(language, "ai.helpSetup")}
                 </button>
                 <div className="grid grid-cols-2 gap-1.5">
-                  <FeatureBtn icon={Camera}   label="Add prescription" onClick={() => rxPhotoRef.current?.click()} />
-                  <FeatureBtn icon={FileText} label="Update profile"   onClick={() => reportRef.current?.click()} />
-                  <FeatureBtn icon={Pill}     label="Ask about a medication" onClick={() => setShowMedPicker(v => !v)} />
-                  <FeatureBtn icon={Globe}    label="Language & voice" onClick={() => setShowLangSheet(true)} />
-                  <FeatureBtn icon={Plane}    label="Travel Mode"      onClick={onOpenTravel} />
+                  <FeatureBtn icon={Camera}   label={t(language, "common.addPrescription")} onClick={() => rxPhotoRef.current?.click()} />
+                  <FeatureBtn icon={FileText} label={t(language, "ai.updateProfile")}   onClick={() => reportRef.current?.click()} />
+                  <FeatureBtn icon={Pill}     label={t(language, "ai.askAboutMed")} onClick={() => setShowMedPicker(v => !v)} />
+                  <FeatureBtn icon={Globe}    label={t(language, "ai.languageVoice")} onClick={() => setShowLangSheet(true)} />
+                  <FeatureBtn icon={Plane}    label={t(language, "common.travelMode")}      onClick={onOpenTravel} />
                 </div>
                 {showMedPicker && (
                   <div className="bg-card border border-border rounded-xl p-2.5">
-                    <p className="text-[11px] text-muted-foreground font-semibold px-0.5 pb-1.5">Which medication would you like to know about?</p>
+                    <p className="text-[11px] text-muted-foreground font-semibold px-0.5 pb-1.5">{t(language, "ai.whichMedication")}</p>
                     <div className="flex flex-wrap gap-1.5">
                       {uniqueMeds.map(n => (
                         <button key={n} onClick={() => { setShowMedPicker(false); send(`What is ${n} for?`); }} className="text-xs font-semibold bg-muted text-foreground rounded-full px-3 py-1.5 active:bg-primary/10 active:text-primary transition-colors">
@@ -439,11 +489,11 @@ export function ElderlyAIScreen({ patient, elderId, onLogDose, onNavigate, onMed
                 )}
                 <div className={`max-w-[82%] flex flex-col gap-1 ${msg.role === "user" ? "items-end" : "items-start"}`}>
                   {msg.image && (
-                    <img src={msg.image} alt="Attachment" className="max-w-[70%] rounded-2xl border border-border object-cover" />
+                    <img src={msg.image} alt={t(language, "ai.attachment")} className="max-w-[70%] rounded-2xl border border-border object-cover" />
                   )}
                   <div className={`rounded-2xl px-4 py-3 ${msg.role === "user" ? "bg-primary text-primary-foreground rounded-tr-sm" : "bg-card border border-border rounded-tl-sm"}`}>
                     <p className={`text-[15px] leading-relaxed whitespace-pre-line ${msg.role === "user" ? "text-primary-foreground" : "text-foreground"}`}>{renderWithBold(msg.text)}</p>
-                    {msg.isClinic && <p className="text-[11px] mt-2 opacity-60 italic">⚕️ Always verify with your doctor or pharmacist</p>}
+                    {msg.isClinic && <p className="text-[11px] mt-2 opacity-60 italic">{t(language, "ai.verifyWithDoctor")}</p>}
                   </div>
                   <p className="text-[10px] text-muted-foreground px-1">{msg.time}</p>
                 </div>
@@ -453,7 +503,7 @@ export function ElderlyAIScreen({ patient, elderId, onLogDose, onNavigate, onMed
               <div className="flex justify-center py-2">
                 <div className="flex items-center gap-2 bg-red-50 border border-red-200 rounded-full px-4 py-2">
                   <div className="w-2.5 h-2.5 bg-red-500 rounded-full animate-pulse" />
-                  <span className="text-sm text-red-700 font-semibold">Listening...</span>
+                  <span className="text-sm text-red-700 font-semibold">{t(language, "ai.listening")}</span>
                 </div>
               </div>
             )}
@@ -464,7 +514,7 @@ export function ElderlyAIScreen({ patient, elderId, onLogDose, onNavigate, onMed
               className="flex gap-2 overflow-x-auto scrollbar-none pb-1"
               onWheel={e => { if (Math.abs(e.deltaY) > Math.abs(e.deltaX)) e.currentTarget.scrollLeft += e.deltaY; }}
             >
-              {["I took my medication", "What do I take?", "Check refills", "Help"].map(s => (
+              {[t(language, "ai.suggestTookMed"), t(language, "ai.suggestWhatDoITake"), t(language, "ai.suggestRefills"), t(language, "ai.suggestHelp")].map(s => (
                 <button key={s} onClick={() => setInput(s)} className="shrink-0 bg-muted text-muted-foreground rounded-full px-3 py-1.5 text-xs font-semibold whitespace-nowrap active:bg-primary/10 active:text-primary transition-colors">
                   {s}
                 </button>
@@ -488,7 +538,7 @@ export function ElderlyAIScreen({ patient, elderId, onLogDose, onNavigate, onMed
                   value={input}
                   onChange={e => { const v = e.target.value; setInput(v); if (v.trim() && quickOpen) setQuickOpen(false); }}
                   onKeyDown={e => { if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); handleSend(); } }}
-                  placeholder="Type or tap the mic to speak..."
+                  placeholder={t(language, "ai.typeOrTapMic")}
                   className="w-full bg-transparent text-foreground text-[15px] resize-none outline-none max-h-24 leading-relaxed placeholder:text-muted-foreground"
                   rows={1}
                 />
@@ -497,7 +547,7 @@ export function ElderlyAIScreen({ patient, elderId, onLogDose, onNavigate, onMed
                 <Send size={16} />
               </button>
             </div>
-            <p className="text-center text-[10px] text-muted-foreground mt-2">Mei is an AI helper. Always check with a doctor or pharmacist for medical advice.</p>
+            <p className="text-center text-[10px] text-muted-foreground mt-2">{t(language, "ai.disclaimer")}</p>
           </div>
 
           {/* hidden inputs used by "Update profile" and "Add prescription" */}
@@ -526,7 +576,7 @@ export function ElderlyAIScreen({ patient, elderId, onLogDose, onNavigate, onMed
                     <div className={`absolute top-0.5 w-6 h-6 rounded-full bg-white shadow transition-all ${voiceOutput ? "left-[22px]" : "left-0.5"}`} />
                   </div>
                 </button>
-                <p className="text-xs text-muted-foreground mt-3">Mei can read her replies aloud in your chosen language.</p>
+                <p className="text-xs text-muted-foreground mt-3">{t(language, "ai.voiceHint")}</p>
               </div>
             </div>
           )}

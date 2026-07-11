@@ -8,6 +8,8 @@ import { extractProfile, fileToBase64 } from "../../lib/hermes";
 import type { ExtractedProfile } from "../../lib/hermes";
 import { MEDICATION_CATALOG, PRESET_TIMES, COMMON_CONDITIONS, COMMON_ALLERGIES, COMMON_DRUG_ALLERGIES } from "../../data/medications";
 import type { Role, WizardPrefill } from "../../lib/profile";
+import { useLanguage } from "../../lib/languageContext";
+import { t } from "../../lib/language";
 
 // A small shared gender picker — icon + label per option, used both here and
 // in ElderlySettingsScreen's "edit what you answered" section.
@@ -41,11 +43,12 @@ const isPositiveNumber = (v: string) => v.trim() !== "" && Number(v) > 0;
 const to24hDate = (d: Date) => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
 
 function WizardChrome({ step, total, onBack, showBack = true, children }: { step: number; total: number; onBack: () => void; showBack?: boolean; children: ReactNode }) {
+  const { language } = useLanguage();
   return (
     <div className="flex flex-col h-full bg-background">
       <div className="px-4 pt-4 pb-1 flex items-center gap-3 shrink-0">
         {showBack ? (
-          <button onClick={onBack} className="w-9 h-9 rounded-full bg-card border border-border flex items-center justify-center active:bg-muted transition-colors shrink-0" aria-label="Back">
+          <button onClick={onBack} className="w-9 h-9 rounded-full bg-card border border-border flex items-center justify-center active:bg-muted transition-colors shrink-0" aria-label={t(language, "wizard.back")}>
             <ArrowLeft size={16} className="text-foreground" />
           </button>
         ) : (
@@ -58,6 +61,16 @@ function WizardChrome({ step, total, onBack, showBack = true, children }: { step
         </div>
       </div>
       <div className="flex-1 overflow-y-auto scrollbar-none px-6 pt-3 pb-6 flex flex-col">{children}</div>
+    </div>
+  );
+}
+
+function ReviewBadge() {
+  const { language } = useLanguage();
+  return (
+    <div className="mb-4 flex items-start gap-2 rounded-xl border border-emerald-300/60 bg-emerald-50 px-3 py-2.5">
+      <Sparkles size={14} className="text-emerald-600 mt-0.5 shrink-0" />
+      <p className="text-xs text-emerald-800 leading-relaxed">{t(language, "setup.autofilledReview")}</p>
     </div>
   );
 }
@@ -117,6 +130,7 @@ export function TagList({ label, placeholder, items, suggestions, extractField, 
       setScanning(false);
     }
   };
+  const { language } = useLanguage();
   const q = value.trim().toLowerCase();
   const matches = q && suggestions
     ? suggestions.filter(s => s.toLowerCase().includes(q) && !items.includes(s)).slice(0, 6)
@@ -151,7 +165,7 @@ export function TagList({ label, placeholder, items, suggestions, extractField, 
             <Plus size={18} className="text-white" />
           </button>
           {extractField && (
-            <button onClick={() => scanRef.current?.click()} disabled={scanning} title="Scan a report or label" className="w-11 h-11 bg-muted rounded-xl flex items-center justify-center disabled:opacity-60 shrink-0">
+            <button onClick={() => scanRef.current?.click()} disabled={scanning} title={t(language, "wizard.scanReportOrLabel")} className="w-11 h-11 bg-muted rounded-xl flex items-center justify-center disabled:opacity-60 shrink-0">
               {scanning ? <Sparkles size={16} className="text-primary animate-pulse" /> : <Camera size={18} className="text-foreground" />}
             </button>
           )}
@@ -174,6 +188,7 @@ export function TagList({ label, placeholder, items, suggestions, extractField, 
 interface DraftMed { name: string; dose: string; time: string }
 
 function MedList({ meds, extractKind, onAdd, onRemove }: { meds: DraftMed[]; extractKind: "current" | "past"; onAdd: (m: DraftMed) => void; onRemove: (i: number) => void }) {
+  const { language } = useLanguage();
   const [open, setOpen] = useState(false);
   const [name, setName] = useState("");
   const [dose, setDose] = useState("");
@@ -185,7 +200,7 @@ function MedList({ meds, extractKind, onAdd, onRemove }: { meds: DraftMed[]; ext
 
   const submit = () => {
     if (!name.trim()) return;
-    onAdd({ name: name.trim(), dose: dose.trim() || "as directed", time });
+    onAdd({ name: name.trim(), dose: dose.trim() || t(language, "wizard.asDirected"), time });
     setName(""); setDose(""); setOpen(false); setProposal(null);
   };
 
@@ -212,10 +227,10 @@ function MedList({ meds, extractKind, onAdd, onRemove }: { meds: DraftMed[]; ext
       for (const m of found) {
         const medName = (m.name ?? "").trim();
         if (!medName) continue;
-        onAdd({ name: medName, dose: (m.dose ?? "").trim() || "as directed", time: PRESET_TIMES[0] });
+        onAdd({ name: medName, dose: (m.dose ?? "").trim() || t(language, "wizard.asDirected"), time: PRESET_TIMES[0] });
         added++;
       }
-      setProposal(added ? `Added ${added} from your upload — review and adjust below.` : (note ?? "I couldn't read a medication from that. Please add it manually."));
+      setProposal(added ? t(language, "wizard.uploadAddedCount", { count: added }) : (note ?? t(language, "wizard.uploadNoMed")));
       if (!added) setOpen(true);
     } finally {
       setScanning(false);
@@ -252,27 +267,23 @@ function MedList({ meds, extractKind, onAdd, onRemove }: { meds: DraftMed[]; ext
         <div className="bg-card border border-border rounded-2xl p-4 space-y-3">
           {(scanning || proposal) && (
             <div className="rounded-xl border border-primary/20 bg-primary/5 p-3 flex gap-3">
-              {scannedPhoto && <img src={scannedPhoto} alt="Scanned label" className="w-12 h-12 rounded-lg object-cover shrink-0" />}
               <div className="flex-1 min-w-0">
                 {scanning ? (
-                  <p className="text-xs text-primary font-semibold flex items-center gap-1.5"><Sparkles size={12} className="animate-pulse" />Reading…</p>
+                  <p className="text-xs text-primary font-semibold flex items-center gap-1.5"><Sparkles size={12} className="animate-pulse" />{t(language, "wizard.reading")}</p>
                 ) : (
-                  <>
-                    <p className="text-xs font-semibold text-primary mb-1">Mei's read of this label</p>
-                    <p className="text-xs text-muted-foreground leading-relaxed">{proposal}</p>
-                  </>
+                  <p className="text-xs text-muted-foreground leading-relaxed">{proposal}</p>
                 )}
               </div>
             </div>
           )}
           <div className="relative">
-            <label className="block text-xs font-semibold text-foreground mb-1.5">Medication name</label>
+            <label className="block text-xs font-semibold text-foreground mb-1.5">{t(language, "wizard.medicationName")}</label>
             <input
               value={name}
               onChange={e => { setName(e.target.value); setShowSuggestions(true); }}
               onFocus={() => setShowSuggestions(true)}
               onBlur={() => setTimeout(() => setShowSuggestions(false), 150)}
-              placeholder="e.g. Metformin"
+              placeholder={t(language, "wizard.medicationNamePlaceholder")}
               className={fieldCls}
               autoFocus
             />
@@ -292,32 +303,32 @@ function MedList({ meds, extractKind, onAdd, onRemove }: { meds: DraftMed[]; ext
             )}
           </div>
           <div>
-            <label className="block text-xs font-semibold text-foreground mb-1.5">Dose (optional)</label>
-            <input value={dose} onChange={e => setDose(e.target.value)} placeholder="e.g. 500mg" className={fieldCls} />
+            <label className="block text-xs font-semibold text-foreground mb-1.5">{t(language, "wizard.dose")}</label>
+            <input value={dose} onChange={e => setDose(e.target.value)} placeholder={t(language, "wizard.dosePlaceholder")} className={fieldCls} />
           </div>
           <div>
-            <label className="block text-xs font-semibold text-foreground mb-1.5">Usual time</label>
+            <label className="block text-xs font-semibold text-foreground mb-1.5">{t(language, "wizard.usualTime")}</label>
             <div className="flex flex-wrap gap-2">
-              {PRESET_TIMES.map(t => (
-                <button key={t} onClick={() => setTime(t)} className={`text-xs font-medium rounded-xl px-3 py-1.5 border transition-colors ${time === t ? "bg-primary text-primary-foreground border-primary" : "bg-muted text-muted-foreground border-border"}`}>
-                  {t}
+              {PRESET_TIMES.map(pt => (
+                <button key={pt} onClick={() => setTime(pt)} className={`text-xs font-medium rounded-xl px-3 py-1.5 border transition-colors ${time === pt ? "bg-primary text-primary-foreground border-primary" : "bg-muted text-muted-foreground border-border"}`}>
+                  {pt}
                 </button>
               ))}
             </div>
           </div>
           <div className="flex gap-2 pt-1">
-            <button onClick={cancel} className="flex-1 h-10 rounded-xl border border-border text-muted-foreground text-sm font-semibold">Cancel</button>
-            <button onClick={submit} disabled={!name.trim()} className="flex-1 h-10 rounded-xl bg-primary text-primary-foreground text-sm font-bold disabled:opacity-40">Add</button>
+            <button onClick={cancel} className="flex-1 h-10 rounded-xl border border-border text-muted-foreground text-sm font-semibold">{t(language, "wizard.cancel")}</button>
+            <button onClick={submit} disabled={!name.trim()} className="flex-1 h-10 rounded-xl bg-primary text-primary-foreground text-sm font-bold disabled:opacity-40">{t(language, "wizard.add")}</button>
           </div>
         </div>
       ) : (
         <div className="flex gap-2">
           <button onClick={() => setOpen(true)} className="flex-1 h-12 rounded-2xl border-2 border-dashed border-border text-muted-foreground text-sm font-medium flex items-center justify-center gap-2 active:scale-[0.98] transition-transform">
-            <Plus size={15} />Add a medication
+            <Plus size={15} />{t(language, "wizard.addMedication")}
           </button>
           <button onClick={() => fileRef.current?.click()} disabled={scanning} className="flex-1 h-12 rounded-2xl border-2 border-dashed border-primary/40 text-primary text-sm font-medium flex items-center justify-center gap-2 active:scale-[0.98] transition-transform disabled:opacity-60">
             {scanning ? <Sparkles size={15} className="animate-pulse" /> : <Camera size={15} />}
-            {scanning ? "Reading…" : "Scan or upload"}
+            {scanning ? t(language, "wizard.reading") : t(language, "wizard.scanOrUpload")}
           </button>
         </div>
       )}
@@ -325,16 +336,20 @@ function MedList({ meds, extractKind, onAdd, onRemove }: { meds: DraftMed[]; ext
   );
 }
 
-export function GuidedSetupWizard({ mode, hasSession, elderId: initialElderId, onComplete, onExit }: {
+export function GuidedSetupWizard({ mode, hasSession, elderId: initialElderId, prefill, onComplete, onExit }: {
   mode: "elderly" | "caregiver";
   hasSession: boolean;
   elderId?: string;
+  // Fields pulled from an uploaded record on the setup-method screen; seeds the
+  // answers so the user reviews + edits instead of typing from scratch.
+  prefill?: WizardPrefill;
   onComplete: () => void;
   onExit: () => void;
 }) {
   // Frozen at mount: once the account step creates a session mid-wizard, the
   // parent's live `hasSession` prop flips true, which would otherwise filter
   // "account" out of `steps` mid-flow and shift every later index by one.
+  const { language } = useLanguage();
   const [hasSessionAtStart] = useState(hasSession);
   const [stepIndex, setStepIndex] = useState(0);
   const [elderId, setElderId] = useState<string | undefined>(initialElderId);
@@ -344,21 +359,31 @@ export function GuidedSetupWizard({ mode, hasSession, elderId: initialElderId, o
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
 
-  const [fullName, setFullName] = useState("");
-  const [dob, setDob] = useState("");
-  const [weightKg, setWeightKg] = useState("");
-  const [heightCm, setHeightCm] = useState("");
-  const [gender, setGender] = useState("");
-  const [conditions, setConditions] = useState<string[]>([]);
-  const [allergies, setAllergies] = useState<string[]>([]);
-  const [drugAllergies, setDrugAllergies] = useState<string[]>([]);
-  const [currentMeds, setCurrentMeds] = useState<DraftMed[]>([]);
-  const [pastMeds, setPastMeds] = useState<DraftMed[]>([]);
+  // Seeded once from `prefill` (an uploaded-record extraction) so the user
+  // reviews pre-filled answers; empty when the person chose guided setup.
+  const [fullName, setFullName] = useState(prefill?.fullName ?? "");
+  const [dob, setDob] = useState(prefill?.details.dob ?? "");
+  const [weightKg, setWeightKg] = useState(prefill?.details.weightKg != null ? String(prefill.details.weightKg) : "");
+  const [heightCm, setHeightCm] = useState(prefill?.details.heightCm != null ? String(prefill.details.heightCm) : "");
+  const [gender, setGender] = useState(prefill?.details.gender ?? "");
+  const [conditions, setConditions] = useState<string[]>(prefill?.details.conditions ?? []);
+  const [allergies, setAllergies] = useState<string[]>(prefill?.details.allergies ?? []);
+  const [drugAllergies, setDrugAllergies] = useState<string[]>(prefill?.details.drugAllergies ?? []);
+  const [currentMeds, setCurrentMeds] = useState<DraftMed[]>(prefill?.currentMeds ?? []);
+  const [pastMeds, setPastMeds] = useState<DraftMed[]>(prefill?.pastMeds ?? []);
   const [breakfast, setBreakfast] = useState("08:00");
   const [lunch, setLunch] = useState("12:30");
   const [dinner, setDinner] = useState("19:00");
   const [sleepTime, setSleepTime] = useState("22:30");
   const [finishing, setFinishing] = useState(false);
+
+  // Whether the upload pre-filled anything worth flagging for review.
+  const prefilled = !!prefill && (
+    !!prefill.fullName ||
+    Object.keys(prefill.details).length > 0 ||
+    prefill.currentMeds.length > 0 ||
+    prefill.pastMeds.length > 0
+  );
 
   const role: Role = mode === "elderly" ? "elder" : "caregiver";
   const allSteps = mode === "elderly"
@@ -384,7 +409,7 @@ export function GuidedSetupWizard({ mode, hasSession, elderId: initialElderId, o
     setAccountLoading(false);
     if (error) { setAccountError(error.message); return; }
     if (!data.session || !data.user) {
-      setAccountInfo("Check your email to confirm your account, then come back and sign in.");
+      setAccountInfo(t(language, "wizard.checkEmail"));
       return;
     }
     setElderId(data.user.id);
@@ -424,23 +449,23 @@ export function GuidedSetupWizard({ mode, hasSession, elderId: initialElderId, o
       {step === "account" && (
         <>
           <StepHeader
-            title={hasSessionAtStart ? "What should we call you?" : "Let's create your account"}
-            subtitle={hasSessionAtStart ? "This is how the app will greet you." : "This keeps your information safe and lets you sign back in later."}
+            title={hasSessionAtStart ? t(language, "wizard.accountTitleReturning") : t(language, "wizard.accountTitleNew")}
+            subtitle={hasSessionAtStart ? t(language, "wizard.accountSubtitleReturning") : t(language, "wizard.accountSubtitleNew")}
           />
           <div className="space-y-3 flex-1">
             <div>
-              <label className="block text-xs font-semibold text-foreground mb-1.5">Preferred name</label>
-              <input value={fullName} onChange={e => setFullName(e.target.value)} placeholder="What should we call you?" className={cls(fullName.trim().length > 0)} />
+              <label className="block text-xs font-semibold text-foreground mb-1.5">{t(language, "wizard.preferredName")}</label>
+              <input value={fullName} onChange={e => setFullName(e.target.value)} placeholder={t(language, "wizard.preferredNamePlaceholder")} className={cls(fullName.trim().length > 0)} />
             </div>
             {!hasSessionAtStart && (
               <>
                 <div>
-                  <label className="block text-xs font-semibold text-foreground mb-1.5">Email</label>
-                  <input type="email" value={email} onChange={e => setEmail(e.target.value)} placeholder="you@example.com" className={cls(isEmail(email))} autoComplete="email" />
+                  <label className="block text-xs font-semibold text-foreground mb-1.5">{t(language, "wizard.email")}</label>
+                  <input type="email" value={email} onChange={e => setEmail(e.target.value)} placeholder={t(language, "wizard.emailPlaceholder")} className={cls(isEmail(email))} autoComplete="email" />
                 </div>
                 <div>
-                  <label className="block text-xs font-semibold text-foreground mb-1.5">Password</label>
-                  <input type="password" value={password} onChange={e => setPassword(e.target.value)} onKeyDown={e => e.key === "Enter" && createAccount()} placeholder="At least 6 characters" className={cls(password.length >= 6)} autoComplete="new-password" />
+                  <label className="block text-xs font-semibold text-foreground mb-1.5">{t(language, "wizard.password")}</label>
+                  <input type="password" value={password} onChange={e => setPassword(e.target.value)} onKeyDown={e => e.key === "Enter" && createAccount()} placeholder={t(language, "wizard.passwordPlaceholder")} className={cls(password.length >= 6)} autoComplete="new-password" />
                 </div>
               </>
             )}
@@ -448,117 +473,122 @@ export function GuidedSetupWizard({ mode, hasSession, elderId: initialElderId, o
             {accountInfo && <p className="text-xs text-primary font-medium">{accountInfo}</p>}
           </div>
           {hasSessionAtStart ? (
-            <ContinueButton onClick={goNext} disabled={!fullName.trim()}>Continue</ContinueButton>
+            <ContinueButton onClick={goNext} disabled={!fullName.trim()}>{t(language, "wizard.continue")}</ContinueButton>
           ) : (
-            <ContinueButton onClick={createAccount} disabled={!email.trim() || !password.trim()} loading={accountLoading}>Create account</ContinueButton>
+            <ContinueButton onClick={createAccount} disabled={!email.trim() || !password.trim()} loading={accountLoading}>{t(language, "wizard.createAccount")}</ContinueButton>
           )}
         </>
       )}
 
       {step === "profile" && (
         <>
-          <StepHeader title="Tell us about yourself" subtitle="Just the basics — you can update this anytime." />
+          <StepHeader title={t(language, "wizard.profileTitle")} subtitle={t(language, "wizard.profileSubtitle")} />
+          {prefilled && <ReviewBadge />}
           <div className="space-y-3 flex-1">
             <div className="flex gap-3">
               <div className="flex-1">
-                <label className="block text-xs font-semibold text-foreground mb-1.5">Date of birth</label>
+                <label className="block text-xs font-semibold text-foreground mb-1.5">{t(language, "settings.dob")}</label>
                 <input type="date" value={dob} onChange={e => setDob(e.target.value)} max={to24hDate(new Date())} className={cls(dob.trim().length > 0)} />
               </div>
               <div className="flex-1">
-                <label className="block text-xs font-semibold text-foreground mb-1.5">Gender</label>
+                <label className="block text-xs font-semibold text-foreground mb-1.5">{t(language, "settings.gender")}</label>
                 <GenderPicker value={gender} onChange={setGender} />
               </div>
             </div>
             <div className="flex gap-3">
               <div className="flex-1">
-                <label className="block text-xs font-semibold text-foreground mb-1.5">Weight (kg)</label>
-                <input type="number" value={weightKg} onChange={e => setWeightKg(e.target.value)} placeholder="e.g. 60" className={cls(isPositiveNumber(weightKg))} />
+                <label className="block text-xs font-semibold text-foreground mb-1.5">{t(language, "settings.weightKg")}</label>
+                <input type="number" value={weightKg} onChange={e => setWeightKg(e.target.value)} placeholder={t(language, "wizard.weightPlaceholder")} className={cls(isPositiveNumber(weightKg))} />
               </div>
               <div className="flex-1">
-                <label className="block text-xs font-semibold text-foreground mb-1.5">Height (cm)</label>
-                <input type="number" value={heightCm} onChange={e => setHeightCm(e.target.value)} placeholder="e.g. 160" className={cls(isPositiveNumber(heightCm))} />
+                <label className="block text-xs font-semibold text-foreground mb-1.5">{t(language, "settings.heightCm")}</label>
+                <input type="number" value={heightCm} onChange={e => setHeightCm(e.target.value)} placeholder={t(language, "wizard.heightPlaceholder")} className={cls(isPositiveNumber(heightCm))} />
               </div>
             </div>
           </div>
-          <ContinueButton onClick={goNext}>Continue</ContinueButton>
+          <ContinueButton onClick={goNext}>{t(language, "wizard.continue")}</ContinueButton>
         </>
       )}
 
       {step === "conditions" && (
         <>
-          <StepHeader title="Any medical conditions?" subtitle="This helps us understand your health picture. Leave blank if none." />
+          <StepHeader title={t(language, "wizard.conditionsTitle")} subtitle={t(language, "wizard.conditionsSubtitle")} />
+          {prefilled && <ReviewBadge />}
           <div className="flex-1">
-            <TagList label="Medical conditions" placeholder="e.g. Diabetes, Blood Pressure" items={conditions} suggestions={COMMON_CONDITIONS} scanDemo={COMMON_CONDITIONS.find(c => !conditions.includes(c))} onAdd={v => setConditions(p => [...p, v])} onRemove={i => setConditions(p => p.filter((_, j) => j !== i))} />
+            <TagList label={t(language, "common.medicalConditions")} placeholder={t(language, "wizard.conditionsPlaceholder")} items={conditions} suggestions={COMMON_CONDITIONS} extractField="conditions" onAdd={v => setConditions(p => [...p, v])} onRemove={i => setConditions(p => p.filter((_, j) => j !== i))} />
           </div>
-          <ContinueButton onClick={goNext}>{conditions.length ? "Continue" : "Skip for now"}</ContinueButton>
+          <ContinueButton onClick={goNext}>{conditions.length ? t(language, "wizard.continue") : t(language, "wizard.skipForNow")}</ContinueButton>
         </>
       )}
 
       {step === "allergies" && (
         <>
-          <StepHeader title="Do you have any allergies?" subtitle="This helps us warn you about medications that could be risky. Leave blank if none." />
+          <StepHeader title={t(language, "wizard.allergiesTitle")} subtitle={t(language, "wizard.allergiesSubtitle")} />
+          {prefilled && <ReviewBadge />}
           <div className="flex-1">
-            <TagList label="General allergies" placeholder="e.g. Peanuts, Shellfish" items={allergies} suggestions={COMMON_ALLERGIES} scanDemo={COMMON_ALLERGIES.find(a => !allergies.includes(a))} onAdd={v => setAllergies(p => [...p, v])} onRemove={i => setAllergies(p => p.filter((_, j) => j !== i))} />
-            <TagList label="Medication allergies" placeholder="e.g. Penicillin" items={drugAllergies} suggestions={COMMON_DRUG_ALLERGIES} scanDemo={COMMON_DRUG_ALLERGIES.find(a => !drugAllergies.includes(a))} onAdd={v => setDrugAllergies(p => [...p, v])} onRemove={i => setDrugAllergies(p => p.filter((_, j) => j !== i))} />
+            <TagList label={t(language, "settings.generalAllergies")} placeholder={t(language, "wizard.allergiesPlaceholder")} items={allergies} suggestions={COMMON_ALLERGIES} extractField="allergies" onAdd={v => setAllergies(p => [...p, v])} onRemove={i => setAllergies(p => p.filter((_, j) => j !== i))} />
+            <TagList label={t(language, "settings.medicationAllergies")} placeholder={t(language, "wizard.drugAllergiesPlaceholder")} items={drugAllergies} suggestions={COMMON_DRUG_ALLERGIES} extractField="drug_allergies" onAdd={v => setDrugAllergies(p => [...p, v])} onRemove={i => setDrugAllergies(p => p.filter((_, j) => j !== i))} />
           </div>
-          <ContinueButton onClick={goNext}>Continue</ContinueButton>
+          <ContinueButton onClick={goNext}>{t(language, "wizard.continue")}</ContinueButton>
         </>
       )}
 
       {step === "current-meds" && (
         <>
-          <StepHeader title="What medications are you taking now?" subtitle="Add each one you take regularly. You can skip this and add them later." />
+          <StepHeader title={t(language, "wizard.currentMedsTitle")} subtitle={t(language, "wizard.currentMedsSubtitle")} />
+          {prefilled && <ReviewBadge />}
           <div className="flex-1">
-            <MedList meds={currentMeds} onAdd={m => setCurrentMeds(p => [...p, m])} onRemove={i => setCurrentMeds(p => p.filter((_, j) => j !== i))} />
+            <MedList meds={currentMeds} extractKind="current" onAdd={m => setCurrentMeds(p => [...p, m])} onRemove={i => setCurrentMeds(p => p.filter((_, j) => j !== i))} />
           </div>
-          <ContinueButton onClick={goNext}>{currentMeds.length ? "Continue" : "Skip for now"}</ContinueButton>
+          <ContinueButton onClick={goNext}>{currentMeds.length ? t(language, "wizard.continue") : t(language, "wizard.skipForNow")}</ContinueButton>
         </>
       )}
 
       {step === "med-history" && (
         <>
-          <StepHeader title="Any medications you've taken before?" subtitle="Past medications help us spot possible conflicts with new ones. Optional." />
+          <StepHeader title={t(language, "wizard.medHistoryTitle")} subtitle={t(language, "wizard.medHistorySubtitle")} />
+          {prefilled && <ReviewBadge />}
           <div className="flex-1">
-            <MedList meds={pastMeds} onAdd={m => setPastMeds(p => [...p, m])} onRemove={i => setPastMeds(p => p.filter((_, j) => j !== i))} />
+            <MedList meds={pastMeds} extractKind="past" onAdd={m => setPastMeds(p => [...p, m])} onRemove={i => setPastMeds(p => p.filter((_, j) => j !== i))} />
           </div>
-          <ContinueButton onClick={goNext}>{pastMeds.length ? "Continue" : "Skip for now"}</ContinueButton>
+          <ContinueButton onClick={goNext}>{pastMeds.length ? t(language, "wizard.continue") : t(language, "wizard.skipForNow")}</ContinueButton>
         </>
       )}
 
       {step === "routine" && (
         <>
-          <StepHeader title="When do you usually eat and sleep?" subtitle="Some medications are timed around meals — this helps us remind you at the right moment." />
+          <StepHeader title={t(language, "wizard.routineTitle")} subtitle={t(language, "wizard.routineSubtitle")} />
           <div className="space-y-4 flex-1">
             <div className="flex items-center gap-3">
               <div className="w-9 h-9 rounded-xl bg-secondary flex items-center justify-center shrink-0"><Coffee size={16} className="text-primary" /></div>
               <div className="flex-1">
-                <label className="block text-xs font-semibold text-foreground mb-1">Breakfast</label>
+                <label className="block text-xs font-semibold text-foreground mb-1">{t(language, "wizard.breakfast")}</label>
                 <input type="time" value={breakfast} onChange={e => setBreakfast(e.target.value)} className={fieldCls} />
               </div>
             </div>
             <div className="flex items-center gap-3">
               <div className="w-9 h-9 rounded-xl bg-secondary flex items-center justify-center shrink-0"><Utensils size={16} className="text-primary" /></div>
               <div className="flex-1">
-                <label className="block text-xs font-semibold text-foreground mb-1">Lunch</label>
+                <label className="block text-xs font-semibold text-foreground mb-1">{t(language, "wizard.lunch")}</label>
                 <input type="time" value={lunch} onChange={e => setLunch(e.target.value)} className={fieldCls} />
               </div>
             </div>
             <div className="flex items-center gap-3">
               <div className="w-9 h-9 rounded-xl bg-secondary flex items-center justify-center shrink-0"><UtensilsCrossed size={16} className="text-primary" /></div>
               <div className="flex-1">
-                <label className="block text-xs font-semibold text-foreground mb-1">Dinner</label>
+                <label className="block text-xs font-semibold text-foreground mb-1">{t(language, "wizard.dinner")}</label>
                 <input type="time" value={dinner} onChange={e => setDinner(e.target.value)} className={fieldCls} />
               </div>
             </div>
             <div className="flex items-center gap-3">
               <div className="w-9 h-9 rounded-xl bg-secondary flex items-center justify-center shrink-0"><Moon size={16} className="text-primary" /></div>
               <div className="flex-1">
-                <label className="block text-xs font-semibold text-foreground mb-1">Bedtime</label>
+                <label className="block text-xs font-semibold text-foreground mb-1">{t(language, "wizard.bedtime")}</label>
                 <input type="time" value={sleepTime} onChange={e => setSleepTime(e.target.value)} className={fieldCls} />
               </div>
             </div>
           </div>
-          <ContinueButton onClick={goNext}>Continue</ContinueButton>
+          <ContinueButton onClick={goNext}>{t(language, "wizard.continue")}</ContinueButton>
         </>
       )}
 
@@ -568,10 +598,10 @@ export function GuidedSetupWizard({ mode, hasSession, elderId: initialElderId, o
             <div className="w-16 h-16 rounded-full bg-primary/10 flex items-center justify-center mb-4">
               <PartyPopper size={30} className="text-primary" />
             </div>
-            <h1 className="font-['Fraunces'] text-xl font-semibold text-foreground mb-2">All set{fullName ? `, ${fullName}` : ""}!</h1>
-            <p className="text-sm text-muted-foreground leading-relaxed max-w-[260px]">Your profile is ready. You can always change any of this later in Settings.</p>
+            <h1 className="font-['Fraunces'] text-xl font-semibold text-foreground mb-2">{t(language, "wizard.allSet", { name: fullName ? `, ${fullName}` : "" })}</h1>
+            <p className="text-sm text-muted-foreground leading-relaxed max-w-[260px]">{t(language, "wizard.profileReady")}</p>
           </div>
-          <ContinueButton onClick={finish} loading={finishing}><Check size={16} />Go to Dosewise</ContinueButton>
+          <ContinueButton onClick={finish} loading={finishing}><Check size={16} />{t(language, "wizard.goToDosewise")}</ContinueButton>
         </>
       )}
 
@@ -581,10 +611,10 @@ export function GuidedSetupWizard({ mode, hasSession, elderId: initialElderId, o
             <div className="w-16 h-16 rounded-full bg-primary/10 flex items-center justify-center mb-4">
               <Users size={28} className="text-primary" />
             </div>
-            <h1 className="font-['Fraunces'] text-xl font-semibold text-foreground mb-2">You're set up!</h1>
-            <p className="text-sm text-muted-foreground leading-relaxed max-w-[260px]">Next, link the person you're caring for — that's coming soon. For now, take a look around.</p>
+            <h1 className="font-['Fraunces'] text-xl font-semibold text-foreground mb-2">{t(language, "wizard.youreSetUp")}</h1>
+            <p className="text-sm text-muted-foreground leading-relaxed max-w-[260px]">{t(language, "wizard.caregiverPlaceholderBody")}</p>
           </div>
-          <ContinueButton onClick={finish} loading={finishing}><Check size={16} />Go to Dosewise</ContinueButton>
+          <ContinueButton onClick={finish} loading={finishing}><Check size={16} />{t(language, "wizard.goToDosewise")}</ContinueButton>
         </>
       )}
     </WizardChrome>

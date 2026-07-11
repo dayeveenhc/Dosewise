@@ -1,15 +1,18 @@
 import { MessageSquare, User } from "lucide-react";
 import type { Message } from "../../types";
+import { useLanguage } from "../../lib/languageContext";
+import { t } from "../../lib/language";
 
 export function ElderlyNotificationsScreen({ careMessages }: { careMessages: Message[] }) {
+  const { language } = useLanguage();
   return (
     <div className="flex flex-col flex-1 overflow-hidden">
       <div className="flex-1 overflow-y-auto scrollbar-none px-4 pb-28 pt-3 space-y-3">
-        <p className="text-sm text-muted-foreground">Messages from your family and care team</p>
+        <p className="text-sm text-muted-foreground">{t(language, "notifications.header")}</p>
         {careMessages.length === 0 ? (
           <div className="bg-card rounded-2xl border border-border p-6 text-center">
             <MessageSquare size={28} className="text-muted-foreground mx-auto mb-2" />
-            <p className="text-sm text-muted-foreground">No messages yet from your caregiver.</p>
+            <p className="text-sm text-muted-foreground">{t(language, "notifications.empty")}</p>
           </div>
         ) : careMessages.map(msg => (
           <div key={msg.id} className="bg-card rounded-2xl border border-border p-4">

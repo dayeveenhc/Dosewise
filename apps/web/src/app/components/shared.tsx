@@ -2,6 +2,8 @@ import { useEffect, useState } from "react";
 import { CheckCircle2, AlertTriangle, Circle, X, ChevronDown, Plus, Droplets, Pill } from "lucide-react";
 import type { MedStatus, Patient } from "../types";
 import { MED_PHOTOS, MED_COLOURS } from "../data/medications";
+import { useLanguage } from "../lib/languageContext";
+import { t } from "../lib/language";
 
 // Deterministic colour per medication name — so a medicine with no bundled
 // photo (most of MEDICATION_CATALOG, or anything freeform) still gets a
@@ -52,11 +54,12 @@ export function LiveStatusBar({ className = "" }: { className?: string }) {
 }
 
 export function StatusPill({ status, small = false }: { status: MedStatus; small?: boolean }) {
+  const { language } = useLanguage();
   const map: Record<MedStatus, { label: string; icon: React.ReactNode; cls: string }> = {
-    taken: { label: "Taken", icon: <CheckCircle2 size={small ? 11 : 13} />, cls: "bg-emerald-50 text-emerald-700 border border-emerald-200" },
-    missed: { label: "Missed", icon: <AlertTriangle size={small ? 11 : 13} />, cls: "bg-orange-50 text-orange-700 border border-orange-200" },
-    upcoming: { label: "Upcoming", icon: <Circle size={small ? 11 : 13} />, cls: "bg-sky-50 text-sky-700 border border-sky-200" },
-    skipped: { label: "Skipped", icon: <X size={small ? 11 : 13} />, cls: "bg-stone-100 text-stone-500 border border-stone-200" },
+    taken: { label: t(language, "common.taken"), icon: <CheckCircle2 size={small ? 11 : 13} />, cls: "bg-emerald-50 text-emerald-700 border border-emerald-200" },
+    missed: { label: t(language, "common.missed"), icon: <AlertTriangle size={small ? 11 : 13} />, cls: "bg-orange-50 text-orange-700 border border-orange-200" },
+    upcoming: { label: t(language, "common.upcoming"), icon: <Circle size={small ? 11 : 13} />, cls: "bg-sky-50 text-sky-700 border border-sky-200" },
+    skipped: { label: t(language, "common.skipped"), icon: <X size={small ? 11 : 13} />, cls: "bg-stone-100 text-stone-500 border border-stone-200" },
   };
   const { label, icon, cls } = map[status];
   return (
@@ -91,6 +94,7 @@ export function QuickAction({ icon, label, colour, onClick }: { icon: React.Reac
 }
 
 export function PatientSwitcher({ patients, selected, onSelect, onAdd }: { patients: Patient[]; selected: number; onSelect: (i: number) => void; onAdd: (name: string, relation: string) => void }) {
+  const { language } = useLanguage();
   const [open, setOpen] = useState(false);
   const [adding, setAdding] = useState(false);
   const [newName, setNewName] = useState("");
@@ -99,7 +103,7 @@ export function PatientSwitcher({ patients, selected, onSelect, onAdd }: { patie
 
   const submitAdd = () => {
     if (!newName.trim()) return;
-    onAdd(newName.trim(), newRelation.trim() || "Care recipient");
+    onAdd(newName.trim(), newRelation.trim() || t(language, "patientSwitcher.careRecipientDefault"));
     setNewName(""); setNewRelation(""); setAdding(false); setOpen(false);
   };
 
@@ -112,7 +116,7 @@ export function PatientSwitcher({ patients, selected, onSelect, onAdd }: { patie
         <img src={patient.photo} alt={patient.name} className="w-8 h-8 rounded-full object-cover bg-muted" />
         <div className="flex-1 text-left">
           <div className="text-xs font-semibold text-foreground leading-tight">{patient.nickname} · {patient.relation}</div>
-          <div className="text-[10px] text-muted-foreground">Checked {patient.lastChecked}</div>
+          <div className="text-[10px] text-muted-foreground">{t(language, "patientSwitcher.checked", { time: patient.lastChecked })}</div>
         </div>
         <ChevronDown size={14} className={`text-muted-foreground transition-transform ${open ? "rotate-180" : ""}`} />
       </button>
@@ -128,7 +132,7 @@ export function PatientSwitcher({ patients, selected, onSelect, onAdd }: { patie
               <img src={p.photo} alt={p.name} className="w-8 h-8 rounded-full object-cover bg-muted" />
               <div>
                 <div className="text-xs font-semibold text-foreground">{p.name}</div>
-                <div className="text-[10px] text-muted-foreground">{p.relation} · Age {p.age}</div>
+                <div className="text-[10px] text-muted-foreground">{t(language, "common.relationAge", { relation: p.relation, age: p.age })}</div>
               </div>
               {i === selected && <CheckCircle2 size={14} className="ml-auto text-primary" />}
             </button>
@@ -139,21 +143,21 @@ export function PatientSwitcher({ patients, selected, onSelect, onAdd }: { patie
                 autoFocus
                 value={newName}
                 onChange={e => setNewName(e.target.value)}
-                placeholder="Full name"
+                placeholder={t(language, "common.fullName")}
                 className="w-full bg-input-background border border-border rounded-xl px-3 py-2 text-xs text-foreground placeholder:text-muted-foreground outline-none focus:border-primary transition-colors"
               />
               <input
                 value={newRelation}
                 onChange={e => setNewRelation(e.target.value)}
-                placeholder="Your relation (e.g. Mother)"
+                placeholder={t(language, "patientSwitcher.relationPlaceholder")}
                 className="w-full bg-input-background border border-border rounded-xl px-3 py-2 text-xs text-foreground placeholder:text-muted-foreground outline-none focus:border-primary transition-colors"
               />
               <div className="flex gap-2">
                 <button onClick={submitAdd} disabled={!newName.trim()} className="flex-1 bg-primary text-primary-foreground rounded-xl py-1.5 text-xs font-semibold disabled:opacity-40">
-                  Add
+                  {t(language, "wizard.add")}
                 </button>
                 <button onClick={() => { setAdding(false); setNewName(""); setNewRelation(""); }} className="px-3 rounded-xl border border-border text-xs font-semibold text-muted-foreground">
-                  Cancel
+                  {t(language, "common.cancel")}
                 </button>
               </div>
             </div>
@@ -162,7 +166,7 @@ export function PatientSwitcher({ patients, selected, onSelect, onAdd }: { patie
               <div className="w-8 h-8 rounded-full bg-muted flex items-center justify-center">
                 <Plus size={14} className="text-muted-foreground" />
               </div>
-              <span className="text-xs text-muted-foreground font-medium">Add care recipient</span>
+              <span className="text-xs text-muted-foreground font-medium">{t(language, "patientSwitcher.addCareRecipient")}</span>
             </button>
           )}
         </div>

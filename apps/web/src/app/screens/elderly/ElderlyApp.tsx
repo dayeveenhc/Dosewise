@@ -89,31 +89,31 @@ export function ElderlyApp({ patient, elderId, onUpdatePatient, onBack, onSignOu
   const tourSteps: TourStep[] = [
     {
       target: '[data-tour="elder-schedule"]', navTarget: '[data-tour="nav-home"]', onEnter: () => setTab("home"),
-      title: "Your daily schedule", body: "Your medicines for the day appear here, at the time you take them. Tap a card to mark it as taken.",
+      title: t(language, "tour.elderScheduleTitle"), body: t(language, "tour.elderScheduleBody"),
     },
     {
       target: '[data-tour="elder-medlist"]', navTarget: '[data-tour="nav-prescriptions"]', onEnter: () => setTab("prescriptions"),
-      title: "Your medications", body: "See every medicine you're taking, how to take it, and how much supply you have left.",
+      title: t(language, "tour.elderMedsTitle"), body: t(language, "tour.elderMedsBody"),
     },
     {
       target: '[data-tour="elder-add-prescription"]', navTarget: '[data-tour="nav-prescriptions"]', onEnter: () => setTab("prescriptions"),
-      title: "Add a new prescription", body: "Tap here to add a medicine by typing it in, or snap a photo of the label.",
+      title: t(language, "tour.elderAddRxTitle"), body: t(language, "tour.elderAddRxBody"),
     },
     {
       target: '[data-tour="elder-quickhelp"]', navTarget: '[data-tour="nav-ai"]', onEnter: () => setTab("ai"),
-      title: "Ask Mei", body: "Chat with Mei anytime — add a prescription by photo, ask about a medicine, or plan a trip with Travel Mode.",
+      title: t(language, "tour.elderAskMeiTitle"), body: t(language, "tour.elderAskMeiBody"),
     },
     {
       target: '[data-tour="elder-profile-section"]', navTarget: '[data-tour="nav-settings"]', onEnter: () => setTab("settings"),
-      title: "Your profile", body: "Update your age, conditions, allergies, and more here anytime — this is what Mei uses to keep you safe.",
+      title: t(language, "tour.elderProfileTitle"), body: t(language, "tour.elderProfileBody"),
     },
     {
       target: '[data-tour="elder-fontsize"]', navTarget: '[data-tour="nav-settings"]', onEnter: () => setTab("settings"),
-      title: "Make text easier to read", body: "Drag this to make text bigger or smaller, whatever's comfortable for you.",
+      title: t(language, "tour.elderFontTitle"), body: t(language, "tour.elderFontBody"),
     },
     {
       target: '[data-tour="elder-language"]', navTarget: '[data-tour="nav-settings"]', onEnter: () => setTab("settings"),
-      title: "Language & voice", body: "Change the language Mei speaks and types in, and turn her spoken replies on or off.",
+      title: t(language, "tour.elderLangTitle"), body: t(language, "tour.elderLangBody"),
     },
   ];
 
@@ -280,9 +280,9 @@ export function ElderlyApp({ patient, elderId, onUpdatePatient, onBack, onSignOu
       {showTour && <GuidedTour steps={tourSteps} onFinish={() => setShowTour(false)} />}
       {showTourConfirm && (
         <ConfirmDialog
-          title="Replay guided tour?"
-          body="We'll walk you through the main features again, starting from Home."
-          confirmLabel="Replay"
+          title={t(language, "confirm.replayTourTitle")}
+          body={t(language, "confirm.replayTourBodyElder")}
+          confirmLabel={t(language, "confirm.replay")}
           onConfirm={() => { setShowTourConfirm(false); setShowTour(true); }}
           onCancel={() => setShowTourConfirm(false)}
         />

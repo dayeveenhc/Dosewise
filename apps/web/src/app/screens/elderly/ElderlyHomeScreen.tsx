@@ -261,7 +261,7 @@ export function ElderlyHomeScreen({ patient, onLogDose, onOpenTravel, justAddedM
                   <p className="font-bold text-[17px] text-foreground leading-snug">{m.name}</p>
                   {justAdded && (
                     <span className="flex items-center gap-1 bg-emerald-100 text-emerald-700 text-[10px] font-bold px-2 py-0.5 rounded-full">
-                      <Check size={9} strokeWidth={3} />Just added
+                      <Check size={9} strokeWidth={3} />{t(language, "prescription.justAdded")}
                     </span>
                   )}
                   {isMissed && (
@@ -395,7 +395,7 @@ export function ElderlyHomeScreen({ patient, onLogDose, onOpenTravel, justAddedM
           ))}
 
           {slots.length === 0 && (
-            <div className="text-center text-sm text-muted-foreground pt-8">No medications scheduled.</div>
+            <div className="text-center text-sm text-muted-foreground pt-8">{t(language, "home.noSchedule")}</div>
           )}
         </div>
       </div>
@@ -407,7 +407,7 @@ export function ElderlyHomeScreen({ patient, onLogDose, onOpenTravel, justAddedM
           className="absolute bottom-4 right-4 z-30 flex items-center gap-1.5 bg-primary text-primary-foreground rounded-full pl-3 pr-4 py-2.5 shadow-lg active:scale-95 transition-transform"
         >
           <LocateFixed size={16} />
-          <span className="text-sm font-bold">Now</span>
+          <span className="text-sm font-bold">{t(language, "home.now")}</span>
         </button>
       )}
 
@@ -416,7 +416,7 @@ export function ElderlyHomeScreen({ patient, onLogDose, onOpenTravel, justAddedM
         <div className={`absolute inset-0 z-40 flex items-center justify-center pointer-events-none transition-opacity duration-500 ${toastVisible ? "opacity-100" : "opacity-0"}`}>
           <div className="bg-emerald-500 text-white rounded-2xl px-6 py-5 flex items-center gap-3 shadow-xl">
             <CheckCircle2 size={24} />
-            <p className="font-semibold text-base">Recorded! Well done 🌟</p>
+            <p className="font-semibold text-base">{t(language, "home.recorded")}</p>
           </div>
         </div>
       )}
@@ -426,7 +426,7 @@ export function ElderlyHomeScreen({ patient, onLogDose, onOpenTravel, justAddedM
         <div className="absolute inset-0 z-50 flex items-end justify-center bg-black/40" onClick={() => setPendingDose(null)}>
           <div className="w-full bg-background rounded-t-3xl p-5 pb-7 animate-in slide-in-from-bottom duration-200" onClick={e => e.stopPropagation()}>
             <div className="flex items-center justify-between mb-4">
-              <h3 className="font-['Fraunces'] text-xl font-semibold text-foreground">Mark as taken</h3>
+              <h3 className="font-['Fraunces'] text-xl font-semibold text-foreground">{t(language, "home.markTaken")}</h3>
               <button onClick={() => setPendingDose(null)} className="w-8 h-8 rounded-full bg-muted flex items-center justify-center">
                 <X size={16} className="text-muted-foreground" />
               </button>
@@ -438,11 +438,11 @@ export function ElderlyHomeScreen({ patient, onLogDose, onOpenTravel, justAddedM
               </div>
               <div>
                 <p className="font-bold text-[17px] text-foreground">{pendingDose.name}</p>
-                <p className="text-sm text-muted-foreground">Scheduled for {resolveDose(pendingDose).clock}</p>
+                <p className="text-sm text-muted-foreground">{t(language, "home.scheduledFor", { clock: resolveDose(pendingDose).clock })}</p>
               </div>
             </div>
 
-            <label className="block text-sm font-semibold text-foreground mb-2">What time did you take it?</label>
+            <label className="block text-sm font-semibold text-foreground mb-2">{t(language, "home.whatTime")}</label>
             <div className="flex items-center gap-2 mb-3">
               <input
                 type="time"
@@ -451,13 +451,13 @@ export function ElderlyHomeScreen({ patient, onLogDose, onOpenTravel, justAddedM
                 className="flex-1 bg-input-background border border-border rounded-xl px-4 py-3 text-lg font-bold text-foreground outline-none focus:border-primary"
               />
               <button onClick={() => setTakenInput(to24hInput(new Date()))} className="px-4 py-3 rounded-xl bg-muted text-sm font-bold text-foreground active:bg-muted/70">
-                Just now
+                {t(language, "home.justNow")}
               </button>
             </div>
-            <p className="text-xs text-muted-foreground mb-5">You'll log it as <span className="font-semibold text-foreground">{takenInput ? input24hTo12h(takenInput) : "—"}</span></p>
+            <p className="text-xs text-muted-foreground mb-5">{t(language, "home.willLogAs", { time: takenInput ? input24hTo12h(takenInput) : "—" })}</p>
 
             <button onClick={confirmTake} className="w-full h-13 py-4 rounded-2xl bg-primary text-primary-foreground text-base font-bold active:scale-[0.98] transition-transform flex items-center justify-center gap-2">
-              <Check size={18} strokeWidth={3} />Confirm
+              <Check size={18} strokeWidth={3} />{t(language, "home.confirm")}
             </button>
           </div>
         </div>
