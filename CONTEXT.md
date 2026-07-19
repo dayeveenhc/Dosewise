@@ -72,6 +72,22 @@ normally forbids touching `services/hermes/` or `supabase/`**; cross-cutting
 work across that boundary needs explicit user sign-off (as happened for the
 Hermes wiring — see MEMORY.md).
 
+All clock-time entry goes through one component, `components/TimesPicker.tsx`:
+`TimesPicker` (a medication's one-or-more dose times) and `TimeField` (a single
+time — meal times, bedtime). Both set times with the same tap-only stepper; no
+screen should reintroduce a raw `<input type="time">` (see MEMORY.md for why).
+Used by the guided setup wizard's routine + medication steps, the caregiver's
+`AddPrescriptionSheet`, and `ElderlySettingsScreen`. `TimesPicker` speaks the
+app's 12h display strings (`Medication.times`); `TimeField` speaks 24h `HH:MM`
+(what `ProfileDetails.mealTimes` stores). `TimesPicker`'s quick chips take an
+optional `routine` prop so they offer the elder's own meal/bed times rather than
+generic defaults.
+
+The elderly wizard's step order is `account → profile → conditions → allergies →
+routine → current-meds → med-history → done`. **`routine` comes before the
+medication steps deliberately** — meal/bedtime answers are the frame people
+describe doses against ("one after breakfast").
+
 Voice input/output is client-side (browser Web Speech API — `SpeechRecognition`
 + `speechSynthesis`), not routed through Hermes; it degrades gracefully where
 unsupported. Text-to-speech goes through the shared `lib/speech.ts::speak`

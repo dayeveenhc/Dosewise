@@ -6,8 +6,10 @@ import { saveProfile } from "../../lib/profile";
 import { addMedication, archiveMedication, to24h } from "../../lib/medications";
 import { extractProfile, fileToBase64 } from "../../lib/hermes";
 import type { ExtractedProfile } from "../../lib/hermes";
-import { MEDICATION_CATALOG, PRESET_TIMES, COMMON_CONDITIONS, COMMON_ALLERGIES, COMMON_DRUG_ALLERGIES } from "../../data/medications";
-import type { Role, WizardPrefill } from "../../lib/profile";
+import { MEDICATION_CATALOG, MEAL_TIMES, COMMON_CONDITIONS, COMMON_ALLERGIES, COMMON_DRUG_ALLERGIES } from "../../data/medications";
+import { TimeField, TimesPicker, defaultDoseTime } from "../../components/TimesPicker";
+import type { RoutineTimes } from "../../components/TimesPicker";
+import type { PrefillMed, Role, WizardPrefill } from "../../lib/profile";
 import { useLanguage } from "../../lib/languageContext";
 import { t } from "../../lib/language";
 
@@ -185,23 +187,27 @@ export function TagList({ label, placeholder, items, suggestions, extractField, 
   );
 }
 
-interface DraftMed { name: string; dose: string; time: string }
+interface DraftMed { name: string; dose: string; times: string[] }
 
-function MedList({ meds, extractKind, onAdd, onRemove }: { meds: DraftMed[]; extractKind: "current" | "past"; onAdd: (m: DraftMed) => void; onRemove: (i: number) => void }) {
+const toDraftMeds = (meds?: PrefillMed[]): DraftMed[] =>
+  (meds ?? []).map(m => ({ name: m.name, dose: m.dose, times: [m.time] }));
+
+function MedList({ meds, extractKind, routine, onAdd, onRemove }: { meds: DraftMed[]; extractKind: "current" | "past"; routine: RoutineTimes; onAdd: (m: DraftMed) => void; onRemove: (i: number) => void }) {
   const { language } = useLanguage();
   const [open, setOpen] = useState(false);
   const [name, setName] = useState("");
   const [dose, setDose] = useState("");
-  const [time, setTime] = useState(PRESET_TIMES[0]);
+  const defaultTime = defaultDoseTime(routine);
+  const [times, setTimes] = useState<string[]>([defaultTime]);
   const [showSuggestions, setShowSuggestions] = useState(false);
   const [scanning, setScanning] = useState(false);
   const [proposal, setProposal] = useState<string | null>(null);
   const fileRef = useRef<HTMLInputElement>(null);
 
   const submit = () => {
-    if (!name.trim()) return;
-    onAdd({ name: name.trim(), dose: dose.trim() || t(language, "wizard.asDirected"), time });
-    setName(""); setDose(""); setOpen(false); setProposal(null);
+    if (!name.trim() || !times.length) return;
+    onAdd({ name: name.trim(), dose: dose.trim() || t(language, "wizard.asDirected"), times });
+    setName(""); setDose(""); setTimes([defaultTime]); setOpen(false); setProposal(null);
   };
 
   const cancel = () => {
@@ -227,7 +233,7 @@ function MedList({ meds, extractKind, onAdd, onRemove }: { meds: DraftMed[]; ext
       for (const m of found) {
         const medName = (m.name ?? "").trim();
         if (!medName) continue;
-        onAdd({ name: medName, dose: (m.dose ?? "").trim() || t(language, "wizard.asDirected"), time: PRESET_TIMES[0] });
+        onAdd({ name: medName, dose: (m.dose ?? "").trim() || t(language, "wizard.asDirected"), times: [defaultTime] });
         added++;
       }
       setProposal(added ? t(language, "wizard.uploadAddedCount", { count: added }) : (note ?? t(language, "wizard.uploadNoMed")));
@@ -253,7 +259,7 @@ function MedList({ meds, extractKind, onAdd, onRemove }: { meds: DraftMed[]; ext
             <div key={i} className="flex items-center gap-3 bg-muted rounded-xl px-3.5 py-3">
               <div className="flex-1 min-w-0">
                 <p className="text-sm font-semibold text-foreground truncate">{m.name} <span className="text-xs font-normal text-muted-foreground">{m.dose}</span></p>
-                <p className="text-xs text-muted-foreground">{m.time}</p>
+                <p className="text-xs text-muted-foreground">{m.times.join(" · ")}</p>
               </div>
               <button onClick={() => onRemove(i)} className="shrink-0 text-muted-foreground hover:text-destructive transition-colors">
                 <X size={15} />
@@ -306,19 +312,10 @@ function MedList({ meds, extractKind, onAdd, onRemove }: { meds: DraftMed[]; ext
             <label className="block text-xs font-semibold text-foreground mb-1.5">{t(language, "wizard.dose")}</label>
             <input value={dose} onChange={e => setDose(e.target.value)} placeholder={t(language, "wizard.dosePlaceholder")} className={fieldCls} />
           </div>
-          <div>
-            <label className="block text-xs font-semibold text-foreground mb-1.5">{t(language, "wizard.usualTime")}</label>
-            <div className="flex flex-wrap gap-2">
-              {PRESET_TIMES.map(pt => (
-                <button key={pt} onClick={() => setTime(pt)} className={`text-xs font-medium rounded-xl px-3 py-1.5 border transition-colors ${time === pt ? "bg-primary text-primary-foreground border-primary" : "bg-muted text-muted-foreground border-border"}`}>
-                  {pt}
-                </button>
-              ))}
-            </div>
-          </div>
+          <TimesPicker times={times} onChange={setTimes} label={t(language, "wizard.usualTimes")} routine={routine} />
           <div className="flex gap-2 pt-1">
             <button onClick={cancel} className="flex-1 h-10 rounded-xl border border-border text-muted-foreground text-sm font-semibold">{t(language, "wizard.cancel")}</button>
-            <button onClick={submit} disabled={!name.trim()} className="flex-1 h-10 rounded-xl bg-primary text-primary-foreground text-sm font-bold disabled:opacity-40">{t(language, "wizard.add")}</button>
+            <button onClick={submit} disabled={!name.trim() || !times.length} className="flex-1 h-10 rounded-xl bg-primary text-primary-foreground text-sm font-bold disabled:opacity-40">{t(language, "wizard.add")}</button>
           </div>
         </div>
       ) : (
@@ -369,13 +366,19 @@ export function GuidedSetupWizard({ mode, hasSession, elderId: initialElderId, p
   const [conditions, setConditions] = useState<string[]>(prefill?.details.conditions ?? []);
   const [allergies, setAllergies] = useState<string[]>(prefill?.details.allergies ?? []);
   const [drugAllergies, setDrugAllergies] = useState<string[]>(prefill?.details.drugAllergies ?? []);
-  const [currentMeds, setCurrentMeds] = useState<DraftMed[]>(prefill?.currentMeds ?? []);
-  const [pastMeds, setPastMeds] = useState<DraftMed[]>(prefill?.pastMeds ?? []);
+  // An extraction yields one time per med; the wizard's multi-select shape wraps
+  // it so the person can add more times on top of what was read.
+  const [currentMeds, setCurrentMeds] = useState<DraftMed[]>(() => toDraftMeds(prefill?.currentMeds));
+  const [pastMeds, setPastMeds] = useState<DraftMed[]>(() => toDraftMeds(prefill?.pastMeds));
   const [breakfast, setBreakfast] = useState("08:00");
   const [lunch, setLunch] = useState("12:30");
   const [dinner, setDinner] = useState("19:00");
   const [sleepTime, setSleepTime] = useState("22:30");
   const [finishing, setFinishing] = useState(false);
+
+  // The routine step runs before the medication steps, so these are already
+  // answered by the time the time picker offers its quick chips.
+  const routine: RoutineTimes = { breakfast, lunch, dinner, sleepTime };
 
   // Whether the upload pre-filled anything worth flagging for review.
   const prefilled = !!prefill && (
@@ -386,8 +389,11 @@ export function GuidedSetupWizard({ mode, hasSession, elderId: initialElderId, p
   );
 
   const role: Role = mode === "elderly" ? "elder" : "caregiver";
+  // "routine" runs before the medication steps: the meal and bedtime answers are
+  // the frame people describe their doses against ("one after breakfast"), so
+  // asking them first makes the med steps easier to answer.
   const allSteps = mode === "elderly"
-    ? ["account", "profile", "conditions", "allergies", "current-meds", "med-history", "routine", "done"]
+    ? ["account", "profile", "conditions", "allergies", "routine", "current-meds", "med-history", "done"]
     : ["account", "placeholder"];
   // The "account" step always runs — even with a session already in hand — so
   // a returning user who signed up via email confirmation still gets asked
@@ -431,10 +437,10 @@ export function GuidedSetupWizard({ mode, hasSession, elderId: initialElderId, p
         sleepTime,
       });
       for (const m of currentMeds) {
-        await addMedication(elderId, { name: m.name, dosage: m.dose, purpose: "", timeHHMM: to24h(m.time) });
+        await addMedication(elderId, { name: m.name, dosage: m.dose, purpose: "", timeHHMMs: m.times.map(to24h) });
       }
       for (const m of pastMeds) {
-        const id = await addMedication(elderId, { name: m.name, dosage: m.dose, purpose: "", timeHHMM: to24h(m.time) });
+        const id = await addMedication(elderId, { name: m.name, dosage: m.dose, purpose: "", timeHHMMs: m.times.map(to24h) });
         await archiveMedication(id);
       }
     } else {
@@ -538,7 +544,7 @@ export function GuidedSetupWizard({ mode, hasSession, elderId: initialElderId, p
           <StepHeader title={t(language, "wizard.currentMedsTitle")} subtitle={t(language, "wizard.currentMedsSubtitle")} />
           {prefilled && <ReviewBadge />}
           <div className="flex-1">
-            <MedList meds={currentMeds} extractKind="current" onAdd={m => setCurrentMeds(p => [...p, m])} onRemove={i => setCurrentMeds(p => p.filter((_, j) => j !== i))} />
+            <MedList meds={currentMeds} extractKind="current" routine={routine} onAdd={m => setCurrentMeds(p => [...p, m])} onRemove={i => setCurrentMeds(p => p.filter((_, j) => j !== i))} />
           </div>
           <ContinueButton onClick={goNext}>{currentMeds.length ? t(language, "wizard.continue") : t(language, "wizard.skipForNow")}</ContinueButton>
         </>
@@ -549,7 +555,7 @@ export function GuidedSetupWizard({ mode, hasSession, elderId: initialElderId, p
           <StepHeader title={t(language, "wizard.medHistoryTitle")} subtitle={t(language, "wizard.medHistorySubtitle")} />
           {prefilled && <ReviewBadge />}
           <div className="flex-1">
-            <MedList meds={pastMeds} extractKind="past" onAdd={m => setPastMeds(p => [...p, m])} onRemove={i => setPastMeds(p => p.filter((_, j) => j !== i))} />
+            <MedList meds={pastMeds} extractKind="past" routine={routine} onAdd={m => setPastMeds(p => [...p, m])} onRemove={i => setPastMeds(p => p.filter((_, j) => j !== i))} />
           </div>
           <ContinueButton onClick={goNext}>{pastMeds.length ? t(language, "wizard.continue") : t(language, "wizard.skipForNow")}</ContinueButton>
         </>
@@ -558,35 +564,11 @@ export function GuidedSetupWizard({ mode, hasSession, elderId: initialElderId, p
       {step === "routine" && (
         <>
           <StepHeader title={t(language, "wizard.routineTitle")} subtitle={t(language, "wizard.routineSubtitle")} />
-          <div className="space-y-4 flex-1">
-            <div className="flex items-center gap-3">
-              <div className="w-9 h-9 rounded-xl bg-secondary flex items-center justify-center shrink-0"><Coffee size={16} className="text-primary" /></div>
-              <div className="flex-1">
-                <label className="block text-xs font-semibold text-foreground mb-1">{t(language, "wizard.breakfast")}</label>
-                <input type="time" value={breakfast} onChange={e => setBreakfast(e.target.value)} className={fieldCls} />
-              </div>
-            </div>
-            <div className="flex items-center gap-3">
-              <div className="w-9 h-9 rounded-xl bg-secondary flex items-center justify-center shrink-0"><Utensils size={16} className="text-primary" /></div>
-              <div className="flex-1">
-                <label className="block text-xs font-semibold text-foreground mb-1">{t(language, "wizard.lunch")}</label>
-                <input type="time" value={lunch} onChange={e => setLunch(e.target.value)} className={fieldCls} />
-              </div>
-            </div>
-            <div className="flex items-center gap-3">
-              <div className="w-9 h-9 rounded-xl bg-secondary flex items-center justify-center shrink-0"><UtensilsCrossed size={16} className="text-primary" /></div>
-              <div className="flex-1">
-                <label className="block text-xs font-semibold text-foreground mb-1">{t(language, "wizard.dinner")}</label>
-                <input type="time" value={dinner} onChange={e => setDinner(e.target.value)} className={fieldCls} />
-              </div>
-            </div>
-            <div className="flex items-center gap-3">
-              <div className="w-9 h-9 rounded-xl bg-secondary flex items-center justify-center shrink-0"><Moon size={16} className="text-primary" /></div>
-              <div className="flex-1">
-                <label className="block text-xs font-semibold text-foreground mb-1">{t(language, "wizard.bedtime")}</label>
-                <input type="time" value={sleepTime} onChange={e => setSleepTime(e.target.value)} className={fieldCls} />
-              </div>
-            </div>
+          <div className="space-y-3 flex-1">
+            <TimeField label={t(language, "wizard.breakfast")} icon={<Coffee size={15} className="text-primary" />} value={breakfast} onChange={setBreakfast} />
+            <TimeField label={t(language, "wizard.lunch")} icon={<Utensils size={15} className="text-primary" />} value={lunch} onChange={setLunch} />
+            <TimeField label={t(language, "wizard.dinner")} icon={<UtensilsCrossed size={15} className="text-primary" />} value={dinner} onChange={setDinner} />
+            <TimeField label={t(language, "wizard.bedtime")} icon={<Moon size={15} className="text-primary" />} value={sleepTime} onChange={setSleepTime} />
           </div>
           <ContinueButton onClick={goNext}>{t(language, "wizard.continue")}</ContinueButton>
         </>

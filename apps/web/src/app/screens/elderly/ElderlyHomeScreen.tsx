@@ -257,8 +257,8 @@ export function ElderlyHomeScreen({ patient, onLogDose, onOpenTravel, justAddedM
             </div>
             <div className="flex-1 min-w-0">
               <div className="flex items-start justify-between gap-2">
-                <div className="flex items-center gap-1.5 flex-wrap">
-                  <p className="font-bold text-[17px] text-foreground leading-snug">{m.name}</p>
+                <div className="flex items-center gap-1.5 flex-wrap min-w-0">
+                  <p className="font-bold text-[17px] text-foreground leading-snug break-words min-w-0">{m.name}</p>
                   {justAdded && (
                     <span className="flex items-center gap-1 bg-emerald-100 text-emerald-700 text-[10px] font-bold px-2 py-0.5 rounded-full">
                       <Check size={9} strokeWidth={3} />{t(language, "prescription.justAdded")}
@@ -270,7 +270,9 @@ export function ElderlyHomeScreen({ patient, onLogDose, onOpenTravel, justAddedM
                     </span>
                   )}
                 </div>
-                <span className={`text-base font-bold px-2.5 py-0.5 rounded-xl shrink-0 whitespace-nowrap ${timeCls}`}>{clock}</span>
+                {/* Long medication names would otherwise push this badge past the
+                    card edge; step it down a size rather than let it clip. */}
+                <span className={`${m.name.length > 20 ? "text-sm px-2" : "text-base px-2.5"} font-bold py-0.5 rounded-xl shrink-0 whitespace-nowrap ${timeCls}`}>{clock}</span>
               </div>
               <p className="text-sm text-muted-foreground mt-1.5">{localizeMedText(language, m.name, "simple", direction)}</p>
               {vague && <p className="text-xs text-primary/80 mt-1">🕒 {t(language, "home.vagueTimeNote", { note: note ?? "", clock: minutesToClock(resolveDose(m).minutes) })}</p>}
