@@ -6,12 +6,11 @@ import base64
 
 import httpx
 
+from fakes import FakeSupabase
 from hermes.api import routes
 from hermes.config import get_settings
 from hermes.main import create_app
 from hermes.ratelimit import SlidingWindowLimiter
-
-from fakes import FakeSupabase
 
 ELDER = "00000000-0000-0000-0000-00000000000a"
 

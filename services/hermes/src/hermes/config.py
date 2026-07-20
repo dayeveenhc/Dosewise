@@ -125,6 +125,14 @@ class Settings(BaseSettings):
     # Coarse per-IP ceiling on the POST endpoints (/agent/turn, /telegram/webhook).
     rate_limit_http_per_minute: int = 60
 
+    # --- Request body size cap (see api/bodylimit.py) ---
+    # No proxy in front of Hermes in the real deploy topology enforces this, so
+    # the app must. 25MB comfortably covers a base64-encoded prescription photo
+    # or PDF report (base64 inflates ~33%, so ~18MB raw) while closing off the
+    # unbounded per-request memory growth measured in
+    # docs/security-verification-2026-07-12.md (+317MB RSS at a 100MB payload).
+    hermes_max_body_bytes: int = 25 * 1024 * 1024
+
     # --- Reminder scheduler (Telegram delivery; replaces Expo Push for the demo) ---
     reminders_enabled: bool = True
     reminder_poll_seconds: int = 60

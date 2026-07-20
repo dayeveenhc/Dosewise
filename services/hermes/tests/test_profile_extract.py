@@ -10,11 +10,10 @@ import base64
 
 import httpx
 
+from fakes import FakeSupabase
 from hermes.api import routes
 from hermes.main import create_app
 from hermes.ratelimit import SlidingWindowLimiter
-
-from fakes import FakeSupabase
 
 PNG_MAGIC = b"\x89PNG\r\n\x1a\n" + b"\x00" * 16
 JPEG_MAGIC = b"\xff\xd8\xff" + b"\x00" * 16

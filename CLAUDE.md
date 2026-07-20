@@ -23,9 +23,36 @@ Keep both files up to date as you work:
   service-role key. Changes here affect **both** the web app and the Telegram
   testbed channel (`CONTEXT.md` explains why) — keep changes additive to the
   shared `run_agent_turn` core, don't special-case one channel in a way that
-  breaks the other.
+  breaks the other. `api/bodylimit.py`'s `MaxBodySizeMiddleware` enforces a
+  hard request-body-size ceiling (`hermes_max_body_bytes`) — it's a raw ASGI
+  middleware, not `@app.middleware("http")`, on purpose (see its docstring:
+  `BaseHTTPMiddleware`'s request-caching wrapper silently empties any body a
+  dispatch function reads via `Request.stream()`).
 - `supabase/` — schema, RLS policies, seed data. RLS is the consent model;
-  don't loosen a policy without understanding why it's restrictive.
+  don't loosen a policy without understanding why it's restrictive. `care_links`
+  is the consent anchor (migration `0005`): new caregiver links land `pending`,
+  not `active` — only the elder can activate their own row, and a caregiver
+  can only ever move a link to `revoked`, never back to `active`. Don't merge
+  `care_links_update_by_elder`/`care_links_update_by_caregiver` back into one
+  policy — that reopens the self-reactivation bug `0005` fixed.
+
+## Security verification methodology (established, reuse rather than reinvent)
+
+Two audit passes exist: `docs/security-verification-2026-07-12.md` (round 1 —
+found and fixed the `care_links` consent bugs, missing `/profile/extract`
+rate limit, unguarded base64 decode, JWT error-detail leak) and
+`docs/security-verification-round2-2026-07-12.md` (round 2 — verified the
+remaining write-RLS/Storage/apikey/Telegram-webhook/JWT-edge-case surfaces,
+all clean, plus the request-body-size fix). The pattern, if extending this
+further: stand up an **isolated local Supabase** (`npx supabase@latest start`
++ `db reset` — never `supabase link`, never touch the hosted project), divide
+verification across subagents by attack surface, and write every test as
+"assert the secure behavior, prove it fails before a fix and passes after."
+A fresh local Supabase CLI stack needs a **manual baseline-GRANT workaround**
+(`MEMORY.md`'s 2026-07-12 entries have the exact command) before RLS tests can
+even reach PostgREST — this is scoped to the local container only and needs a
+**fresh** user authorization every time a new instance is stood up (the
+harness won't carry a prior instance's authorization forward automatically).
 
 ## Before running destructive git commands
 

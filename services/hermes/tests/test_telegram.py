@@ -2,6 +2,9 @@
 
 from __future__ import annotations
 
+import httpx
+
+import hermes.api.routes as routes
 import hermes.channels.telegram as telegram
 from fakes import (
     FakeAnthropic,
@@ -14,6 +17,7 @@ from fakes import (
 )
 from hermes.channels.session import SessionRegistry
 from hermes.config import get_settings
+from hermes.main import create_app
 from hermes.ratelimit import SlidingWindowLimiter, turn_tiers
 
 ELDER_A = "00000000-0000-0000-0000-00000000000a"
@@ -643,3 +647,131 @@ async def test_dose_taken_callback_logs_the_dose():
     assert tg.answered == ["cq2"]
     assert any(table == "doses" for table, _ in db.inserted)  # dose logged as taken
     assert "taken" in tg.sent[-1][1].lower()
+
+
+# --- /telegram/webhook HTTP route (guard logic, not handle_update itself) ---
+_WEBHOOK_TELEGRAM_SENTINEL = object()
+
+
+def _make_webhook_app(monkeypatch, *, telegram_state=_WEBHOOK_TELEGRAM_SENTINEL):
+    """Build the real ASGI app with app.state populated by hand (ASGITransport
+    doesn't run the lifespan) and handle_update stubbed so these tests only
+    exercise the route's own guard logic (secret check + telegram-configured
+    check + rate-limit middleware), not handle_update's internals."""
+    calls: list[dict] = []
+
+    async def fake_handle_update(update, **kwargs):
+        calls.append({"update": update, **kwargs})
+
+    monkeypatch.setattr(routes, "handle_update", fake_handle_update)
+    app = create_app()
+    app.state.rate_limiter = SlidingWindowLimiter()
+    app.state.http_sessions = {}
+    app.state.supabase = FakeSupabase()
+    app.state.llm_client = None
+    app.state.registry = SessionRegistry(ELDER_A)
+    app.state.telegram = telegram_state
+    return app, calls
+
+
+def _webhook_client(app):
+    return httpx.AsyncClient(
+        transport=httpx.ASGITransport(app=app), base_url="http://test"
+    )
+
+
+async def test_webhook_missing_secret_header_is_403(monkeypatch):
+    s = get_settings()
+    monkeypatch.setattr(s, "telegram_webhook_secret", "shh", raising=False)
+    app, calls = _make_webhook_app(monkeypatch)
+    body = {"message": {"chat": {"id": 1}, "text": "hi"}}
+
+    async with _webhook_client(app) as c:
+        resp = await c.post("/telegram/webhook", json=body)
+
+    assert resp.status_code == 403
+    assert calls == []
+
+
+async def test_webhook_wrong_secret_header_is_403(monkeypatch):
+    s = get_settings()
+    monkeypatch.setattr(s, "telegram_webhook_secret", "shh", raising=False)
+    app, calls = _make_webhook_app(monkeypatch)
+    body = {"message": {"chat": {"id": 1}, "text": "hi"}}
+
+    async with _webhook_client(app) as c:
+        resp = await c.post(
+            "/telegram/webhook",
+            json=body,
+            headers={"X-Telegram-Bot-Api-Secret-Token": "wrong"},
+        )
+
+    assert resp.status_code == 403
+    assert calls == []
+
+
+async def test_webhook_matching_secret_header_succeeds(monkeypatch):
+    s = get_settings()
+    monkeypatch.setattr(s, "telegram_webhook_secret", "shh", raising=False)
+    app, calls = _make_webhook_app(monkeypatch)
+    body = {"message": {"chat": {"id": 1}, "text": "hi"}}
+
+    async with _webhook_client(app) as c:
+        resp = await c.post(
+            "/telegram/webhook",
+            json=body,
+            headers={"X-Telegram-Bot-Api-Secret-Token": "shh"},
+        )
+
+    assert resp.status_code == 200
+    assert resp.json() == {"ok": True}
+    assert len(calls) == 1
+    assert calls[0]["update"] == body
+
+
+async def test_webhook_secret_unset_allows_any_request(monkeypatch):
+    s = get_settings()
+    monkeypatch.setattr(s, "telegram_webhook_secret", "", raising=False)
+    app, calls = _make_webhook_app(monkeypatch)
+    body = {"message": {"chat": {"id": 1}, "text": "hi"}}
+
+    async with _webhook_client(app) as c:
+        # No secret header at all, and secret is unset -> still succeeds.
+        resp = await c.post("/telegram/webhook", json=body)
+
+    assert resp.status_code == 200
+    assert resp.json() == {"ok": True}
+    assert len(calls) == 1
+
+
+async def test_webhook_returns_503_when_telegram_not_configured(monkeypatch):
+    """app.state.telegram is None (bot token unset) -> 503, regardless of the
+    secret header (even when the secret matches or is unset)."""
+    s = get_settings()
+    monkeypatch.setattr(s, "telegram_webhook_secret", "", raising=False)
+    app, calls = _make_webhook_app(monkeypatch, telegram_state=None)
+    body = {"message": {"chat": {"id": 1}, "text": "hi"}}
+
+    async with _webhook_client(app) as c:
+        resp = await c.post("/telegram/webhook", json=body)
+
+    assert resp.status_code == 503
+    assert calls == []
+
+
+async def test_webhook_is_subject_to_per_ip_rate_limit_middleware(monkeypatch):
+    """Regression: /telegram/webhook must remain in main._RATE_LIMITED_PATHS
+    alongside /agent/turn and /profile/extract."""
+    s = get_settings()
+    monkeypatch.setattr(s, "telegram_webhook_secret", "", raising=False)
+    monkeypatch.setattr(s, "rate_limit_http_per_minute", 1, raising=False)
+    app, calls = _make_webhook_app(monkeypatch)
+    body = {"message": {"chat": {"id": 1}, "text": "hi"}}
+
+    async with _webhook_client(app) as c:
+        first = await c.post("/telegram/webhook", json=body)
+        second = await c.post("/telegram/webhook", json=body)
+
+    assert first.status_code == 200
+    assert second.status_code == 429
+    assert len(calls) == 1  # only the allowed request reached the handler

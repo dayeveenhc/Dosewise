@@ -61,7 +61,8 @@ async def agent_turn(body: AgentTurnRequest, request: Request) -> AgentTurnRespo
         try:
             elder_id = verify_jwt(body.jwt)["sub"]
         except Exception as exc:
-            raise HTTPException(status_code=401, detail=f"invalid jwt: {exc}") from exc
+            log.warning("jwt verification failed: %s", exc)
+            raise HTTPException(status_code=401, detail="invalid jwt") from exc
     elif settings.hermes_strict_auth:
         # Strict prod posture: no verified JWT means no identity — refuse rather
         # than mint a token for a caller-supplied elder_id (impersonation).
@@ -81,24 +82,31 @@ async def agent_turn(body: AgentTurnRequest, request: Request) -> AgentTurnRespo
                 headers={"Retry-After": str(int(retry_after) + 1)},
             )
 
-    image_bytes = base64.b64decode(body.image_base64) if body.image_base64 else None
+    try:
+        image_bytes = base64.b64decode(body.image_base64) if body.image_base64 else None
 
-    message = body.message
-    if body.pdf_base64:
-        pdf_text = extract_pdf_text(base64.b64decode(body.pdf_base64))
-        if not pdf_text:
-            # Scanned/image-only PDF — mirror the Telegram channel's graceful nudge
-            # instead of burning an LLM turn on empty content.
-            return AgentTurnResponse(
-                reply=(
-                    "I couldn't read that PDF (it may be a scan). Could you send a "
-                    "clear photo of the page instead?"
-                ),
-                tools_used=[],
+        message = body.message
+        if body.pdf_base64:
+            pdf_text = extract_pdf_text(base64.b64decode(body.pdf_base64))
+            if not pdf_text:
+                # Scanned/image-only PDF — mirror the Telegram channel's graceful
+                # nudge instead of burning an LLM turn on empty content.
+                return AgentTurnResponse(
+                    reply=(
+                        "I couldn't read that PDF (it may be a scan). Could you send a "
+                        "clear photo of the page instead?"
+                    ),
+                    tools_used=[],
+                )
+            message = (
+                f"{message or 'Here is my document.'}\n\n"
+                f"[Attached PDF contents]\n{pdf_text}\n[End of PDF]"
             )
-        message = (
-            f"{message or 'Here is my document.'}\n\n"
-            f"[Attached PDF contents]\n{pdf_text}\n[End of PDF]"
+    except Exception:
+        log.exception("failed to decode attachment for elder_id=%s", elder_id)
+        return AgentTurnResponse(
+            reply="Sorry, I'm having trouble right now. Please try again in a moment.",
+            tools_used=[],
         )
 
     # Reuse (or create) this elder's persistent session so pending_proposal and the
@@ -181,22 +189,26 @@ def _sniff_image_media_type(data: bytes) -> str:
 async def profile_extract(body: ProfileExtractRequest, request: Request) -> ProfileExtractResponse:
     app = request.app.state
 
-    image_bytes = base64.b64decode(body.image_base64) if body.image_base64 else None
-    image_media_type = _sniff_image_media_type(image_bytes) if image_bytes else "image/jpeg"
+    try:
+        image_bytes = base64.b64decode(body.image_base64) if body.image_base64 else None
+        image_media_type = _sniff_image_media_type(image_bytes) if image_bytes else "image/jpeg"
 
-    pdf_text: str | None = None
-    if body.pdf_base64:
-        pdf_text = extract_pdf_text(base64.b64decode(body.pdf_base64))
-        if not pdf_text and image_bytes is None:
-            # Scanned/image-only PDF and no photo to fall back on — same nudge as
-            # /agent/turn, but without burning an LLM call.
-            return ProfileExtractResponse(
-                fields={},
-                note=(
-                    "I couldn't read that PDF (it may be a scan). Could you upload a "
-                    "clear photo of the page instead?"
-                ),
-            )
+        pdf_text: str | None = None
+        if body.pdf_base64:
+            pdf_text = extract_pdf_text(base64.b64decode(body.pdf_base64))
+            if not pdf_text and image_bytes is None:
+                # Scanned/image-only PDF and no photo to fall back on — same nudge
+                # as /agent/turn, but without burning an LLM call.
+                return ProfileExtractResponse(
+                    fields={},
+                    note=(
+                        "I couldn't read that PDF (it may be a scan). Could you upload a "
+                        "clear photo of the page instead?"
+                    ),
+                )
+    except Exception:
+        log.exception("failed to decode attachment in profile_extract")
+        return ProfileExtractResponse(fields={}, note="Sorry, I couldn't read that just now.")
 
     if image_bytes is None and not (pdf_text or "").strip():
         return ProfileExtractResponse(fields={}, note="No readable document was provided.")

@@ -19,6 +19,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 
 from .agent import llm
+from .api.bodylimit import MaxBodySizeMiddleware
 from .api.routes import router
 from .channels.scheduler import reminder_loop
 from .channels.session import SessionRegistry
@@ -149,7 +150,10 @@ async def lifespan(app: FastAPI):
 
 # POST endpoints that get the coarse per-IP ceiling (the per-user turn caps live
 # deeper, at the elder_id / chat_id boundary in routes.py / telegram.py).
-_RATE_LIMITED_PATHS = {"/agent/turn", "/telegram/webhook"}
+# /profile/extract has no JWT/elder_id of its own (stateless, pre-account) so it
+# shares this same per-IP tier rather than a bespoke one — it still calls a paid
+# vision LLM and must not be reachable unbounded.
+_RATE_LIMITED_PATHS = {"/agent/turn", "/telegram/webhook", "/profile/extract"}
 
 
 def create_app() -> FastAPI:
@@ -183,6 +187,14 @@ def create_app() -> FastAPI:
                     headers={"Retry-After": str(int(retry_after) + 1)},
                 )
         return await call_next(request)
+
+    # Added last so it wraps everything above it (each add_middleware call
+    # becomes the new outermost ASGI layer) — an oversized body is rejected
+    # before CORS/rate-limit logic, or FastAPI/pydantic body parsing, does
+    # any work at all.
+    app.add_middleware(
+        MaxBodySizeMiddleware, max_bytes=get_settings().hermes_max_body_bytes
+    )
 
     app.include_router(router)
     return app

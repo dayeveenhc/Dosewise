@@ -9,6 +9,100 @@ letting this grow forever — it's a memory aid, not an audit log.
 
 ---
 
+## 2026-07-12 (round 2) — Extended security verification: RLS write boundaries, Storage, apikey/telegram/JWT — all clean; body-size limit fixed
+
+Extended the same-day Round 1 pass (below) into the attack surfaces it had
+flagged as untested: `refills`/`doctor_questions`/`conversation_turns`/
+`profiles` write RLS, Storage bucket policies (`pill-photos`/`videos`),
+`require_api_key`, the `/telegram/webhook` HTTP route, and JWT edge cases
+(expired, wrong `aud`, alg-confusion, no `iss` check). Full detail:
+`docs/security-verification-round2-2026-07-12.md`.
+
+**Result: no new bugs.** Every surface tested came back CONFIRMED-SAFE via
+live exploit-attempt-then-fail tests, except the already-known pattern of
+"documented, not fixed" for `verify_jwt`'s missing `iss` check (same
+disposition as round 1's `elder_id`-rotation bypass — low severity, requires
+already-valid signing credentials).
+
+**One real fix landed:** a request-body-size ceiling
+(`services/hermes/src/hermes/api/bodylimit.py::MaxBodySizeMiddleware`,
+default 25MB, wired into `main.py`), closing the unbounded-memory-growth gap
+round 1 measured but didn't fix. **Gotcha:** this can't be built as another
+`@app.middleware("http")` like the existing rate limiter —
+`starlette.middleware.base.BaseHTTPMiddleware`'s `_CachedRequest
+.wrapped_receive` replays an *empty body* downstream if a dispatch function
+reads `Request.stream()` directly instead of fully buffering via
+`Request.body()` first (verified against the installed package's own
+docstring) — which would defeat the whole point of a size guard. Had to be a
+raw ASGI middleware class (`app.add_middleware(MaxBodySizeMiddleware, ...)`)
+instead. Second gotcha: if the oversized body is consumed via FastAPI's own
+`request.body()`/`request.json()` (inside route-parameter parsing), FastAPI's
+routing wraps that in a bare `except Exception` and re-raises as a generic
+`HTTPException(400, "There was an error parsing the body")` before our
+exception ever unwinds back to the middleware's own except block — so the
+declared-`Content-Length` path gives a clean `413`, but the
+streaming-without-declared-length path surfaces as `400` instead. Still
+correctly aborts before full buffering and the route handler never runs —
+just don't expect a uniform status code across both paths.
+
+**Gotcha (repeats, now confirmed twice):** each fresh local Supabase CLI
+instance needs its own baseline-grants workaround re-applied (see round 1's
+entry below) — the harness correctly does NOT carry an authorization for this
+forward from a prior instance to a new one, even same-session; it's scoped
+per-instance and needs a fresh ask each time a new local stack is stood up.
+
+## 2026-07-12 — Security/RLS/rate-limit/load-test verification pass: 2 real RLS bugs fixed
+
+Ran a subagent-divided verification pass (see `docs/security-verification-2026-07-12.md`
+for full detail). Found and fixed six real issues via live exploit-then-fix tests
+against an isolated local Supabase (never the hosted project):
+
+1. **`care_links` self-grant** — any authenticated user could insert an
+   **active** caregiver link to an arbitrary elder with zero consent
+   (`care_links_insert_as_caregiver`'s check was only `auth.uid()=caregiver_id`,
+   and `status` defaulted to `'active'`). Fixed in
+   `supabase/migrations/0005_care_links_consent_hardening.sql`: default is now
+   `'pending'`, insert requires `status='pending'`.
+2. **`care_links` un-revoke** — a revoked caregiver could PATCH their own link
+   back to `'active'`. Fixed in the same migration by splitting the update
+   policy: the elder retains unrestricted control of their own row; a
+   caregiver's own update policy can only ever move status to `'revoked'`.
+   **Do not merge these two policies back into one** — a single symmetric
+   `elder_id OR caregiver_id` check can't distinguish which party is driving
+   which transition, which is exactly how this bug happened the first time.
+3. `/profile/extract` had zero rate limiting despite calling a paid vision LLM
+   pre-account — added to `main.py`'s `_RATE_LIMITED_PATHS`.
+4. Unguarded `base64.b64decode()` in both `/agent/turn` and `/profile/extract`
+   500'd on malformed input — now wrapped in try/except matching the existing
+   friendly-error convention.
+5. JWT verification errors leaked the raw PyJWT exception string in the 401
+   body — now generic, with the real reason logged server-side only.
+6. **Not fixed (accepted, documented):** `/agent/turn`'s per-user rate-limit
+   cap is bypassable by rotating the client-supplied `elder_id` whenever
+   `HERMES_STRICT_AUTH=False` (the default) — the real fix is a deployment
+   decision (`HERMES_STRICT_AUTH=1`), not new code. Could not confirm from a
+   permitted read-only source whether the real prod `.env` actually sets this
+   — needs manual confirmation.
+
+**Gotcha for next time — local Supabase CLI needs a manual baseline-grants
+fix that the hosted project doesn't:** a fresh `npx supabase@latest start` +
+`db reset` on this repo's migrations leaves every `public.*` table 403 to
+`anon`/`authenticated`/**and `service_role`** via PostgREST — `\dp` shows only
+`Dxt` (no `arwd`) — because none of `0001-0004` contain a baseline
+`GRANT ... ON ALL TABLES IN SCHEMA public`; they assume the grants a hosted
+Supabase project provisions automatically. This blocks PostgREST *before* RLS
+is ever evaluated, including the `service_role` connectivity probe
+`tests/test_rls_integration.py`'s `supabase` fixture uses to self-skip — so
+all RLS integration tests silently SKIP (not fail) until you run, against the
+**local container only**, never the hosted project:
+```
+docker exec supabase_db_dosewise psql -U postgres -d postgres -c \
+  "GRANT SELECT, INSERT, UPDATE, DELETE ON ALL TABLES IN SCHEMA public TO anon, authenticated, service_role; \
+   ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT SELECT, INSERT, UPDATE, DELETE ON TABLES TO anon, authenticated, service_role;"
+```
+This is local-dev-tooling-only — not an app bug, not something to add to the
+migrations (would be wrong/redundant on the hosted project).
+
 ## 2026-07-11 — i18n D2/D3 completed: full primary-flow translation, all 6 languages
 
 Finished the i18n workstream flagged as remaining on 2026-07-09. Converted every

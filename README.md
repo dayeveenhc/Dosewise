@@ -88,12 +88,12 @@ For an elderly patient (or their caregiver), Mei/Hermes can:
 
 ### Data model & consent
 
-The system of record is Postgres on Supabase, defined across 4 migrations in `supabase/migrations/`. Consent is anchored in the **`care_links`** table and enforced by Row-Level Security — the **database**, not the app, decides who can see what.
+The system of record is Postgres on Supabase, defined across 5 migrations in `supabase/migrations/`. Consent is anchored in the **`care_links`** table and enforced by Row-Level Security — the **database**, not the app, decides who can see what.
 
 | Table | Holds |
 | --- | --- |
 | `profiles` | User profile — role (`elder`/`caregiver`), dialect, medical profile, travel plan |
-| `care_links` | The consent graph — an active row links a caregiver to an elder (the RLS pivot) |
+| `care_links` | The consent graph — an **active** row links a caregiver to an elder (the RLS pivot). New links land `pending`; only the elder can activate their own row, and a caregiver can only ever move a link to `revoked`, never back to `active` (migration `0005`) |
 | `medications` | A patient's medications + `schedule.times` |
 | `doses` | Dose log (taken / skipped) |
 | `refills` | Refill log + remaining-supply tracking |
@@ -103,7 +103,7 @@ The system of record is Postgres on Supabase, defined across 4 migrations in `su
 | `dialect_lexicon` | Dialect slang glossary backing slang understanding |
 | `instruction_videos` | Curated how-to videos (inhalers, eye-drops) |
 
-**Consent rule:** an elder's health data is readable by the owner (`auth.uid() = elder_id`) or an actively linked caregiver (`public.is_linked_caregiver(elder_id)`, a `SECURITY DEFINER` function with a fixed `search_path`). Reference tables (`drug_cache`, `dialect_lexicon`, `instruction_videos`) are public-read, service-role-write. Migration `0004_rls_hardening.sql` adds restrictive DELETE / reference denials so RLS can't be silently reopened.
+**Consent rule:** an elder's health data is readable by the owner (`auth.uid() = elder_id`) or an actively linked caregiver (`public.is_linked_caregiver(elder_id)`, a `SECURITY DEFINER` function with a fixed `search_path`). Reference tables (`drug_cache`, `dialect_lexicon`, `instruction_videos`) are public-read, service-role-write. Migration `0004_rls_hardening.sql` adds restrictive DELETE / reference denials so RLS can't be silently reopened; `0005_care_links_consent_hardening.sql` closes two gaps a live-exploit security pass found in the original `care_links` policies — a caregiver could previously self-grant an active link to any elder with no consent, or reactivate a link the elder had revoked. Both the read *and* write sides of every consent-scoped table (plus the `pill-photos`/`videos` Storage buckets) have since been proven live against an isolated test instance — see `docs/security-verification-2026-07-12.md` and its round-2 follow-up.
 
 ---
 
@@ -192,7 +192,7 @@ Dosewise/
 ├── docs/
 │   └── architecture.md    # full architecture reference
 ├── supabase/              # Postgres schema + RLS + seed + migrations   (built)
-│   ├── migrations/        # 0001 init → 0002 RLS → 0003 storage → 0004 RLS hardening
+│   ├── migrations/        # 0001 init → 0002 RLS → 0003 storage → 0004 RLS hardening → 0005 care_links consent hardening
 │   └── README.md
 ├── apps/
 │   ├── web/               # Vite + React frontend — PRIMARY demo surface   (built + wired)
@@ -209,7 +209,7 @@ The **Supabase backend**, the **Hermes orchestrator**, and the **web frontend** 
 
 | Component | Status |
 | --- | --- |
-| Supabase backend (4 migrations: schema + RLS + storage + RLS hardening) | **Built** |
+| Supabase backend (5 migrations: schema + RLS + storage + RLS hardening + care_links consent hardening) | **Built** |
 | `services/hermes` — Python + FastAPI orchestrator | **Built** |
 | Hermes agent (OpenAI default / Gemini / Claude, auto-fallback) + tool belt (11 tools) | **Built** |
 | OpenFDA grounding + Postgres `drug_cache` | **Built** |
@@ -222,6 +222,8 @@ The **Supabase backend**, the **Hermes orchestrator**, and the **web frontend** 
 ## Safety rails
 
 Grounded facts only (drug info always from `get_drug_info`/OpenFDA, never memory) · explain-never-diagnose · scan/reminder/profile changes always propose → confirm before writing · human-in-the-loop · RLS + audit trail · bridge-to-people escalation path. These are encoded in `agent/soul.md` **and** enforced server-side (e.g. the `add_prescription` confirm guard) — they don't rely on the prompt alone.
+
+Two additional layers, added after a dedicated security-verification pass (`docs/security-verification-2026-07-12.md` + its round-2 follow-up): a **request-body-size ceiling** on every POST endpoint (25MB default; a raw ASGI middleware, since Hermes isn't fronted by a size-limiting proxy in its real deploy topology) so an oversized upload can't grow a worker's memory unbounded, and a **rate limit on `/profile/extract`** (previously uncovered, despite calling a paid vision LLM pre-account). Every consent-scoped table's RLS — read *and* write — plus the Storage buckets have been proven live against an isolated test Supabase, not just read from the policy source.
 
 ---
 
@@ -288,7 +290,7 @@ supabase status         # copy API URL / anon key / service_role key / JWT secre
 
 Studio UI: http://127.0.0.1:54323. Seeded local users (password `password`, **local dev only**): `elder.a@dosewise.local`, `elder.b@dosewise.local`, `caregiver.c@dosewise.local`.
 
-**Option B — hosted Supabase (for a shared / live demo):** create a project at supabase.com, run the files in `supabase/migrations/` against it in order (`0001` → `0004`), then put the project URL / anon key / service_role key / JWT secret into `.env`. This is how the live demo is hosted.
+**Option B — hosted Supabase (for a shared / live demo):** create a project at supabase.com, run the files in `supabase/migrations/` against it in order (`0001` → `0005`), then put the project URL / anon key / service_role key / JWT secret into `.env`. This is how the live demo is hosted.
 
 See [`supabase/README.md`](supabase/README.md) for the schema, RLS policies, and the consent model.
 
@@ -352,7 +354,7 @@ uv run pytest -q -m "not integration"   # offline suite (CI runs this)
 uv run ruff check .                     # lint
 ```
 
-Integration tests (e.g. the RLS check) need a live local Supabase and are marked `integration`; the web frontend is verified via `npm run build`.
+Integration tests (RLS on every consent-scoped table, plus Storage bucket policies) need a live local Supabase and are marked `integration`; the web frontend is verified via `npm run build`. A `loadtest/` directory under `services/hermes/tests/` has zero-cost, in-process load tests (rate-limiter behavior under concurrency, request-body-size exposure) — see `docs/security-verification-2026-07-12.md` and its round-2 follow-up for the full audit history and methodology.
 
 ## Deployment
 
