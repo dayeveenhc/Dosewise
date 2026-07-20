@@ -32,6 +32,7 @@ import { ConfirmDialog } from "./components/ConfirmDialog";
 import { ToastStack } from "./components/Toast";
 import type { ToastItem } from "./components/Toast";
 import { SendReminderSheet } from "./screens/SendReminderSheet";
+import { ScanLinkSheet } from "./components/ScanLinkSheet";
 import { LanguageProvider, readStoredLanguage } from "./lib/languageContext";
 import { t } from "./lib/language";
 
@@ -77,6 +78,7 @@ export default function App() {
     { id: 2, author: "Tan Shu Fen",  role: "Daughter", body: "Ma, I refilled your Atorvastatin — it's in the cabinet above the stove 💙",                                   time: "Yesterday", isMe: false },
   ]);
   const [showSendReminder, setShowSendReminder] = useState<{ medName?: string } | null>(null);
+  const [showScanLink, setShowScanLink] = useState(false);
 
   // Demo pop-up notifications — fires a couple of sample alerts a little
   // after landing in the caregiver app, so the top-of-screen toast UI has
@@ -478,7 +480,7 @@ export default function App() {
               </div>
             )}
             {showPatientSwitcher && (
-              <PatientSwitcher patients={patients} selected={selectedPatient} onSelect={setSelectedPatient} onAdd={handleAddPatient} />
+              <PatientSwitcher patients={patients} selected={selectedPatient} onSelect={setSelectedPatient} onAdd={handleAddPatient} onScan={() => setShowScanLink(true)} />
             )}
           </div>
 
@@ -531,6 +533,12 @@ export default function App() {
               medName={showSendReminder.medName}
               onClose={() => setShowSendReminder(null)}
               onSend={handleReminderSent}
+            />
+          )}
+          {showScanLink && (
+            <ScanLinkSheet
+              onClose={() => setShowScanLink(false)}
+              onLinked={(name, relation) => handleAddPatient(name, relation)}
             />
           )}
           <ToastStack

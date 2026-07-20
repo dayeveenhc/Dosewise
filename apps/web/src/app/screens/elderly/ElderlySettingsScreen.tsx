@@ -1,5 +1,7 @@
 import { useState, useEffect } from "react";
-import { Shield, ChevronDown, Eye, Phone, RefreshCw, LogOut, Check, Loader2, Coffee, Utensils, UtensilsCrossed, Moon } from "lucide-react";
+import { QRCodeSVG } from "qrcode.react";
+import { Shield, ChevronDown, Eye, Phone, RefreshCw, LogOut, Check, Loader2, Coffee, Utensils, UtensilsCrossed, Moon, QrCode } from "lucide-react";
+import { buildCareLinkPayload } from "../../lib/careLinks";
 import { useAccessibility } from "../../accessibility.tsx";
 import type { FontSize } from "../../accessibility.tsx";
 import type { Patient } from "../../types";
@@ -173,6 +175,23 @@ export function ElderlySettingsScreen({ patient, elderId, onUpdatePatient, onBac
           </div>
           )}
         </div>
+
+        {/* Caregiver linking QR — a caregiver scans this to request managing this
+            elder's medications; the request lands in the elder's Notifications. */}
+        {elderId && (
+          <div className="bg-card rounded-2xl border border-border p-4">
+            <div className="flex items-center gap-2 mb-1">
+              <QrCode size={15} className="text-primary" />
+              <p className="font-semibold text-foreground">{t(language, "link.qrTitle")}</p>
+            </div>
+            <p className="text-xs text-muted-foreground mb-3">{t(language, "link.qrDesc")}</p>
+            <div className="flex justify-center">
+              <div className="bg-white rounded-2xl p-4 border border-border">
+                <QRCodeSVG value={buildCareLinkPayload(elderId, patient.name)} size={168} level="M" />
+              </div>
+            </div>
+          </div>
+        )}
 
         {/* Accessibility */}
         <div className="bg-card rounded-2xl border border-border divide-y divide-border">

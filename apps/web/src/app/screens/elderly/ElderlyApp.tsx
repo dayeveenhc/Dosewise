@@ -234,7 +234,7 @@ export function ElderlyApp({ patient, elderId, onUpdatePatient, onBack, onSignOu
             autoMessage={pendingAIMessage}
           />
         )}
-        {tab === "notifications" && <ElderlyNotificationsScreen careMessages={careMessages} />}
+        {tab === "notifications" && <ElderlyNotificationsScreen careMessages={careMessages} elderId={elderId} />}
         {tab === "settings"      && <ElderlySettingsScreen     patient={patient} elderId={elderId} onUpdatePatient={onUpdatePatient} onBack={onBack} onSignOut={onSignOut} />}
       </div>
 
