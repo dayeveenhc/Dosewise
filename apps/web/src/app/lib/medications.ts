@@ -14,7 +14,7 @@ export function to24h(clock12: string): string {
   return `${String(h).padStart(2, "0")}:${String(mm).padStart(2, "0")}`;
 }
 
-function to12h(clock24: string): string {
+export function to12h(clock24: string): string {
   const [hh, mm] = clock24.split(":").map(Number);
   const period = hh >= 12 ? "PM" : "AM";
   const h12 = hh % 12 === 0 ? 12 : hh % 12;

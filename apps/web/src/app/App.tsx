@@ -512,6 +512,7 @@ export default function App() {
           {showAddPrescription && (
             <AddPrescriptionSheet
               onClose={() => setShowAddPrescription(false)}
+              routine={{ ...patient.mealTimes, sleepTime: patient.sleepTime }}
               onAdd={handleAddPrescription}
               onAdded={() => setScreen("patient")}
               onAgentAdded={(name) => { void refreshMedications(); flagJustAdded(name); }}

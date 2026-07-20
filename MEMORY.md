@@ -9,6 +9,72 @@ letting this grow forever — it's a memory aid, not an audit log.
 
 ---
 
+## 2026-07-19 — ⚠️ OPEN BUG: `t` is shadowed in ElderlyAIScreen's `send()`
+
+**Found, not fixed — flagged to the user.** In
+`apps/web/src/app/screens/elderly/ElderlyAIScreen.tsx`, `send()` opens with
+`const t = text.trim()`, which shadows the imported `t()` translation function
+for the whole body. Three calls near the end of that function
+(`t(language, routed.target.doneKey)` and friends) therefore try to *call a
+string*. Any agent turn that commits a routable action — add prescription, log
+dose — throws `t is not a function` in the elder's chat, killing the
+confirm-and-redirect flow that CONTEXT.md lists as a headline feature.
+
+Fix is a rename (`const trimmed = text.trim()`). Untouched so far only because
+it's outside the scope of the UI pass it surfaced during. **This is invisible to
+`npm run build`** — see the typecheck note below.
+
+## 2026-07-19 — Elderly UI pass: grouped prescriptions, quick-help popup
+
+`fetchElderMedications` deliberately emits **one `Medication` per (medication,
+time-slot)** — correct for the schedule, wrong for any "list of prescriptions"
+view, where a twice-daily pill was rendering as two identical cards.
+`ElderlyPrescriptionScreen` now regroups by `medicationId` (falling back to
+`name` for seed data) and shows the times as an indicator. **Any new list-style
+view of medications needs the same regrouping** — the caregiver's `PatientScreen`
+has not been checked for this.
+
+Quick help in the elder chat is a popup, not an inline expander, so it no longer
+pushes the conversation off-screen; `quickOpen` is therefore no longer persisted
+to sessionStorage (restoring a modal open on remount is wrong).
+
+## 2026-07-19 — One shared time picker; killed a silent "schedules at 8am" bug
+
+Medication timing was per-screen and one variant was actively wrong. Unified on
+`apps/web/src/app/components/TimesPicker.tsx` (`TimesPicker` for a med's dose
+times, `TimeField` for a single meal/bedtime).
+
+**The bug worth remembering:** `AddPrescriptionSheet` had a "Custom" free-text
+time box (`"e.g. 10:30 AM"`) whose value went straight to
+`lib/medications.ts::to24h`. That function returns `"08:00"` for anything not
+matching exactly `H:MM AM/PM` — so `10:30`, `10.30am` or `22:00` silently
+scheduled the medication at 8am, with no error anywhere. **`to24h` fails soft;
+never feed it unvalidated text.** The picker now only emits well-formed times.
+
+Two deliberate choices, so they don't get "fixed" back:
+
+- **No `<input type="time">` anywhere.** It renders as the big OS wheel only on
+  a real phone; in a desktop browser (how the phone-frame demo is actually
+  viewed and judged) it collapses to a cramped `--:-- --` spinner. Replaced with
+  a tap-only `∧`/`∨` stepper — also better than a slider/scroll-wheel for the
+  elderly target user, since there's nothing to drag onto a target.
+- **Wizard step order: `routine` before `current-meds`.** Meal/bedtime answers
+  are the frame people describe doses against — and the med step's quick chips
+  now show those answers back, which only works because routine is asked first.
+
+The chips (and a new med's default time) read the elder's own routine, falling
+back to `MEAL_TIMES` only when there's no profile. The wizard passes its live
+step state; `AddPrescriptionSheet` takes a `routine` prop that both `App.tsx`
+and `ElderlyApp.tsx` fill from `Patient` — **no extra fetch needed, `Patient`
+already carries `mealTimes` + `sleepTime`**, and `ElderlySettingsScreen`'s
+`onUpdatePatient` keeps them live after an edit. Note `sleepTime` sits *beside*
+`mealTimes` on `ProfileDetails`, not inside it — hence the
+`{ ...patient.mealTimes, sleepTime: patient.sleepTime }` spread at both sites.
+
+`PRESET_TIMES` in `data/medications.ts` is now unused (left in place). Note
+`apps/web` has no `typescript` installed and `vite build` uses esbuild, which
+strips types without checking — **`npm run build` passing is not a typecheck.**
+
 ## 2026-07-12 (round 2) — Extended security verification: RLS write boundaries, Storage, apikey/telegram/JWT — all clean; body-size limit fixed
 
 Extended the same-day Round 1 pass (below) into the attack surfaces it had
@@ -102,6 +168,72 @@ docker exec supabase_db_dosewise psql -U postgres -d postgres -c \
 ```
 This is local-dev-tooling-only — not an app bug, not something to add to the
 migrations (would be wrong/redundant on the hosted project).
+
+## 2026-07-19 — ⚠️ OPEN BUG: `t` is shadowed in ElderlyAIScreen's `send()`
+
+**Found, not fixed — flagged to the user.** In
+`apps/web/src/app/screens/elderly/ElderlyAIScreen.tsx`, `send()` opens with
+`const t = text.trim()`, which shadows the imported `t()` translation function
+for the whole body. Three calls near the end of that function
+(`t(language, routed.target.doneKey)` and friends) therefore try to *call a
+string*. Any agent turn that commits a routable action — add prescription, log
+dose — throws `t is not a function` in the elder's chat, killing the
+confirm-and-redirect flow that CONTEXT.md lists as a headline feature.
+
+Fix is a rename (`const trimmed = text.trim()`). Untouched so far only because
+it's outside the scope of the UI pass it surfaced during. **This is invisible to
+`npm run build`** — see the typecheck note below.
+
+## 2026-07-19 — Elderly UI pass: grouped prescriptions, quick-help popup
+
+`fetchElderMedications` deliberately emits **one `Medication` per (medication,
+time-slot)** — correct for the schedule, wrong for any "list of prescriptions"
+view, where a twice-daily pill was rendering as two identical cards.
+`ElderlyPrescriptionScreen` now regroups by `medicationId` (falling back to
+`name` for seed data) and shows the times as an indicator. **Any new list-style
+view of medications needs the same regrouping** — the caregiver's `PatientScreen`
+has not been checked for this.
+
+Quick help in the elder chat is a popup, not an inline expander, so it no longer
+pushes the conversation off-screen; `quickOpen` is therefore no longer persisted
+to sessionStorage (restoring a modal open on remount is wrong).
+
+## 2026-07-19 — One shared time picker; killed a silent "schedules at 8am" bug
+
+Medication timing was per-screen and one variant was actively wrong. Unified on
+`apps/web/src/app/components/TimesPicker.tsx` (`TimesPicker` for a med's dose
+times, `TimeField` for a single meal/bedtime).
+
+**The bug worth remembering:** `AddPrescriptionSheet` had a "Custom" free-text
+time box (`"e.g. 10:30 AM"`) whose value went straight to
+`lib/medications.ts::to24h`. That function returns `"08:00"` for anything not
+matching exactly `H:MM AM/PM` — so `10:30`, `10.30am` or `22:00` silently
+scheduled the medication at 8am, with no error anywhere. **`to24h` fails soft;
+never feed it unvalidated text.** The picker now only emits well-formed times.
+
+Two deliberate choices, so they don't get "fixed" back:
+
+- **No `<input type="time">` anywhere.** It renders as the big OS wheel only on
+  a real phone; in a desktop browser (how the phone-frame demo is actually
+  viewed and judged) it collapses to a cramped `--:-- --` spinner. Replaced with
+  a tap-only `∧`/`∨` stepper — also better than a slider/scroll-wheel for the
+  elderly target user, since there's nothing to drag onto a target.
+- **Wizard step order: `routine` before `current-meds`.** Meal/bedtime answers
+  are the frame people describe doses against — and the med step's quick chips
+  now show those answers back, which only works because routine is asked first.
+
+The chips (and a new med's default time) read the elder's own routine, falling
+back to `MEAL_TIMES` only when there's no profile. The wizard passes its live
+step state; `AddPrescriptionSheet` takes a `routine` prop that both `App.tsx`
+and `ElderlyApp.tsx` fill from `Patient` — **no extra fetch needed, `Patient`
+already carries `mealTimes` + `sleepTime`**, and `ElderlySettingsScreen`'s
+`onUpdatePatient` keeps them live after an edit. Note `sleepTime` sits *beside*
+`mealTimes` on `ProfileDetails`, not inside it — hence the
+`{ ...patient.mealTimes, sleepTime: patient.sleepTime }` spread at both sites.
+
+`PRESET_TIMES` in `data/medications.ts` is now unused (left in place). Note
+`apps/web` has no `typescript` installed and `vite build` uses esbuild, which
+strips types without checking — **`npm run build` passing is not a typecheck.**
 
 ## 2026-07-11 — i18n D2/D3 completed: full primary-flow translation, all 6 languages
 

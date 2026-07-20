@@ -1,6 +1,6 @@
 import { useState, useRef, useEffect } from "react";
 import type { ChangeEvent } from "react";
-import { Volume2, Mic, Send, AlertTriangle, Brain, Circle, Check, Trash2, Plus, Camera, FileText, Pill, Globe, Sparkles, ChevronDown, X, Plane } from "lucide-react";
+import { Volume2, Mic, Send, AlertTriangle, Brain, Circle, Check, Trash2, Plus, Camera, FileText, Pill, Globe, Sparkles, ChevronUp, X, Plane } from "lucide-react";
 import type { Patient } from "../../types";
 import type { EMsg, ElderlyTab, DoctorQ } from "./types";
 import { agentTurn, extractProfile, fileToBase64 } from "../../lib/hermes";
@@ -10,6 +10,7 @@ import { useLanguage } from "../../lib/languageContext";
 import { useAccessibility } from "../../accessibility.tsx";
 import { t, LANGUAGE_OPTIONS, speechLangFor } from "../../lib/language";
 import { speak as speakUtterance } from "../../lib/speech";
+import { ConfirmDialog } from "../../components/ConfirmDialog";
 
 const nowLabel = () => new Date().toLocaleTimeString("en-SG", { hour: "2-digit", minute: "2-digit" });
 
@@ -25,16 +26,14 @@ const hasTTS = typeof window !== "undefined" && "speechSynthesis" in window;
 // closes, and force-expired after SESSION_TTL_MS regardless of activity.
 const SESSION_TTL_MS = 30 * 60 * 1000;
 
-function loadChatSession(key: string): { messages: EMsg[]; startedAt: number; quickOpen: boolean } | null {
+function loadChatSession(key: string): { messages: EMsg[]; startedAt: number } | null {
   if (typeof window === "undefined") return null;
   try {
     const raw = sessionStorage.getItem(key);
     if (!raw) return null;
-    const parsed = JSON.parse(raw) as { messages: EMsg[]; startedAt: number; quickOpen?: boolean };
+    const parsed = JSON.parse(raw) as { messages: EMsg[]; startedAt: number };
     if (Date.now() - parsed.startedAt > SESSION_TTL_MS) return null;
-    // quickOpen defaults to collapsed for any restored session that already
-    // has real messages beyond the initial greeting.
-    return { ...parsed, quickOpen: parsed.quickOpen ?? parsed.messages.length <= 1 };
+    return parsed;
   } catch {
     return null;
   }
@@ -54,10 +53,10 @@ function renderWithBold(text: string) {
 }
 
 // A single feature tile in the "Quick help" launcher.
-function FeatureBtn({ icon: Icon, label, onClick, "data-tour": dataTour }: { icon: any; label: string; onClick: () => void; "data-tour"?: string }) {
+function FeatureBtn({ icon: Icon, label, onClick, className = "", "data-tour": dataTour }: { icon: any; label: string; onClick: () => void; className?: string; "data-tour"?: string }) {
   return (
-    <button onClick={onClick} data-tour={dataTour} className="flex items-center gap-2 bg-card border border-border rounded-xl p-2.5 text-left active:bg-muted transition-colors">
-      <div className="w-7 h-7 rounded-lg bg-primary/10 flex items-center justify-center shrink-0"><Icon size={14} className="text-primary" /></div>
+    <button onClick={onClick} data-tour={dataTour} className={`h-[88px] flex flex-col items-center justify-center gap-1.5 bg-card border border-border rounded-2xl px-2 text-center active:bg-muted transition-colors ${className}`}>
+      <div className="w-10 h-10 rounded-xl bg-primary/10 flex items-center justify-center shrink-0"><Icon size={18} className="text-primary" /></div>
       <span className="text-[12px] font-bold text-foreground leading-tight">{label}</span>
     </button>
   );
@@ -106,7 +105,9 @@ export function ElderlyAIScreen({ patient, elderId, onLogDose, onNavigate, onMed
   const [screenTab, setScreenTab] = useState<"chat" | "doctor">("chat");
   const [newQ, setNewQ] = useState("");
   const [showInput, setShowInput] = useState(false);
-  const [quickOpen, setQuickOpen] = useState(() => restored?.quickOpen ?? true);
+  // Quick help is a popup over the chat, so it never restores open.
+  const [quickOpen, setQuickOpen] = useState(false);
+  const [showClearConfirm, setShowClearConfirm] = useState(false);
   const [showMedPicker, setShowMedPicker] = useState(false);
   const [showLangSheet, setShowLangSheet] = useState(false);
   const scrollRef = useRef<HTMLDivElement>(null);
@@ -128,8 +129,8 @@ export function ElderlyAIScreen({ patient, elderId, onLogDose, onNavigate, onMed
   // tab closes.
   useEffect(() => {
     if (typeof window === "undefined") return;
-    sessionStorage.setItem(storageKey, JSON.stringify({ messages, startedAt: startedAtRef.current, quickOpen }));
-  }, [messages, quickOpen, storageKey]);
+    sessionStorage.setItem(storageKey, JSON.stringify({ messages, startedAt: startedAtRef.current }));
+  }, [messages, storageKey]);
 
   // Show the latest message immediately when returning to this tab, instead
   // of wherever the scroll position happened to be left.
@@ -156,7 +157,7 @@ export function ElderlyAIScreen({ patient, elderId, onLogDose, onNavigate, onMed
       if (Date.now() - startedAtRef.current > SESSION_TTL_MS) {
         startedAtRef.current = Date.now();
         setMessages([buildGreeting()]);
-        setQuickOpen(true);
+        setQuickOpen(false);
       }
     }, 60_000);
     return () => clearInterval(interval);
@@ -257,6 +258,16 @@ export function ElderlyAIScreen({ patient, elderId, onLogDose, onNavigate, onMed
     if (autoMessage) send(autoMessage);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
+
+  // Start the conversation over: fresh greeting and a fresh session window, so
+  // the restored-session TTL doesn't immediately expire the new chat.
+  const clearChat = () => {
+    startedAtRef.current = Date.now();
+    setMessages([buildGreeting()]);
+    setShowClearConfirm(false);
+    setQuickOpen(false);
+    scrollToBottom();
+  };
 
   // Quick-help feature actions ----------------------------------------------
   const handleSetup = () => {
@@ -427,39 +438,24 @@ export function ElderlyAIScreen({ patient, elderId, onLogDose, onNavigate, onMed
         </div>
       ) : (
         <>
-          {/* Quick help feature launcher */}
-          <div className="px-4 pt-2.5 shrink-0" data-tour="elder-quickhelp">
-            <button onClick={() => setQuickOpen(o => !o)} className="w-full flex items-center gap-1.5 mb-2">
-              <Sparkles size={15} className="text-primary" />
-              <span className="text-sm font-bold text-foreground">{t(language, "ai.quickHelp")}</span>
-              <ChevronDown size={16} className={`ml-auto text-muted-foreground transition-transform ${quickOpen ? "rotate-180" : ""}`} />
+          {/* Quick help opens as a popup rather than expanding inline, so the
+              conversation never gets pushed off-screen. */}
+          <div className="px-4 pt-2.5 pb-1 shrink-0 flex items-center gap-2" data-tour="elder-quickhelp">
+            <button
+              onClick={() => setQuickOpen(true)}
+              className="flex items-center gap-2 rounded-xl bg-primary text-primary-foreground px-3.5 py-2.5 shadow-sm active:scale-[0.97] transition-transform"
+            >
+              <Sparkles size={15} className="shrink-0" />
+              <span className="text-sm font-bold">{t(language, "ai.quickHelp")}</span>
+              <ChevronUp size={15} className="shrink-0 opacity-80" />
             </button>
-            {quickOpen && (
-              <div className="space-y-2 pb-1">
-                <button onClick={handleSetup} className="w-full flex items-center gap-2 bg-primary/10 text-primary rounded-xl px-3 py-2.5 text-sm font-bold active:scale-[0.99] transition-transform">
-                  <Sparkles size={16} />{t(language, "ai.helpSetup")}
-                </button>
-                <div className="grid grid-cols-2 gap-1.5">
-                  <FeatureBtn icon={Camera}   label={t(language, "common.addPrescription")} onClick={() => rxPhotoRef.current?.click()} />
-                  <FeatureBtn icon={FileText} label={t(language, "ai.updateProfile")}   onClick={() => reportRef.current?.click()} />
-                  <FeatureBtn icon={Pill}     label={t(language, "ai.askAboutMed")} onClick={() => setShowMedPicker(v => !v)} />
-                  <FeatureBtn icon={Globe}    label={t(language, "ai.languageVoice")} onClick={() => setShowLangSheet(true)} />
-                  <FeatureBtn icon={Plane}    label={t(language, "common.travelMode")}      onClick={onOpenTravel} />
-                </div>
-                {showMedPicker && (
-                  <div className="bg-card border border-border rounded-xl p-2.5">
-                    <p className="text-[11px] text-muted-foreground font-semibold px-0.5 pb-1.5">{t(language, "ai.whichMedication")}</p>
-                    <div className="flex flex-wrap gap-1.5">
-                      {uniqueMeds.map(n => (
-                        <button key={n} onClick={() => { setShowMedPicker(false); send(`What is ${n} for?`); }} className="text-xs font-semibold bg-muted text-foreground rounded-full px-3 py-1.5 active:bg-primary/10 active:text-primary transition-colors">
-                          {n}
-                        </button>
-                      ))}
-                    </div>
-                  </div>
-                )}
-              </div>
-            )}
+            <button
+              onClick={() => setShowClearConfirm(true)}
+              className="ml-auto flex items-center gap-1.5 rounded-xl border border-border bg-card text-muted-foreground px-3 py-2.5 shadow-sm active:bg-muted active:scale-[0.97] transition-all"
+            >
+              <Trash2 size={14} className="shrink-0" />
+              <span className="text-sm font-semibold">{t(language, "ai.clearChat")}</span>
+            </button>
           </div>
 
           {/* Speaking indicator */}
@@ -556,8 +552,8 @@ export function ElderlyAIScreen({ patient, elderId, onLogDose, onNavigate, onMed
 
           {/* Language & voice sheet */}
           {showLangSheet && (
-            <div className="absolute inset-0 z-50 flex items-end bg-black/40" onClick={() => setShowLangSheet(false)}>
-              <div className="w-full bg-background rounded-t-3xl p-5 pb-7 animate-in slide-in-from-bottom duration-200" onClick={e => e.stopPropagation()}>
+            <div className="absolute inset-0 z-50 flex items-end p-3 bg-black/40" onClick={() => setShowLangSheet(false)}>
+              <div className="w-full bg-background rounded-3xl border border-border shadow-2xl p-5 max-h-full overflow-y-auto scrollbar-none animate-in slide-in-from-bottom duration-200" onClick={e => e.stopPropagation()}>
                 <div className="flex items-center justify-between mb-4">
                   <h3 className="font-['Fraunces'] text-xl font-semibold text-foreground">{t(language, "ai.languageVoice")}</h3>
                   <button onClick={() => setShowLangSheet(false)} className="w-8 h-8 rounded-full bg-muted flex items-center justify-center"><X size={16} className="text-muted-foreground" /></button>
@@ -581,6 +577,66 @@ export function ElderlyAIScreen({ patient, elderId, onLogDose, onNavigate, onMed
             </div>
           )}
         </>
+      )}
+
+      {/* Quick help popup — overlays the chat instead of pushing it down, and
+          floats clear of the panel edges: this screen's container is
+          overflow-hidden, so a sheet flush to the bottom gets visibly cut
+          against the nav bar below it. */}
+      {quickOpen && (
+        <div className="absolute inset-0 z-[140] flex items-end p-3">
+          <div className="absolute inset-0 bg-black/40" onClick={() => setQuickOpen(false)} />
+          <div className="relative w-full bg-card rounded-3xl border border-border px-4 pt-4 pb-4 shadow-2xl max-h-full overflow-y-auto scrollbar-none animate-in slide-in-from-bottom duration-200">
+            <div className="flex items-center gap-2 mb-3">
+              <Sparkles size={16} className="text-primary shrink-0" />
+              <h3 className="font-['Fraunces'] text-lg font-semibold text-foreground">{t(language, "ai.quickHelp")}</h3>
+              <button
+                onClick={() => setQuickOpen(false)}
+                aria-label={t(language, "common.cancel")}
+                className="ml-auto w-9 h-9 rounded-full bg-muted flex items-center justify-center text-muted-foreground active:bg-border transition-colors"
+              >
+                <X size={16} />
+              </button>
+            </div>
+
+            <button onClick={handleSetup} className="w-full flex items-center justify-center gap-2 bg-primary text-primary-foreground rounded-2xl px-3 py-3.5 text-sm font-bold active:scale-[0.99] transition-transform mb-2.5">
+              <Sparkles size={16} />{t(language, "ai.helpSetup")}
+            </button>
+
+            <div className="grid grid-cols-2 gap-2">
+              <FeatureBtn icon={Camera}   label={t(language, "common.addPrescription")} onClick={() => rxPhotoRef.current?.click()} />
+              <FeatureBtn icon={FileText} label={t(language, "ai.updateProfile")}       onClick={() => reportRef.current?.click()} />
+              <FeatureBtn icon={Pill}     label={t(language, "ai.askAboutMed")}         onClick={() => setShowMedPicker(v => !v)} />
+              {/* These two open their own sheets — close the popup first, or it
+                  stays stacked on top of whatever they open. */}
+              <FeatureBtn icon={Globe}    label={t(language, "ai.languageVoice")}       onClick={() => { setQuickOpen(false); setShowLangSheet(true); }} />
+              <FeatureBtn icon={Plane}    label={t(language, "common.travelMode")}      onClick={() => { setQuickOpen(false); onOpenTravel(); }} className="col-span-2" />
+            </div>
+
+            {showMedPicker && (
+              <div className="bg-muted/50 border border-border rounded-2xl p-3 mt-2.5">
+                <p className="text-xs text-muted-foreground font-semibold px-0.5 pb-2">{t(language, "ai.whichMedication")}</p>
+                <div className="flex flex-wrap gap-1.5">
+                  {uniqueMeds.map(n => (
+                    <button key={n} onClick={() => { setShowMedPicker(false); send(`What is ${n} for?`); }} className="text-sm font-semibold bg-card border border-border text-foreground rounded-full px-3 py-2 active:bg-primary/10 active:text-primary transition-colors">
+                      {n}
+                    </button>
+                  ))}
+                </div>
+              </div>
+            )}
+          </div>
+        </div>
+      )}
+
+      {showClearConfirm && (
+        <ConfirmDialog
+          title={t(language, "confirm.clearChatTitle")}
+          body={t(language, "confirm.clearChatBody")}
+          confirmLabel={t(language, "ai.clearChat")}
+          onConfirm={clearChat}
+          onCancel={() => setShowClearConfirm(false)}
+        />
       )}
 
     </div>

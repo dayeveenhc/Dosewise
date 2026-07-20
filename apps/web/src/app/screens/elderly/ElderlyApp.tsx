@@ -268,7 +268,7 @@ export function ElderlyApp({ patient, elderId, onUpdatePatient, onBack, onSignOu
         </div>
       </div>
 
-      {addRx && <AddPrescriptionSheet initialTab={addRx} onClose={() => setAddRx(null)} onAdd={handleAddPrescription} onAdded={() => setTab("prescriptions")} onAgentAdded={(name?: string) => { void refreshMeds(); flagJustAdded(name); setTab("prescriptions"); }} />}
+      {addRx && <AddPrescriptionSheet initialTab={addRx} routine={{ ...patient.mealTimes, sleepTime: patient.sleepTime }} onClose={() => setAddRx(null)} onAdd={handleAddPrescription} onAdded={() => setTab("prescriptions")} onAgentAdded={(name?: string) => { void refreshMeds(); flagJustAdded(name); setTab("prescriptions"); }} />}
       {showTravel && (
         <TravelModeSheet
           patient={patient}

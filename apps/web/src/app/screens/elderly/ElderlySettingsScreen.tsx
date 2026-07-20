@@ -1,5 +1,5 @@
 import { useState, useEffect } from "react";
-import { Shield, ChevronDown, Eye, Phone, RefreshCw, LogOut, Check, Loader2, Coffee, Utensils, Moon } from "lucide-react";
+import { Shield, ChevronDown, Eye, Phone, RefreshCw, LogOut, Check, Loader2, Coffee, Utensils, UtensilsCrossed, Moon } from "lucide-react";
 import { useAccessibility } from "../../accessibility.tsx";
 import type { FontSize } from "../../accessibility.tsx";
 import type { Patient } from "../../types";
@@ -7,6 +7,7 @@ import { MED_SHAPES, COMMON_CONDITIONS, COMMON_ALLERGIES, COMMON_DRUG_ALLERGIES 
 import { fetchProfile, saveProfile, calculateAge } from "../../lib/profile";
 import { TagList, fieldCls, GenderPicker } from "../setup/GuidedSetupWizard";
 import { MedAvatar } from "../../components/shared";
+import { TimeField } from "../../components/TimesPicker";
 import { CallMockup } from "../../components/CallMockup";
 import { useLanguage } from "../../lib/languageContext";
 import { LANGUAGE_OPTIONS, t } from "../../lib/language";
@@ -153,23 +154,11 @@ export function ElderlySettingsScreen({ patient, elderId, onUpdatePatient, onBac
 
           <div>
             <p className="text-sm font-semibold text-foreground mb-2">{t(language, "settings.mealsSleep")}</p>
-            <div className="space-y-2.5">
-              <div className="flex items-center gap-3">
-                <div className="w-9 h-9 rounded-xl bg-secondary flex items-center justify-center shrink-0"><Coffee size={16} className="text-primary" /></div>
-                <input type="time" value={breakfastDraft} onChange={e => setBreakfastDraft(e.target.value)} className={`${fieldCls} flex-1`} />
-              </div>
-              <div className="flex items-center gap-3">
-                <div className="w-9 h-9 rounded-xl bg-secondary flex items-center justify-center shrink-0"><Utensils size={16} className="text-primary" /></div>
-                <input type="time" value={lunchDraft} onChange={e => setLunchDraft(e.target.value)} className={`${fieldCls} flex-1`} />
-              </div>
-              <div className="flex items-center gap-3">
-                <div className="w-9 h-9 rounded-xl bg-secondary flex items-center justify-center shrink-0"><Utensils size={16} className="text-primary" /></div>
-                <input type="time" value={dinnerDraft} onChange={e => setDinnerDraft(e.target.value)} className={`${fieldCls} flex-1`} />
-              </div>
-              <div className="flex items-center gap-3">
-                <div className="w-9 h-9 rounded-xl bg-secondary flex items-center justify-center shrink-0"><Moon size={16} className="text-primary" /></div>
-                <input type="time" value={sleepDraft} onChange={e => setSleepDraft(e.target.value)} className={`${fieldCls} flex-1`} />
-              </div>
+            <div className="space-y-3">
+              <TimeField label={t(language, "wizard.breakfast")} icon={<Coffee size={15} className="text-primary" />} value={breakfastDraft} onChange={setBreakfastDraft} />
+              <TimeField label={t(language, "wizard.lunch")} icon={<Utensils size={15} className="text-primary" />} value={lunchDraft} onChange={setLunchDraft} />
+              <TimeField label={t(language, "wizard.dinner")} icon={<UtensilsCrossed size={15} className="text-primary" />} value={dinnerDraft} onChange={setDinnerDraft} />
+              <TimeField label={t(language, "wizard.bedtime")} icon={<Moon size={15} className="text-primary" />} value={sleepDraft} onChange={setSleepDraft} />
             </div>
           </div>
 
