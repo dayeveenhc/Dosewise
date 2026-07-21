@@ -184,7 +184,7 @@ export function ElderlySettingsScreen({ patient, elderId, onUpdatePatient, onBac
         {/* Caregiver linking QR — a caregiver scans this to request managing this
             elder's medications; the request lands in the elder's Notifications. */}
         {elderId && (
-          <div className="bg-card rounded-2xl border border-border p-4">
+          <div className="bg-card rounded-2xl border border-border p-4" data-tour="elder-qrlink">
             <div className="flex items-center gap-2 mb-1">
               <QrCode size={15} className="text-primary" />
               <p className="font-semibold text-foreground">{t(language, "link.qrTitle")}</p>

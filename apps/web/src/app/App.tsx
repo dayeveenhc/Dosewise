@@ -151,6 +151,10 @@ export default function App() {
       target: '[data-tour="cg-settings"]', navTarget: '[data-tour="nav-settings"]', onEnter: () => setScreen("settings"),
       title: t(uiLang, "tour.cgNotifTitle"), body: t(uiLang, "tour.cgNotifBody"),
     },
+    {
+      target: '[data-tour="cg-patient-switcher"]', navTarget: '[data-tour="nav-dashboard"]', onEnter: () => setScreen("dashboard"),
+      title: t(uiLang, "tour.cgQrLinkTitle"), body: t(uiLang, "tour.cgQrLinkBody"),
+    },
   ];
 
   useEffect(() => {

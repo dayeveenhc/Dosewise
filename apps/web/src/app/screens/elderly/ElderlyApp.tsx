@@ -115,6 +115,10 @@ export function ElderlyApp({ patient, elderId, onUpdatePatient, onBack, onSignOu
       target: '[data-tour="elder-language"]', navTarget: '[data-tour="nav-settings"]', onEnter: () => setTab("settings"),
       title: t(language, "tour.elderLangTitle"), body: t(language, "tour.elderLangBody"),
     },
+    {
+      target: '[data-tour="elder-qrlink"]', navTarget: '[data-tour="nav-settings"]', onEnter: () => setTab("settings"),
+      title: t(language, "tour.elderQrLinkTitle"), body: t(language, "tour.elderQrLinkBody"),
+    },
   ];
 
   const openAI = (msg?: string) => {

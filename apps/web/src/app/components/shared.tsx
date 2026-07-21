@@ -110,6 +110,7 @@ export function PatientSwitcher({ patients, selected, onSelect, onAdd, onScan }:
   return (
     <div className="relative z-[200]">
       <button
+        data-tour="cg-patient-switcher"
         onClick={() => setOpen(!open)}
         className="flex items-center gap-2.5 bg-white/70 backdrop-blur-sm border border-border rounded-2xl px-3 py-2 w-full"
       >

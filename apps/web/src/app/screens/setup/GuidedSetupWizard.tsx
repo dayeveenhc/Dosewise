@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import type { ReactNode, ChangeEvent } from "react";
-import { ArrowLeft, Loader2, Plus, X, Check, Sunrise, Coffee, Utensils, UtensilsCrossed, Moon, PartyPopper, Users, Camera, Sparkles, Venus, Mars } from "lucide-react";
+import { ArrowLeft, Loader2, Plus, X, Check, Sunrise, Coffee, Utensils, UtensilsCrossed, Moon, PartyPopper, Users, Camera, Sparkles, Venus, Mars, Eye, EyeOff } from "lucide-react";
 import { supabase } from "../../lib/supabase";
 import { saveProfile } from "../../lib/profile";
 import { addMedication, archiveMedication, to24h } from "../../lib/medications";
@@ -365,6 +365,7 @@ export function GuidedSetupWizard({ mode, hasSession, elderId: initialElderId, p
   const [accountLoading, setAccountLoading] = useState(false);
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
+  const [showPassword, setShowPassword] = useState(false);
 
   // Seeded once from `prefill` (an uploaded-record extraction) so the user
   // reviews pre-filled answers; empty when the person chose guided setup.
@@ -491,7 +492,12 @@ export function GuidedSetupWizard({ mode, hasSession, elderId: initialElderId, p
                 </div>
                 <div>
                   <label className="block text-xs font-semibold text-foreground mb-1.5">{t(language, "wizard.password")}</label>
-                  <input type="password" value={password} onChange={e => setPassword(e.target.value)} onKeyDown={e => e.key === "Enter" && createAccount()} placeholder={t(language, "wizard.passwordPlaceholder")} className={cls(password.length >= 6)} autoComplete="new-password" />
+                  <div className="relative">
+                    <input type={showPassword ? "text" : "password"} value={password} onChange={e => setPassword(e.target.value)} onKeyDown={e => e.key === "Enter" && createAccount()} placeholder={t(language, "wizard.passwordPlaceholder")} className={`${cls(password.length >= 6)} pr-11`} autoComplete="new-password" />
+                    <button type="button" onClick={() => setShowPassword(v => !v)} className="absolute right-3 top-1/2 -translate-y-1/2 text-muted-foreground" aria-label={t(language, showPassword ? "wizard.hidePassword" : "wizard.showPassword")}>
+                      {showPassword ? <EyeOff size={18} /> : <Eye size={18} />}
+                    </button>
+                  </div>
                 </div>
               </>
             )}

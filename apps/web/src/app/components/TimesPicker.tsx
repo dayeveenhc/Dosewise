@@ -176,11 +176,15 @@ export function TimeField({ value, onChange, label, icon }: {
  *
  * Values in and out are the app's 12h display strings (`Medication.times`).
  */
-export function TimesPicker({ times, onChange, label, routine }: {
+export function TimesPicker({ times, onChange, label, routine, headerAction }: {
   times: string[];
   onChange: (times: string[]) => void;
   label?: string;
   routine?: RoutineTimes;
+  // An optional element (e.g. an "Ask Mei" button) rendered to the right of the
+  // label — for callers that need a per-field action without TimesPicker itself
+  // knowing what it does.
+  headerAction?: ReactNode;
 }) {
   const { language } = useLanguage();
   // Which row is open in the editor: an index, "new" while adding, or null.
@@ -208,7 +212,10 @@ export function TimesPicker({ times, onChange, label, routine }: {
 
   return (
     <div>
-      <label className="block text-xs font-semibold text-foreground mb-2">{label ?? t(language, "times.label")}</label>
+      <div className="flex items-center justify-between gap-2 mb-2">
+        <label className="block text-xs font-semibold text-foreground">{label ?? t(language, "times.label")}</label>
+        {headerAction}
+      </div>
 
       <div className="grid grid-cols-4 gap-2 mb-3">
         {quick.map(({ key, labelKey, Icon, hhmm }) => {

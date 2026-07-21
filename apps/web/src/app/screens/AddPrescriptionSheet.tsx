@@ -5,6 +5,7 @@ import type { Medication } from "../types";
 import { MED_COLOURS, MEDICATION_CATALOG, COMMON_CONDITIONS, MED_PHOTOS } from "../data/medications";
 import { TimesPicker, defaultDoseTime, toDisplayTime } from "../components/TimesPicker";
 import type { RoutineTimes } from "../components/TimesPicker";
+import { to24h } from "../lib/medications";
 import { ConfirmDialog } from "../components/ConfirmDialog";
 
 // Patch a duplicate scan hands back to the parent to fold into the existing med.
@@ -72,6 +73,28 @@ const slotToTime = (slot: ScanScenario["timeSlot"], routine?: RoutineTimes) => {
   return toDisplayTime(raw);
 };
 
+// Mei's "usual timing" guess for a medication with nothing on file yet —
+// Metformin (for diabetes) is typically dosed twice a day, with breakfast and
+// dinner, rather than the generic single-dose default.
+const typicalTimesFor = (medName: string, routine?: RoutineTimes): string[] =>
+  medName.trim().toLowerCase() === "metformin"
+    ? [slotToTime("morning", routine), slotToTime("evening", routine)]
+    : [defaultDoseTime(routine)];
+
+// Describes suggested times loosely ("morning and evening") instead of exact
+// clock times, since Mei is suggesting a usual routine, not reading a label.
+const timeOfDayLabel = (hhmm12: string) => {
+  const hour = Number(to24h(hhmm12).split(":")[0]);
+  if (hour < 11) return "morning";
+  if (hour < 16) return "midday";
+  if (hour < 21) return "evening";
+  return "bedtime";
+};
+const describeTimes = (times: string[]) => {
+  const labels = [...new Set(times.map(timeOfDayLabel))];
+  return labels.length > 1 ? `${labels.slice(0, -1).join(", ")} and ${labels[labels.length - 1]}` : labels[0];
+};
+
 // A small type-ahead input: shows filtered suggestions as the user types.
 function TypeAhead<T>({ value, onChange, onPick, items, filter, label, render, placeholder }: {
   value: string;
@@ -115,6 +138,60 @@ function TypeAhead<T>({ value, onChange, onPick, items, filter, label, render, p
   );
 }
 
+// A small popover anchored to an "Ask Mei" button: Mei's guess for a blank
+// field, with a Confirm that plays out the "checking against the label" beat
+// before filling it in.
+function AskMeiPopover({ message, checking, onConfirm, onClose }: {
+  message: string;
+  checking: boolean;
+  onConfirm: () => void;
+  onClose: () => void;
+}) {
+  return (
+    <div className="absolute z-30 right-0 top-full mt-2 w-60 bg-card border border-border rounded-2xl shadow-xl p-3.5">
+      <div className="flex items-center gap-1.5 text-primary mb-1.5">
+        <Sparkles size={14} />
+        <span className="text-xs font-semibold">Mei</span>
+      </div>
+      <p className="text-xs text-foreground leading-relaxed mb-3">{message}</p>
+      <div className="flex gap-2">
+        <button
+          type="button"
+          onClick={onConfirm}
+          disabled={checking}
+          className="flex-1 bg-primary text-primary-foreground rounded-xl py-2 text-xs font-semibold flex items-center justify-center gap-1.5 disabled:opacity-60"
+        >
+          {checking ? <Sparkles size={13} className="animate-pulse" /> : <Check size={13} />}
+          {checking ? "Checking label…" : "Confirm"}
+        </button>
+        <button
+          type="button"
+          onClick={onClose}
+          disabled={checking}
+          className="px-3 rounded-xl border border-border text-xs font-semibold text-muted-foreground disabled:opacity-60"
+        >
+          Cancel
+        </button>
+      </div>
+    </div>
+  );
+}
+
+// A small round button that opens an AskMeiPopover — the "Ask Mei" trigger
+// placed to the right of a blank field's input space.
+function AskMeiButton({ open, onToggle }: { open: boolean; onToggle: () => void }) {
+  return (
+    <button
+      type="button"
+      onClick={onToggle}
+      aria-label="Ask Mei"
+      className={`shrink-0 w-10 h-10 rounded-xl flex items-center justify-center transition-colors ${open ? "bg-primary text-primary-foreground" : "bg-primary/10 text-primary"}`}
+    >
+      <Sparkles size={16} />
+    </button>
+  );
+}
+
 export function AddPrescriptionSheet({ onClose, onAdd, onAdded, routine, existingMeds, onUpdateMed, scriptedRefillDemo }: AddPrescriptionSheetProps) {
   const [tab, setTab] = useState<"scan" | "manual">("scan");
   const [scannedPhoto, setScannedPhoto] = useState<string | null>(null);
@@ -140,8 +217,41 @@ export function AddPrescriptionSheet({ onClose, onAdd, onAdded, routine, existin
   const [selectedTimes, setSelectedTimes] = useState<string[]>([defaultDoseTime(routine)]);
   const [refillDays, setRefillDays] = useState("");
   const [colour, setColour] = useState(MED_COLOURS[0].hex);
+  // Which field's "Ask Mei" popover is open (only one at a time), and whether
+  // its Confirm button is in the scripted "checking against the label" beat.
+  const [askMeiOpen, setAskMeiOpen] = useState<"dose" | "purpose" | "times" | "refillDays" | null>(null);
+  const [askMeiChecking, setAskMeiChecking] = useState(false);
 
   const isValid = name.trim() && dose.trim() && purpose.trim() && selectedTimes.length > 0;
+
+  // What Mei would suggest for a field left blank by an unreadable label: the
+  // person's existing record for this medication (truest "what you usually
+  // take"), falling back to the general catalog entry. Times/refill always have
+  // a fallback so the button never offers an empty suggestion; dose/purpose
+  // only appear when there's an actual match to suggest.
+  const nameKey = name.trim().toLowerCase();
+  const existingMed = existingMeds?.find(m => m.name.trim().toLowerCase() === nameKey);
+  const catalogMed = MEDICATION_CATALOG.find(m => m.name.toLowerCase() === nameKey);
+  const askMeiSuggestion = {
+    dose: existingMed?.dose || catalogMed?.dose,
+    purpose: existingMed?.purpose || catalogMed?.purpose,
+    times: existingMed?.times?.length ? existingMed.times : existingMed?.time ? [existingMed.time] : typicalTimesFor(name, routine),
+    refillDays: existingMed?.refillDaysLeft != null ? String(existingMed.refillDaysLeft) : "30",
+  };
+
+  // Confirm always resolves as "matches the label" — there's no real vision
+  // check in this mock, just the same short beat the scan animation already uses.
+  const confirmAskMei = (field: "dose" | "purpose" | "times" | "refillDays") => {
+    setAskMeiChecking(true);
+    window.setTimeout(() => {
+      if (field === "dose") setDose(askMeiSuggestion.dose ?? "");
+      else if (field === "purpose") setPurpose(askMeiSuggestion.purpose ?? "");
+      else if (field === "times") setSelectedTimes(askMeiSuggestion.times);
+      else setRefillDays(askMeiSuggestion.refillDays);
+      setAskMeiChecking(false);
+      setAskMeiOpen(null);
+    }, 900);
+  };
 
   // Mock scan: stage the active scenario after a short loading animation. A
   // crumpled label fills only name + condition (dose/timing left blank to enter by
@@ -387,30 +497,95 @@ export function AddPrescriptionSheet({ onClose, onAdd, onAdded, routine, existin
               {/* Dose */}
               <div>
                 <label className="block text-xs font-semibold text-foreground mb-1.5">Dose <span className="text-destructive">*</span></label>
-                <input value={dose} onChange={e => setDose(e.target.value)} placeholder="e.g. 500mg, 2 tablets, 1 drop each eye" className={inputCls} />
+                <div className="flex items-center gap-2">
+                  <input value={dose} onChange={e => setDose(e.target.value)} placeholder="e.g. 500mg, 2 tablets, 1 drop each eye" className={`${inputCls} flex-1`} />
+                  {!dose.trim() && askMeiSuggestion.dose && (
+                    <div className="relative">
+                      <AskMeiButton open={askMeiOpen === "dose"} onToggle={() => setAskMeiOpen(o => o === "dose" ? null : "dose")} />
+                      {askMeiOpen === "dose" && (
+                        <AskMeiPopover
+                          message={`You usually take ${name.trim() || "this"} as ${askMeiSuggestion.dose}. Want me to check that against the label?`}
+                          checking={askMeiChecking}
+                          onConfirm={() => confirmAskMei("dose")}
+                          onClose={() => setAskMeiOpen(null)}
+                        />
+                      )}
+                    </div>
+                  )}
+                </div>
               </div>
 
               {/* Purpose / condition — type-ahead */}
               <div>
                 <label className="block text-xs font-semibold text-foreground mb-1.5">Purpose / Condition <span className="text-destructive">*</span></label>
-                <TypeAhead
-                  value={purpose}
-                  onChange={setPurpose}
-                  onPick={c => setPurpose(c)}
-                  items={COMMON_CONDITIONS}
-                  filter={(c, q) => c.toLowerCase().includes(q)}
-                  label={c => c}
-                  placeholder="e.g. Diabetes, Blood Pressure"
-                />
+                <div className="flex items-center gap-2">
+                  <div className="flex-1">
+                    <TypeAhead
+                      value={purpose}
+                      onChange={setPurpose}
+                      onPick={c => setPurpose(c)}
+                      items={COMMON_CONDITIONS}
+                      filter={(c, q) => c.toLowerCase().includes(q)}
+                      label={c => c}
+                      placeholder="e.g. Diabetes, Blood Pressure"
+                    />
+                  </div>
+                  {!purpose.trim() && askMeiSuggestion.purpose && (
+                    <div className="relative">
+                      <AskMeiButton open={askMeiOpen === "purpose"} onToggle={() => setAskMeiOpen(o => o === "purpose" ? null : "purpose")} />
+                      {askMeiOpen === "purpose" && (
+                        <AskMeiPopover
+                          message={`${name.trim() || "This"} is usually for ${askMeiSuggestion.purpose}. Want me to check that against the label?`}
+                          checking={askMeiChecking}
+                          onConfirm={() => confirmAskMei("purpose")}
+                          onClose={() => setAskMeiOpen(null)}
+                        />
+                      )}
+                    </div>
+                  )}
+                </div>
               </div>
 
               {/* Time */}
-              <TimesPicker times={selectedTimes} onChange={setSelectedTimes} label="Scheduled times" routine={routine} />
+              <TimesPicker
+                times={selectedTimes}
+                onChange={setSelectedTimes}
+                label="Scheduled times"
+                routine={routine}
+                headerAction={selectedTimes.length === 0 ? (
+                  <div className="relative">
+                    <AskMeiButton open={askMeiOpen === "times"} onToggle={() => setAskMeiOpen(o => o === "times" ? null : "times")} />
+                    {askMeiOpen === "times" && (
+                      <AskMeiPopover
+                        message={`You usually take ${name.trim() || "this"} in the ${describeTimes(askMeiSuggestion.times)}. Want me to check that against the label?`}
+                        checking={askMeiChecking}
+                        onConfirm={() => confirmAskMei("times")}
+                        onClose={() => setAskMeiOpen(null)}
+                      />
+                    )}
+                  </div>
+                ) : undefined}
+              />
 
               {/* Refill supply */}
               <div>
                 <label className="block text-xs font-semibold text-foreground mb-1.5">Current supply (days remaining)</label>
-                <input type="number" value={refillDays} onChange={e => setRefillDays(e.target.value)} placeholder="e.g. 28" min={1} className={inputCls} />
+                <div className="flex items-center gap-2">
+                  <input type="number" value={refillDays} onChange={e => setRefillDays(e.target.value)} placeholder="e.g. 28" min={1} className={`${inputCls} flex-1`} />
+                  {!refillDays.trim() && (
+                    <div className="relative">
+                      <AskMeiButton open={askMeiOpen === "refillDays"} onToggle={() => setAskMeiOpen(o => o === "refillDays" ? null : "refillDays")} />
+                      {askMeiOpen === "refillDays" && (
+                        <AskMeiPopover
+                          message={`Prescriptions like this usually come with about a ${askMeiSuggestion.refillDays}-day supply. Want me to check that against the label?`}
+                          checking={askMeiChecking}
+                          onConfirm={() => confirmAskMei("refillDays")}
+                          onClose={() => setAskMeiOpen(null)}
+                        />
+                      )}
+                    </div>
+                  )}
+                </div>
                 <p className="text-[11px] text-muted-foreground mt-1">You'll be alerted when this runs low.</p>
               </div>
 
