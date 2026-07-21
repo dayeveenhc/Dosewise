@@ -111,6 +111,7 @@ export function PatientSwitcher({ patients, selected, onSelect, onAdd, onScan }:
     <div className="relative z-[200]">
       <button
         onClick={() => setOpen(!open)}
+        data-tour="cg-patientswitcher"
         className="flex items-center gap-2.5 bg-white/70 backdrop-blur-sm border border-border rounded-2xl px-3 py-2 w-full"
       >
         <img src={patient.photo} alt={patient.name} className="w-8 h-8 rounded-full object-cover bg-muted" />

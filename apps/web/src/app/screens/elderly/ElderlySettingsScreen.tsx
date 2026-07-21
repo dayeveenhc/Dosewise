@@ -9,6 +9,7 @@ import { MED_SHAPES, COMMON_CONDITIONS, COMMON_ALLERGIES, COMMON_DRUG_ALLERGIES 
 import { fetchProfile, saveProfile, calculateAge } from "../../lib/profile";
 import { TagList, fieldCls, GenderPicker, withCatalogLabels } from "../setup/GuidedSetupWizard";
 import { MedAvatar } from "../../components/shared";
+import { MeiSuggestButton } from "../../components/MeiSuggestButton";
 import { TimeField } from "../../components/TimesPicker";
 import { CallMockup } from "../../components/CallMockup";
 import { useLanguage } from "../../lib/languageContext";
@@ -134,22 +135,46 @@ export function ElderlySettingsScreen({ patient, elderId, onUpdatePatient, onBac
           <div className="px-4 pb-4 space-y-4 border-t border-border pt-4">
           <div className="flex gap-3">
             <div className="flex-1">
-              <label className="block text-xs font-semibold text-foreground mb-1.5">{t(language, "settings.dob")}</label>
+              <div className="flex items-center justify-between mb-1.5">
+                <label className="text-xs font-semibold text-foreground">{t(language, "settings.dob")}</label>
+                {!dobDraft.trim() && (
+                  <MeiSuggestButton
+                    fieldLabel={t(language, "settings.dob")}
+                    formatHint="Reply in YYYY-MM-DD format only."
+                    validate={v => /^\d{4}-\d{2}-\d{2}$/.test(v)}
+                    onAccept={setDobDraft}
+                  />
+                )}
+              </div>
               <input type="date" value={dobDraft} onChange={e => setDobDraft(e.target.value)} max={new Date().toISOString().slice(0, 10)} className={fieldCls} />
             </div>
             <div className="flex-1">
-              <label className="block text-xs font-semibold text-foreground mb-1.5">{t(language, "settings.gender")}</label>
+              <div className="flex items-center justify-between mb-1.5">
+                <label className="text-xs font-semibold text-foreground">{t(language, "settings.gender")}</label>
+                {!genderDraft.trim() && (
+                  <MeiSuggestButton
+                    fieldLabel={t(language, "settings.gender")}
+                    onAccept={v => setGenderDraft(/^f/i.test(v) ? "Female" : /^m/i.test(v) ? "Male" : v)}
+                  />
+                )}
+              </div>
               <GenderPicker value={genderDraft} onChange={setGenderDraft} size="sm" />
             </div>
           </div>
 
           <div className="flex gap-3">
             <div className="flex-1">
-              <label className="block text-xs font-semibold text-foreground mb-1.5">{t(language, "settings.weightKg")}</label>
+              <div className="flex items-center justify-between mb-1.5">
+                <label className="text-xs font-semibold text-foreground">{t(language, "settings.weightKg")}</label>
+                {!weightDraft.trim() && <MeiSuggestButton fieldLabel={t(language, "settings.weightKg")} onAccept={v => setWeightDraft(v.match(/\d+(\.\d+)?/)?.[0] ?? v)} />}
+              </div>
               <input type="number" value={weightDraft} onChange={e => setWeightDraft(e.target.value)} placeholder="e.g. 60" className={fieldCls} />
             </div>
             <div className="flex-1">
-              <label className="block text-xs font-semibold text-foreground mb-1.5">{t(language, "settings.heightCm")}</label>
+              <div className="flex items-center justify-between mb-1.5">
+                <label className="text-xs font-semibold text-foreground">{t(language, "settings.heightCm")}</label>
+                {!heightDraft.trim() && <MeiSuggestButton fieldLabel={t(language, "settings.heightCm")} onAccept={v => setHeightDraft(v.match(/\d+(\.\d+)?/)?.[0] ?? v)} />}
+              </div>
               <input type="number" value={heightDraft} onChange={e => setHeightDraft(e.target.value)} placeholder="e.g. 160" className={fieldCls} />
             </div>
           </div>
@@ -184,7 +209,7 @@ export function ElderlySettingsScreen({ patient, elderId, onUpdatePatient, onBac
         {/* Caregiver linking QR — a caregiver scans this to request managing this
             elder's medications; the request lands in the elder's Notifications. */}
         {elderId && (
-          <div className="bg-card rounded-2xl border border-border p-4">
+          <div className="bg-card rounded-2xl border border-border p-4" data-tour="elder-qr-link">
             <div className="flex items-center gap-2 mb-1">
               <QrCode size={15} className="text-primary" />
               <p className="font-semibold text-foreground">{t(language, "link.qrTitle")}</p>

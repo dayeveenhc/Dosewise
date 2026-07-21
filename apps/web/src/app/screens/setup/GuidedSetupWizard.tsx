@@ -1,6 +1,6 @@
 import { useRef, useState } from "react";
 import type { ReactNode, ChangeEvent } from "react";
-import { ArrowLeft, Loader2, Plus, X, Check, Sunrise, Coffee, Utensils, UtensilsCrossed, Moon, PartyPopper, Users, Camera, Sparkles, Venus, Mars } from "lucide-react";
+import { ArrowLeft, Loader2, Plus, X, Check, Sunrise, Coffee, Utensils, UtensilsCrossed, Moon, PartyPopper, Users, Camera, Sparkles, Venus, Mars, Eye, EyeOff } from "lucide-react";
 import { supabase } from "../../lib/supabase";
 import { saveProfile } from "../../lib/profile";
 import { addMedication, archiveMedication, to24h } from "../../lib/medications";
@@ -10,6 +10,7 @@ import { MEDICATION_CATALOG, MEAL_TIMES, COMMON_CONDITIONS, COMMON_ALLERGIES, CO
 import { TimeField, TimesPicker, defaultDoseTime } from "../../components/TimesPicker";
 import type { RoutineTimes } from "../../components/TimesPicker";
 import type { PrefillMed, Role, WizardPrefill } from "../../lib/profile";
+import { MeiSuggestButton } from "../../components/MeiSuggestButton";
 import { useLanguage } from "../../lib/languageContext";
 import { t } from "../../lib/language";
 import type { AppLanguage } from "../../lib/language";
@@ -48,6 +49,9 @@ const fieldClsValid = `${fieldBase} border-emerald-500 focus:border-emerald-500`
 export const cls = (valid: boolean) => valid ? fieldClsValid : fieldCls;
 const isEmail = (v: string) => /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(v.trim());
 const isPositiveNumber = (v: string) => v.trim() !== "" && Number(v) > 0;
+// Mei's suggestion for a numeric field may come back with units attached
+// ("70 kg") — pull just the leading number so it lands in a number input cleanly.
+const extractNumber = (v: string) => v.match(/\d+(\.\d+)?/)?.[0] ?? v;
 const to24hDate = (d: Date) => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
 
 function WizardChrome({ step, total, onBack, showBack = true, children }: { step: number; total: number; onBack: () => void; showBack?: boolean; children: ReactNode }) {
@@ -361,6 +365,7 @@ export function GuidedSetupWizard({ mode, hasSession, elderId: initialElderId, p
   const [accountLoading, setAccountLoading] = useState(false);
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
+  const [showPassword, setShowPassword] = useState(false);
 
   // Seeded once from `prefill` (an uploaded-record extraction) so the user
   // reviews pre-filled answers; empty when the person chose guided setup.
@@ -479,7 +484,26 @@ export function GuidedSetupWizard({ mode, hasSession, elderId: initialElderId, p
                 </div>
                 <div>
                   <label className="block text-xs font-semibold text-foreground mb-1.5">{t(language, "wizard.password")}</label>
-                  <input type="password" value={password} onChange={e => setPassword(e.target.value)} onKeyDown={e => e.key === "Enter" && createAccount()} placeholder={t(language, "wizard.passwordPlaceholder")} className={cls(password.length >= 6)} autoComplete="new-password" />
+                  <div className="relative">
+                    <input
+                      type={showPassword ? "text" : "password"}
+                      value={password}
+                      onChange={e => setPassword(e.target.value)}
+                      onKeyDown={e => e.key === "Enter" && createAccount()}
+                      placeholder={t(language, "wizard.passwordPlaceholder")}
+                      className={`${cls(password.length >= 6)} pr-11`}
+                      autoComplete="new-password"
+                    />
+                    <button
+                      type="button"
+                      tabIndex={-1}
+                      onClick={() => setShowPassword(v => !v)}
+                      aria-label={showPassword ? t(language, "common.hidePassword") : t(language, "common.showPassword")}
+                      className="absolute right-3 top-1/2 -translate-y-1/2 text-muted-foreground"
+                    >
+                      {showPassword ? <EyeOff size={17} /> : <Eye size={17} />}
+                    </button>
+                  </div>
                 </div>
               </>
             )}
@@ -501,21 +525,40 @@ export function GuidedSetupWizard({ mode, hasSession, elderId: initialElderId, p
           <div className="space-y-3 flex-1">
             <div className="flex gap-3">
               <div className="flex-1">
-                <label className="block text-xs font-semibold text-foreground mb-1.5">{t(language, "settings.dob")}</label>
+                <div className="flex items-center justify-between mb-1.5">
+                  <label className="text-xs font-semibold text-foreground">{t(language, "settings.dob")}</label>
+                  {!dob.trim() && (
+                    <MeiSuggestButton
+                      fieldLabel={t(language, "settings.dob")}
+                      formatHint="Reply in YYYY-MM-DD format only."
+                      validate={v => /^\d{4}-\d{2}-\d{2}$/.test(v)}
+                      onAccept={setDob}
+                    />
+                  )}
+                </div>
                 <input type="date" value={dob} onChange={e => setDob(e.target.value)} max={to24hDate(new Date())} className={cls(dob.trim().length > 0)} />
               </div>
               <div className="flex-1">
-                <label className="block text-xs font-semibold text-foreground mb-1.5">{t(language, "settings.gender")}</label>
+                <div className="flex items-center justify-between mb-1.5">
+                  <label className="text-xs font-semibold text-foreground">{t(language, "settings.gender")}</label>
+                  {!gender.trim() && <MeiSuggestButton fieldLabel={t(language, "settings.gender")} onAccept={v => setGender(/^f/i.test(v) ? "Female" : /^m/i.test(v) ? "Male" : v)} />}
+                </div>
                 <GenderPicker value={gender} onChange={setGender} />
               </div>
             </div>
             <div className="flex gap-3">
               <div className="flex-1">
-                <label className="block text-xs font-semibold text-foreground mb-1.5">{t(language, "settings.weightKg")}</label>
+                <div className="flex items-center justify-between mb-1.5">
+                  <label className="text-xs font-semibold text-foreground">{t(language, "settings.weightKg")}</label>
+                  {!weightKg.trim() && <MeiSuggestButton fieldLabel={t(language, "settings.weightKg")} onAccept={v => setWeightKg(extractNumber(v))} />}
+                </div>
                 <input type="number" value={weightKg} onChange={e => setWeightKg(e.target.value)} placeholder={t(language, "wizard.weightPlaceholder")} className={cls(isPositiveNumber(weightKg))} />
               </div>
               <div className="flex-1">
-                <label className="block text-xs font-semibold text-foreground mb-1.5">{t(language, "settings.heightCm")}</label>
+                <div className="flex items-center justify-between mb-1.5">
+                  <label className="text-xs font-semibold text-foreground">{t(language, "settings.heightCm")}</label>
+                  {!heightCm.trim() && <MeiSuggestButton fieldLabel={t(language, "settings.heightCm")} onAccept={v => setHeightCm(extractNumber(v))} />}
+                </div>
                 <input type="number" value={heightCm} onChange={e => setHeightCm(e.target.value)} placeholder={t(language, "wizard.heightPlaceholder")} className={cls(isPositiveNumber(heightCm))} />
               </div>
             </div>

@@ -129,6 +129,10 @@ export default function App() {
       title: t(uiLang, "tour.cgDashboardTitle"), body: t(uiLang, "tour.cgDashboardBody"),
     },
     {
+      target: '[data-tour="cg-patientswitcher"]', onEnter: () => setScreen("dashboard"),
+      title: t(uiLang, "tour.cgPatientLinkTitle"), body: t(uiLang, "tour.cgPatientLinkBody"),
+    },
+    {
       target: '[data-tour="cg-medlist"]', navTarget: '[data-tour="nav-patient"]', onEnter: () => setScreen("patient"),
       title: t(uiLang, "tour.cgMedsTitle"), body: t(uiLang, "tour.cgMedsBody"),
     },

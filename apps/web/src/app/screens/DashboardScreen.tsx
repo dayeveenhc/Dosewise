@@ -4,37 +4,15 @@ import {
 } from "lucide-react";
 import type { Patient, Screen } from "../types";
 import { Card, SectionHeader, QuickAction } from "../components/shared";
+import { PillIcon, shapeFor } from "../components/PillIcon";
+import { MED_SHAPES } from "../data/medications";
+import { useAccessibility } from "../accessibility.tsx";
 import { useLanguage } from "../lib/languageContext";
 import { t } from "../lib/language";
 
-function AdherenceRing({ value }: { value: number }) {
-  const size = 112;
-  const strokeWidth = 9;
-  const radius = (size - strokeWidth) / 2;
-  const circumference = 2 * Math.PI * radius;
-  const progress = circumference - (value / 100) * circumference;
-  // Same two colours used for dose status everywhere else (taken=green,
-  // missed=orange) — no third "red" tier that doesn't map to any status.
-  const colour = value >= 80 ? "#2E7D32" : "#C05621";
-  const cx = size / 2;
-  const cy = size / 2;
-  return (
-    <svg width={size} height={size} viewBox={`0 0 ${size} ${size}`}>
-      <circle cx={cx} cy={cy} r={radius} fill="none" stroke="#E6E2D8" strokeWidth={strokeWidth} />
-      <circle
-        cx={cx} cy={cy} r={radius}
-        fill="none" stroke={colour} strokeWidth={strokeWidth}
-        strokeDasharray={circumference} strokeDashoffset={progress}
-        strokeLinecap="round"
-        transform={`rotate(-90 ${cx} ${cy})`}
-        style={{ transition: "stroke-dashoffset 0.6s ease" }}
-      />
-    </svg>
-  );
-}
-
 export function DashboardScreen({ patient, onNavigate, onSendReminder }: { patient: Patient; onNavigate: (s: Screen) => void; onSendReminder: (medName?: string) => void }) {
   const { language } = useLanguage();
+  const { colourBlind } = useAccessibility();
   const taken = patient.medications.filter(m => m.status === "taken").length;
   const missed = patient.medications.filter(m => m.status === "missed").length;
   const upcoming = patient.medications.filter(m => m.status === "upcoming").length;
@@ -55,10 +33,21 @@ export function DashboardScreen({ patient, onNavigate, onSendReminder }: { patie
             {t(language, "common.viewSchedule")}
           </button>
         </div>
-        <p className="font-['Fraunces'] text-4xl font-semibold text-foreground leading-none">
-          {patient.adherenceToday}<span className="text-lg text-muted-foreground">%</span>
-        </p>
-        <p className="text-xs text-muted-foreground mt-1">{t(language, "dashboard.dosesTaken", { taken, total })}</p>
+        <div className="flex flex-wrap gap-2 mt-1">
+          {patient.medications.map(m => (
+            <div key={m.id} title={`${m.name} · ${m.time}${m.status === "taken" ? ` · ${t(language, "common.taken")}` : ""}`}>
+              <PillIcon shape={shapeFor(m.name, MED_SHAPES[m.name]?.shape)} colour={m.colour} filled={m.status === "taken"} />
+            </div>
+          ))}
+        </div>
+        <p className="text-xs text-muted-foreground mt-2">{t(language, "dashboard.dosesTaken", { taken, total })}</p>
+        {colourBlind && (
+          <div className="flex flex-col gap-0.5 mt-1">
+            {[...new Set(patient.medications.map(m => m.name))].filter(n => MED_SHAPES[n]).map(n => (
+              <p key={n} className="text-[10px] text-muted-foreground/70">{n}: {MED_SHAPES[n].shape}</p>
+            ))}
+          </div>
+        )}
         <div className="flex gap-2 mt-2">
           <span className="inline-flex items-center gap-1 text-[10px] font-medium text-emerald-700 bg-emerald-50 border border-emerald-200 rounded-full px-2 py-0.5 whitespace-nowrap">
             <CheckCircle2 size={10} /> {taken} {t(language, "common.taken")}

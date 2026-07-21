@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { Pill, Heart, Shield, Loader2, ArrowLeft } from "lucide-react";
+import { Pill, Heart, Shield, Loader2, ArrowLeft, Eye, EyeOff } from "lucide-react";
 import { supabase } from "../lib/supabase";
 import { LiveStatusBar } from "../components/shared";
 import { useLanguage } from "../lib/languageContext";
@@ -12,6 +12,7 @@ export function LoginScreen({ onBack, onGetStarted }: { onBack: () => void; onGe
   const { language } = useLanguage();
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
+  const [showPassword, setShowPassword] = useState(false);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -73,15 +74,26 @@ export function LoginScreen({ onBack, onGetStarted }: { onBack: () => void; onGe
         </div>
         <div>
           <label className="block text-xs font-semibold text-foreground mb-1.5">{t(language, "wizard.password")}</label>
-          <input
-            type="password"
-            value={password}
-            onChange={e => setPassword(e.target.value)}
-            onKeyDown={e => e.key === "Enter" && handleSubmit()}
-            placeholder="••••••••"
-            className={fieldCls}
-            autoComplete="current-password"
-          />
+          <div className="relative">
+            <input
+              type={showPassword ? "text" : "password"}
+              value={password}
+              onChange={e => setPassword(e.target.value)}
+              onKeyDown={e => e.key === "Enter" && handleSubmit()}
+              placeholder="••••••••"
+              className={`${fieldCls} pr-11`}
+              autoComplete="current-password"
+            />
+            <button
+              type="button"
+              tabIndex={-1}
+              onClick={() => setShowPassword(v => !v)}
+              aria-label={showPassword ? t(language, "common.hidePassword") : t(language, "common.showPassword")}
+              className="absolute right-3 top-1/2 -translate-y-1/2 text-muted-foreground"
+            >
+              {showPassword ? <EyeOff size={17} /> : <Eye size={17} />}
+            </button>
+          </div>
         </div>
 
         {error && <p className="text-xs text-destructive font-medium">{error}</p>}

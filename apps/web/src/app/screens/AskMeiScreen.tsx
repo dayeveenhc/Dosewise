@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import type { ChangeEvent } from "react";
-import { Send, TrendingUp, Plane, Check, Sparkles, ChevronDown, Camera, FileText, Pill, Globe, Mic, Volume2, X } from "lucide-react";
+import { Send, TrendingUp, Plane, Check, Sparkles, ChevronUp, Camera, FileText, Pill, Globe, Mic, Volume2, X, Trash2 } from "lucide-react";
 import type { Patient, Screen } from "../types";
 import { agentTurnStream, fileToBase64 } from "../lib/hermes";
 import type { AgentTurnEvent } from "../lib/hermes";
@@ -11,6 +11,7 @@ import { useLanguage } from "../lib/languageContext";
 import { useAccessibility } from "../accessibility.tsx";
 import { t, LANGUAGE_OPTIONS, speechLangFor } from "../lib/language";
 import { speak as speakUtterance } from "../lib/speech";
+import { ConfirmDialog } from "../components/ConfirmDialog";
 
 interface ChatMsg { id: number; role: "user" | "agent"; text: string; time: string; isConfirmation?: boolean; image?: string }
 
@@ -37,10 +38,10 @@ function renderWithBold(text: string) {
 }
 
 // A single feature tile in the "Quick help" launcher.
-function FeatureBtn({ icon: Icon, label, onClick }: { icon: any; label: string; onClick: () => void }) {
+function FeatureBtn({ icon: Icon, label, onClick, className = "" }: { icon: any; label: string; onClick: () => void; className?: string }) {
   return (
-    <button onClick={onClick} className="flex items-center gap-2 bg-card border border-border rounded-xl p-2.5 text-left active:bg-muted transition-colors">
-      <div className="w-7 h-7 rounded-lg bg-primary/10 flex items-center justify-center shrink-0"><Icon size={14} className="text-primary" /></div>
+    <button onClick={onClick} className={`h-[88px] flex flex-col items-center justify-center gap-1.5 bg-card border border-border rounded-2xl px-2 text-center active:bg-muted transition-colors ${className}`}>
+      <div className="w-10 h-10 rounded-xl bg-primary/10 flex items-center justify-center shrink-0"><Icon size={18} className="text-primary" /></div>
       <span className="text-[12px] font-bold text-foreground leading-tight">{label}</span>
     </button>
   );
@@ -61,7 +62,8 @@ export function AskMeiScreen({ patient, elderId, onUpdatePatient, onNavigate, on
   const [sending, setSending] = useState(false);
   const [showSummary, setShowSummary] = useState(false);
   const [showTravel, setShowTravel] = useState(false);
-  const [quickOpen, setQuickOpen] = useState(true);
+  const [quickOpen, setQuickOpen] = useState(false);
+  const [showClearConfirm, setShowClearConfirm] = useState(false);
   const [showMedPicker, setShowMedPicker] = useState(false);
   const [showLangSheet, setShowLangSheet] = useState(false);
   const [isListening, setIsListening] = useState(false);
@@ -201,6 +203,11 @@ export function AskMeiScreen({ patient, elderId, onUpdatePatient, onNavigate, on
     send(text);
   };
 
+  const clearChat = () => {
+    setMessages([{ id: Date.now(), role: "agent", text: t(language, "ai.greeting", { name: patient.name }), time: nowLabel() }]);
+    setShowClearConfirm(false);
+  };
+
   // "Add prescription" quick-help: snap/choose a photo, then let the agent read
   // the label and propose it in the chat (confirm with a simple "yes").
   const onRxPhotoFile = async (e: ChangeEvent<HTMLInputElement>) => {
@@ -227,37 +234,24 @@ export function AskMeiScreen({ patient, elderId, onUpdatePatient, onNavigate, on
 
   return (
     <div className="flex flex-col flex-1 min-h-0 overflow-hidden relative">
-      {/* Quick help feature launcher */}
-      <div className="px-4 pt-2.5 shrink-0" data-tour="cg-askmei">
-        <button onClick={() => setQuickOpen(o => !o)} className="w-full flex items-center gap-1.5 mb-2">
-          <Sparkles size={15} className="text-primary" />
-          <span className="text-sm font-bold text-foreground">{t(language, "ai.quickHelp")}</span>
-          <ChevronDown size={16} className={`ml-auto text-muted-foreground transition-transform ${quickOpen ? "rotate-180" : ""}`} />
+      {/* Quick help opens as a popup rather than expanding inline, so the
+          conversation never gets pushed off-screen (matches the elder chat). */}
+      <div className="px-4 pt-2.5 pb-1 shrink-0 flex items-center gap-2" data-tour="cg-askmei">
+        <button
+          onClick={() => setQuickOpen(true)}
+          className="flex items-center gap-2 rounded-xl bg-primary text-primary-foreground px-3.5 py-2.5 shadow-sm active:scale-[0.97] transition-transform"
+        >
+          <Sparkles size={15} className="shrink-0" />
+          <span className="text-sm font-bold">{t(language, "ai.quickHelp")}</span>
+          <ChevronUp size={15} className="shrink-0 opacity-80" />
         </button>
-        {quickOpen && (
-          <div className="space-y-2 pb-1">
-            <div className="grid grid-cols-2 gap-1.5">
-              <FeatureBtn icon={TrendingUp} label={t(language, "common.weeklySummary")} onClick={() => setShowSummary(true)} />
-              <FeatureBtn icon={Plane}      label={t(language, "common.travelMode")}   onClick={() => setShowTravel(true)} />
-              <FeatureBtn icon={Camera}     label={t(language, "common.addPrescription")}  onClick={() => rxPhotoRef.current?.click()} />
-              <FeatureBtn icon={FileText}   label={t(language, "ai.updateProfile")}    onClick={() => reportRef.current?.click()} />
-              <FeatureBtn icon={Pill}       label={t(language, "ai.askAboutMed")}  onClick={() => setShowMedPicker(v => !v)} />
-              <FeatureBtn icon={Globe}      label={t(language, "ai.languageVoice")}  onClick={() => setShowLangSheet(true)} />
-            </div>
-            {showMedPicker && (
-              <div className="bg-card border border-border rounded-xl p-2.5">
-                <p className="text-[11px] text-muted-foreground font-semibold px-0.5 pb-1.5">{t(language, "ai.whichMedication")}</p>
-                <div className="flex flex-wrap gap-1.5">
-                  {uniqueMeds.map(n => (
-                    <button key={n} onClick={() => { setShowMedPicker(false); send(`What is ${n} for?`); }} className="text-xs font-semibold bg-muted text-foreground rounded-full px-3 py-1.5 active:bg-primary/10 active:text-primary transition-colors">
-                      {n}
-                    </button>
-                  ))}
-                </div>
-              </div>
-            )}
-          </div>
-        )}
+        <button
+          onClick={() => setShowClearConfirm(true)}
+          className="ml-auto flex items-center gap-1.5 rounded-xl border border-border bg-card text-muted-foreground px-3 py-2.5 shadow-sm active:bg-muted active:scale-[0.97] transition-all"
+        >
+          <Trash2 size={14} className="shrink-0" />
+          <span className="text-sm font-semibold">{t(language, "ai.clearChat")}</span>
+        </button>
       </div>
 
       {/* Speaking indicator */}
@@ -394,6 +388,61 @@ export function AskMeiScreen({ patient, elderId, onUpdatePatient, onNavigate, on
             <p className="text-xs text-muted-foreground mt-3">{t(language, "ai.voiceHint")}</p>
           </div>
         </div>
+      )}
+
+      {/* Quick help popup — overlays the chat instead of pushing it down, and
+          floats clear of the panel edges: this screen's container is
+          overflow-hidden, so a sheet flush to the bottom gets visibly cut
+          against the nav bar below it. */}
+      {quickOpen && (
+        <div className="absolute inset-0 z-[140] flex items-end p-3">
+          <div className="absolute inset-0 bg-black/40" onClick={() => setQuickOpen(false)} />
+          <div className="relative w-full bg-card rounded-3xl border border-border px-4 pt-4 pb-4 shadow-2xl max-h-full overflow-y-auto scrollbar-none animate-in slide-in-from-bottom duration-200">
+            <div className="flex items-center gap-2 mb-3">
+              <Sparkles size={16} className="text-primary shrink-0" />
+              <h3 className="font-['Fraunces'] text-lg font-semibold text-foreground">{t(language, "ai.quickHelp")}</h3>
+              <button
+                onClick={() => setQuickOpen(false)}
+                aria-label={t(language, "common.cancel")}
+                className="ml-auto w-9 h-9 rounded-full bg-muted flex items-center justify-center text-muted-foreground active:bg-border transition-colors"
+              >
+                <X size={16} />
+              </button>
+            </div>
+
+            <div className="grid grid-cols-2 gap-2">
+              <FeatureBtn icon={TrendingUp} label={t(language, "common.weeklySummary")} onClick={() => { setQuickOpen(false); setShowSummary(true); }} />
+              <FeatureBtn icon={Plane}      label={t(language, "common.travelMode")}   onClick={() => { setQuickOpen(false); setShowTravel(true); }} />
+              <FeatureBtn icon={Camera}     label={t(language, "common.addPrescription")} onClick={() => rxPhotoRef.current?.click()} />
+              <FeatureBtn icon={FileText}   label={t(language, "ai.updateProfile")}       onClick={() => reportRef.current?.click()} />
+              <FeatureBtn icon={Pill}       label={t(language, "ai.askAboutMed")}         onClick={() => setShowMedPicker(v => !v)} />
+              <FeatureBtn icon={Globe}      label={t(language, "ai.languageVoice")}       onClick={() => { setQuickOpen(false); setShowLangSheet(true); }} />
+            </div>
+
+            {showMedPicker && (
+              <div className="bg-muted/50 border border-border rounded-2xl p-3 mt-2.5">
+                <p className="text-xs text-muted-foreground font-semibold px-0.5 pb-2">{t(language, "ai.whichMedication")}</p>
+                <div className="flex flex-wrap gap-1.5">
+                  {uniqueMeds.map(n => (
+                    <button key={n} onClick={() => { setShowMedPicker(false); setQuickOpen(false); send(`What is ${n} for?`); }} className="text-sm font-semibold bg-card border border-border text-foreground rounded-full px-3 py-2 active:bg-primary/10 active:text-primary transition-colors">
+                      {n}
+                    </button>
+                  ))}
+                </div>
+              </div>
+            )}
+          </div>
+        </div>
+      )}
+
+      {showClearConfirm && (
+        <ConfirmDialog
+          title={t(language, "confirm.clearChatTitle")}
+          body={t(language, "confirm.clearChatBody")}
+          confirmLabel={t(language, "ai.clearChat")}
+          onConfirm={clearChat}
+          onCancel={() => setShowClearConfirm(false)}
+        />
       )}
     </div>
   );
