@@ -1,5 +1,7 @@
 import { useState, useEffect } from "react";
-import { Shield, ChevronDown, Eye, Phone, RefreshCw, LogOut, Check, Loader2, Sunrise, Coffee, Utensils, UtensilsCrossed, Moon } from "lucide-react";
+import { QRCodeSVG } from "qrcode.react";
+import { Shield, ChevronDown, Eye, Phone, RefreshCw, LogOut, Check, Loader2, Sunrise, Coffee, Utensils, UtensilsCrossed, Moon, QrCode } from "lucide-react";
+import { buildCareLinkPayload } from "../../lib/careLinks";
 import { useAccessibility } from "../../accessibility.tsx";
 import type { FontSize } from "../../accessibility.tsx";
 import type { Patient } from "../../types";
@@ -7,6 +9,7 @@ import { MED_SHAPES, COMMON_CONDITIONS, COMMON_ALLERGIES, COMMON_DRUG_ALLERGIES 
 import { fetchProfile, saveProfile, calculateAge } from "../../lib/profile";
 import { TagList, fieldCls, GenderPicker } from "../setup/GuidedSetupWizard";
 import { MedAvatar } from "../../components/shared";
+import { TimeField } from "../../components/TimesPicker";
 import { CallMockup } from "../../components/CallMockup";
 import { useLanguage } from "../../lib/languageContext";
 import { LANGUAGE_OPTIONS, t } from "../../lib/language";
@@ -24,9 +27,8 @@ const FONT_SIZES: FontSize[] = ["small", "normal", "large", "xlarge", "xxlarge"]
 export function ElderlySettingsScreen({ patient, elderId, onUpdatePatient, onBack, onSignOut }: {
   patient: Patient; elderId?: string; onUpdatePatient: (p: Patient) => void; onBack: () => void; onSignOut: () => void;
 }) {
-  const { fontSize, setFontSize, highContrast, setHighContrast, colourBlind, setColourBlind } = useAccessibility();
+  const { fontSize, setFontSize, highContrast, setHighContrast, colourBlind, setColourBlind, voiceOutput, setVoiceOutput } = useAccessibility();
   const { language, setLanguage } = useLanguage();
-  const [voiceEnabled, setVoiceEnabled] = useState(true);
   const [notifications, setNotifications] = useState(true);
   const [showShapes, setShowShapes] = useState(false);
   const [showCallPrimary, setShowCallPrimary] = useState(false);
@@ -158,32 +160,12 @@ export function ElderlySettingsScreen({ patient, elderId, onUpdatePatient, onBac
 
           <div>
             <p className="text-sm font-semibold text-foreground mb-2">{t(language, "settings.mealsSleep")}</p>
-            <div className="space-y-2.5">
-              <div className="flex items-center gap-3">
-                <div className="w-9 h-9 rounded-xl bg-secondary flex items-center justify-center shrink-0"><Sunrise size={16} className="text-primary" /></div>
-                <label className="w-24 shrink-0 text-sm text-foreground">{t(language, "settings.wakeUpTime")}</label>
-                <input type="time" value={wakeDraft} onChange={e => setWakeDraft(e.target.value)} className={`${fieldCls} flex-1`} />
-              </div>
-              <div className="flex items-center gap-3">
-                <div className="w-9 h-9 rounded-xl bg-secondary flex items-center justify-center shrink-0"><Coffee size={16} className="text-primary" /></div>
-                <label className="w-24 shrink-0 text-sm text-foreground">{t(language, "settings.breakfast")}</label>
-                <input type="time" value={breakfastDraft} onChange={e => setBreakfastDraft(e.target.value)} className={`${fieldCls} flex-1`} />
-              </div>
-              <div className="flex items-center gap-3">
-                <div className="w-9 h-9 rounded-xl bg-secondary flex items-center justify-center shrink-0"><Utensils size={16} className="text-primary" /></div>
-                <label className="w-24 shrink-0 text-sm text-foreground">{t(language, "settings.lunch")}</label>
-                <input type="time" value={lunchDraft} onChange={e => setLunchDraft(e.target.value)} className={`${fieldCls} flex-1`} />
-              </div>
-              <div className="flex items-center gap-3">
-                <div className="w-9 h-9 rounded-xl bg-secondary flex items-center justify-center shrink-0"><UtensilsCrossed size={16} className="text-primary" /></div>
-                <label className="w-24 shrink-0 text-sm text-foreground">{t(language, "settings.dinner")}</label>
-                <input type="time" value={dinnerDraft} onChange={e => setDinnerDraft(e.target.value)} className={`${fieldCls} flex-1`} />
-              </div>
-              <div className="flex items-center gap-3">
-                <div className="w-9 h-9 rounded-xl bg-secondary flex items-center justify-center shrink-0"><Moon size={16} className="text-primary" /></div>
-                <label className="w-24 shrink-0 text-sm text-foreground">{t(language, "settings.sleepTime")}</label>
-                <input type="time" value={sleepDraft} onChange={e => setSleepDraft(e.target.value)} className={`${fieldCls} flex-1`} />
-              </div>
+            <div className="space-y-3">
+              <TimeField label={t(language, "wizard.wakeUpTime")} icon={<Sunrise size={15} className="text-primary" />} value={wakeDraft} onChange={setWakeDraft} />
+              <TimeField label={t(language, "wizard.breakfast")} icon={<Coffee size={15} className="text-primary" />} value={breakfastDraft} onChange={setBreakfastDraft} />
+              <TimeField label={t(language, "wizard.lunch")} icon={<Utensils size={15} className="text-primary" />} value={lunchDraft} onChange={setLunchDraft} />
+              <TimeField label={t(language, "wizard.dinner")} icon={<UtensilsCrossed size={15} className="text-primary" />} value={dinnerDraft} onChange={setDinnerDraft} />
+              <TimeField label={t(language, "wizard.bedtime")} icon={<Moon size={15} className="text-primary" />} value={sleepDraft} onChange={setSleepDraft} />
             </div>
           </div>
 
@@ -198,6 +180,23 @@ export function ElderlySettingsScreen({ patient, elderId, onUpdatePatient, onBac
           </div>
           )}
         </div>
+
+        {/* Caregiver linking QR — a caregiver scans this to request managing this
+            elder's medications; the request lands in the elder's Notifications. */}
+        {elderId && (
+          <div className="bg-card rounded-2xl border border-border p-4">
+            <div className="flex items-center gap-2 mb-1">
+              <QrCode size={15} className="text-primary" />
+              <p className="font-semibold text-foreground">{t(language, "link.qrTitle")}</p>
+            </div>
+            <p className="text-xs text-muted-foreground mb-3">{t(language, "link.qrDesc")}</p>
+            <div className="flex justify-center">
+              <div className="bg-white rounded-2xl p-4 border border-border">
+                <QRCodeSVG value={buildCareLinkPayload(elderId, patient.name)} size={168} level="M" />
+              </div>
+            </div>
+          </div>
+        )}
 
         {/* Accessibility */}
         <div className="bg-card rounded-2xl border border-border divide-y divide-border">
@@ -283,7 +282,7 @@ export function ElderlySettingsScreen({ patient, elderId, onUpdatePatient, onBac
               <p className="text-[15px] font-medium text-foreground">{t(language, "settings.readAloud")}</p>
               <p className="text-xs text-muted-foreground">{t(language, "settings.readAloudDesc")}</p>
             </div>
-            <Toggle on={voiceEnabled} onToggle={() => setVoiceEnabled(v => !v)} />
+            <Toggle on={voiceOutput} onToggle={() => setVoiceOutput(!voiceOutput)} />
           </div>
           <div className="px-4 py-4 flex items-center justify-between">
             <div>

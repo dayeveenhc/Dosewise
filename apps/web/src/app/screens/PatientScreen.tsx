@@ -1,4 +1,4 @@
-import { Activity, AlertTriangle, Info, Star, User, Phone, Plus, Trash2, History } from "lucide-react";
+import { Activity, AlertTriangle, Info, Star, User, Phone, Plus, Trash2, History, Check } from "lucide-react";
 import type { Patient } from "../types";
 import { Card, SectionHeader, MedAvatar } from "../components/shared";
 import { MED_FREQUENCY } from "../data/medications";
@@ -8,6 +8,7 @@ import { t } from "../lib/language";
 
 interface PatientScreenProps {
   patient: Patient;
+  justAddedMed?: string | null;
   onEditProfile: () => void;
   onAddPrescription: () => void;
   onDeleteMedication: (id: number) => void;
@@ -48,7 +49,7 @@ function groupMedications(medications: Medication[]): GroupedMedication[] {
   return Array.from(groups.values());
 }
 
-export function PatientScreen({ patient, onEditProfile, onAddPrescription, onDeleteMedication }: PatientScreenProps) {
+export function PatientScreen({ patient, justAddedMed, onEditProfile, onAddPrescription, onDeleteMedication }: PatientScreenProps) {
   const { language } = useLanguage();
   const groupedMedications = groupMedications(patient.medications);
   return (
@@ -103,11 +104,20 @@ export function PatientScreen({ patient, onEditProfile, onAddPrescription, onDel
       <div>
         <SectionHeader title={t(language, "common.currentMedications")} action={t(language, "common.add")} onAction={onAddPrescription} />
         <Card className="divide-y divide-border" data-tour="cg-medlist">
-          {groupedMedications.map((m) => (
-            <div key={m.name} className="px-4 py-3 flex items-center gap-3">
+          {groupedMedications.map((m) => {
+            const justAdded = !!justAddedMed && m.name === justAddedMed;
+            return (
+            <div key={m.name} className={`px-4 py-3 flex items-center gap-3 ${justAdded ? "bg-emerald-50/60 ring-2 ring-emerald-300/50 rounded-xl" : ""}`}>
               <MedAvatar name={m.name} size={32} className="rounded-full shrink-0" />
               <div className="flex-1 min-w-0">
-                <p className="text-sm font-semibold text-foreground">{m.name} <span className="text-xs font-normal text-muted-foreground">{m.dose}</span></p>
+                <p className="text-sm font-semibold text-foreground flex items-center gap-1.5 flex-wrap">
+                  <span>{m.name} <span className="text-xs font-normal text-muted-foreground">{m.dose}</span></span>
+                  {justAdded && (
+                    <span className="inline-flex items-center gap-1 bg-emerald-100 text-emerald-700 text-[10px] font-bold px-2 py-0.5 rounded-full">
+                      <Check size={9} strokeWidth={3} />{t(language, "prescription.justAdded")}
+                    </span>
+                  )}
+                </p>
                 <p className="text-[11px] text-muted-foreground">{m.purpose} · {m.times.join(" & ")}</p>
                 {MED_FREQUENCY[m.name] && (
                   <p className="text-[11px] text-muted-foreground">{MED_FREQUENCY[m.name]}</p>
@@ -124,7 +134,8 @@ export function PatientScreen({ patient, onEditProfile, onAddPrescription, onDel
                 <Trash2 size={12} className="text-red-600" />
               </button>
             </div>
-          ))}
+            );
+          })}
           <button
             onClick={onAddPrescription}
             className="w-full flex items-center gap-3 px-4 py-3 text-left hover:bg-muted transition-colors"

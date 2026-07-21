@@ -1,13 +1,14 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import type { Session } from "@supabase/supabase-js";
 import { Droplets, ArrowLeft, Bell, MessageSquare, HelpCircle, UserRound } from "lucide-react";
 import type { AppMode, Screen, Patient, Medication, Notification, Message } from "./types";
 import { PATIENTS, NOTIFICATIONS } from "./data/patients";
-import { NAV_ITEMS } from "./nav";
+import { BottomNav } from "./components/BottomNav";
 import { LiveStatusBar, PatientSwitcher } from "./components/shared";
 import { supabase } from "./lib/supabase";
 import { ensureProfile, fetchElderMedications, fetchArchivedMedications, addMedication, archiveMedication, to24h } from "./lib/medications";
 import { fetchProfileRole, fetchProfile, calculateAge } from "./lib/profile";
+import type { WizardPrefill } from "./lib/profile";
 import { readStoredAppMode, persistAppMode } from "./lib/sessionState";
 import { WelcomeScreen } from "./screens/setup/WelcomeScreen";
 import { SetupMethodScreen } from "./screens/setup/SetupMethodScreen";
@@ -31,7 +32,9 @@ import { ConfirmDialog } from "./components/ConfirmDialog";
 import { ToastStack } from "./components/Toast";
 import type { ToastItem } from "./components/Toast";
 import { SendReminderSheet } from "./screens/SendReminderSheet";
-import { LanguageProvider } from "./lib/languageContext";
+import { ScanLinkSheet } from "./components/ScanLinkSheet";
+import { LanguageProvider, readStoredLanguage } from "./lib/languageContext";
+import { t } from "./lib/language";
 
 export default function App() {
   const [session, setSession] = useState<Session | null>(null);
@@ -53,6 +56,10 @@ export default function App() {
   // without ever finishing setup) — routes back through the wizard instead of
   // treating the mode picker as a quick preview-mode switch.
   const [needsWizard, setNeedsWizard] = useState(false);
+  // Fields extracted from an uploaded record on the setup-method screen; seeds
+  // the guided wizard so the user reviews pre-filled answers instead of typing
+  // everything (undefined = manual guided setup).
+  const [wizardPrefill, setWizardPrefill] = useState<WizardPrefill | undefined>(undefined);
   const [screen, setScreen] = useState<Screen>("dashboard");
   const [selectedPatient, setSelectedPatient] = useState(0);
   const [patients, setPatients] = useState<Patient[]>(PATIENTS);
@@ -75,6 +82,7 @@ export default function App() {
     { id: 2, author: "Tan Shu Fen",  role: "Daughter", body: "Ma, I refilled your Atorvastatin — it's in the cabinet above the stove 💙",                                   time: "Yesterday", isMe: false },
   ]);
   const [showSendReminder, setShowSendReminder] = useState<{ medName?: string } | null>(null);
+  const [showScanLink, setShowScanLink] = useState(false);
 
   // Demo pop-up notifications — fires a couple of sample alerts a little
   // after landing in the caregiver app, so the top-of-screen toast UI has
@@ -82,8 +90,22 @@ export default function App() {
   useEffect(() => {
     if (appMode !== "caregiver") return;
     const timers = [
-      window.setTimeout(() => setToasts(prev => [...prev, { id: Date.now(), title: "Missed dose — Celecoxib", body: "Mdm Tan did not take her 12:00 PM Celecoxib 200mg dose." }]), 4000),
-      window.setTimeout(() => setToasts(prev => [...prev, { id: Date.now() + 1, title: "Refill needed soon — Metformin", body: "Metformin 500mg has ~4 days remaining." }]), 16000),
+      window.setTimeout(() => {
+        const lang = readStoredLanguage();
+        setToasts(prev => [...prev, {
+          id: Date.now(),
+          title: t(lang, "toast.missedDoseTitle", { med: "Celecoxib" }),
+          body: t(lang, "toast.missedDoseBody", { name: "Mdm Tan", time: "12:00 PM", med: "Celecoxib", dose: "200mg" }),
+        }]);
+      }, 4000),
+      window.setTimeout(() => {
+        const lang = readStoredLanguage();
+        setToasts(prev => [...prev, {
+          id: Date.now() + 1,
+          title: t(lang, "toast.refillNeededTitle", { med: "Metformin" }),
+          body: t(lang, "toast.refillNeededBody", { med: "Metformin 500mg", days: 4 }),
+        }]);
+      }, 16000),
     ];
     return () => timers.forEach(window.clearTimeout);
   }, [appMode]);
@@ -96,22 +118,27 @@ export default function App() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [justOnboarded, appMode]);
 
+  // Not reactive to a live language toggle (App.tsx sits above LanguageProvider,
+  // so it can't use the useLanguage() hook) — a point-in-time read is fine here
+  // since these are demo tour/toast strings the provider's own localStorage
+  // write keeps in sync on the next natural re-render.
+  const uiLang = readStoredLanguage();
   const caregiverTourSteps: TourStep[] = [
     {
       target: '[data-tour="cg-dashboard"]', navTarget: '[data-tour="nav-dashboard"]', onEnter: () => setScreen("dashboard"),
-      title: "Today's adherence", body: "See at a glance how many doses have been taken today, and jump to the full schedule.",
+      title: t(uiLang, "tour.cgDashboardTitle"), body: t(uiLang, "tour.cgDashboardBody"),
     },
     {
       target: '[data-tour="cg-medlist"]', navTarget: '[data-tour="nav-patient"]', onEnter: () => setScreen("patient"),
-      title: "Current medications", body: "Every medication you're managing, with refill status — add a new one anytime.",
+      title: t(uiLang, "tour.cgMedsTitle"), body: t(uiLang, "tour.cgMedsBody"),
     },
     {
       target: '[data-tour="cg-askmei"]', navTarget: '[data-tour="nav-ai"]', onEnter: () => setScreen("ai"),
-      title: "Ask Mei", body: "Ask about adherence, missed doses, or refills, get a weekly summary, or plan a trip with Travel Mode.",
+      title: t(uiLang, "tour.cgAskMeiTitle"), body: t(uiLang, "tour.cgAskMeiBody"),
     },
     {
       target: '[data-tour="cg-settings"]', navTarget: '[data-tour="nav-settings"]', onEnter: () => setScreen("settings"),
-      title: "Notifications", body: "Choose what you're alerted about — missed doses, low refills, and weekly summaries.",
+      title: t(uiLang, "tour.cgNotifTitle"), body: t(uiLang, "tour.cgNotifBody"),
     },
   ];
 
@@ -275,6 +302,28 @@ export default function App() {
     setPatients(prev => prev.map((p, i) => i !== selectedPatient ? p : { ...p, medications }));
   };
 
+  // Name of a just-added medication, so the timeline/patient list can highlight
+  // it as visible proof it landed (mirrors the elder shell). Auto-clears after 6s.
+  const [justAddedMed, setJustAddedMed] = useState<string | null>(null);
+  const justAddedTimer = useRef<number>();
+  const flagJustAdded = (name?: string) => {
+    if (!name) return;
+    setJustAddedMed(name);
+    window.clearTimeout(justAddedTimer.current);
+    justAddedTimer.current = window.setTimeout(() => setJustAddedMed(null), 6000);
+  };
+
+  // Safety net for the chat's post-write refetch: if that never fired (e.g. the
+  // agent committed a write the client couldn't detect in `actions`), re-pull
+  // medications whenever the user lands on a screen that shows them, so the
+  // timeline/dashboard/patient view can't sit on stale data until a full reload.
+  useEffect(() => {
+    if (!elderId || appMode === "onboarding") return;
+    if (!["timeline", "patient", "dashboard"].includes(screen)) return;
+    void refreshMedications();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [screen, elderId, appMode]);
+
   // "Send reminder" is a caregiver-to-elder nudge — it should notify the care
   // recipient, not open the caregiver's own care-team chat thread. Opens a
   // compose sheet (default options + free text) instead of firing immediately.
@@ -285,12 +334,13 @@ export default function App() {
   // unlike the toast below), and queue a pop-up toast for whenever the
   // elderly interface is next shown (this is a single-device demo, not real delivery).
   const handleReminderSent = (text: string) => {
+    const lang = readStoredLanguage();
     setNotifications(prev => [{
-      id: Date.now(), type: "reminder", title: "Reminder sent", body: text,
+      id: Date.now(), type: "reminder", title: t(lang, "toast.reminderSent"), body: text,
       time: "Just now", read: true, patientId: patients[selectedPatient].id,
     }, ...prev]);
     setCareMessages(prev => [{ id: Date.now() + 1, author: "Your caregiver", role: "Reminder", body: text, time: "Just now", isMe: false }, ...prev]);
-    setElderToasts(prev => [...prev, { id: Date.now() + 2, title: "Reminder from your caregiver", body: text }]);
+    setElderToasts(prev => [...prev, { id: Date.now() + 2, title: t(lang, "toast.reminderFromCaregiver"), body: text }]);
   };
 
   const handleDeleteMedication = async (id: number) => {
@@ -352,14 +402,19 @@ export default function App() {
               />
             )}
             {preAuthStage === "method" && (
-              <SetupMethodScreen onBack={() => setPreAuthStage("mode")} onGuided={() => setPreAuthStage("wizard")} />
+              <SetupMethodScreen
+                onBack={() => setPreAuthStage("mode")}
+                onGuided={() => { setWizardPrefill(undefined); setPreAuthStage("wizard"); }}
+                onExtracted={(prefill) => { setWizardPrefill(prefill); setPreAuthStage("wizard"); }}
+              />
             )}
             {preAuthStage === "wizard" && (
               <GuidedSetupWizard
                 mode={pendingMode}
                 hasSession={!!session}
                 elderId={elderId}
-                onComplete={() => { setNeedsWizard(false); setScreen("dashboard"); setJustOnboarded(true); setAppMode(pendingMode); }}
+                prefill={wizardPrefill}
+                onComplete={() => { setNeedsWizard(false); setWizardPrefill(undefined); setScreen("dashboard"); setJustOnboarded(true); setAppMode(pendingMode); }}
                 onExit={() => setPreAuthStage("method")}
               />
             )}
@@ -378,7 +433,7 @@ export default function App() {
               <ElderlyApp
                 patient={patients[0]}
                 elderId={elderId}
-                onUpdatePatient={(p) => setPatients(prev => [p, ...prev.slice(1)])}
+                onUpdatePatient={(p) => setPatients(prev => [typeof p === "function" ? p(prev[0]) : p, ...prev.slice(1)])}
                 onBack={openModeSwitch}
                 onSignOut={() => supabase.auth.signOut()}
                 startTour={justOnboarded}
@@ -418,7 +473,7 @@ export default function App() {
                 <button onClick={() => setScreen("dashboard")} className="w-8 h-8 bg-card border border-border rounded-xl flex items-center justify-center">
                   <ArrowLeft size={14} className="text-foreground" />
                 </button>
-                <span className="text-sm font-medium text-muted-foreground">Care Team Notes</span>
+                <span className="text-sm font-medium text-muted-foreground">{t(uiLang, "common.careTeamNotes")}</span>
               </div>
             ) : (
               <div className="flex items-center justify-between mb-2">
@@ -432,7 +487,7 @@ export default function App() {
                   <button onClick={() => setShowCaregiverTourConfirm(true)} className="w-8 h-8 bg-card border border-border rounded-xl flex items-center justify-center">
                     <HelpCircle size={15} className="text-muted-foreground" />
                   </button>
-                  <button onClick={() => setScreen("settings")} className="w-8 h-8 bg-card border border-border rounded-xl flex items-center justify-center" title="Open settings">
+                  <button onClick={() => setScreen("settings")} className="w-8 h-8 bg-card border border-border rounded-xl flex items-center justify-center" title={t(uiLang, "common.openSettings")}>
                     <UserRound size={15} className="text-primary" />
                   </button>
                   <button onClick={() => setScreen("messages")} className="w-8 h-8 bg-card border border-border rounded-xl flex items-center justify-center">
@@ -448,7 +503,7 @@ export default function App() {
               </div>
             )}
             {showPatientSwitcher && (
-              <PatientSwitcher patients={patients} selected={selectedPatient} onSelect={setSelectedPatient} onAdd={handleAddPatient} />
+              <PatientSwitcher patients={patients} selected={selectedPatient} onSelect={setSelectedPatient} onAdd={handleAddPatient} onScan={() => setShowScanLink(true)} />
             )}
           </div>
 
@@ -458,12 +513,13 @@ export default function App() {
             {screen === "patient" && (
               <PatientScreen
                 patient={patient}
+                justAddedMed={justAddedMed}
                 onEditProfile={() => setShowEditProfile(true)}
                 onAddPrescription={() => setShowAddPrescription(true)}
                 onDeleteMedication={handleDeleteMedication}
               />
             )}
-            {screen === "timeline" && <TimelineScreen patient={patient} onSendReminder={handleSendReminder} />}
+            {screen === "timeline" && <TimelineScreen patient={patient} justAddedMed={justAddedMed} onSendReminder={handleSendReminder} />}
             {screen === "notifications" && (
               <NotificationsScreen
                 notifications={notifications}
@@ -472,7 +528,7 @@ export default function App() {
                 onDismiss={id => setNotifications(prev => prev.filter(n => n.id !== id))}
               />
             )}
-            {screen === "ai" && <AskMeiScreen patient={patient} elderId={elderId} onUpdatePatient={handleUpdatePatient} onNavigate={setScreen} onMedsChanged={refreshMedications} />}
+            {screen === "ai" && <AskMeiScreen patient={patient} elderId={elderId} onUpdatePatient={handleUpdatePatient} onNavigate={setScreen} onMedsChanged={refreshMedications} onMedAdded={flagJustAdded} />}
             {screen === "messages" && <MessagesScreen />}
             {screen === "settings" && <SettingsScreen patient={patient} caregiverAccount={caregiverAccount} onSwitchMode={openModeSwitch} onSignOut={() => supabase.auth.signOut()} onEditProfile={() => setShowEditProfile(true)} />}
           </div>
@@ -481,9 +537,10 @@ export default function App() {
           {showAddPrescription && (
             <AddPrescriptionSheet
               onClose={() => setShowAddPrescription(false)}
+              routine={{ ...patient.mealTimes, sleepTime: patient.sleepTime }}
               onAdd={handleAddPrescription}
               onAdded={() => setScreen("patient")}
-              onAgentAdded={refreshMedications}
+              onAgentAdded={(name) => { void refreshMedications(); flagJustAdded(name); }}
             />
           )}
           {showEditProfile && (
@@ -501,6 +558,12 @@ export default function App() {
               onSend={handleReminderSent}
             />
           )}
+          {showScanLink && (
+            <ScanLinkSheet
+              onClose={() => setShowScanLink(false)}
+              onLinked={(name, relation) => handleAddPatient(name, relation)}
+            />
+          )}
           <ToastStack
             toasts={toasts}
             onDismiss={id => setToasts(prev => prev.filter(t => t.id !== id))}
@@ -510,51 +573,16 @@ export default function App() {
           {showCaregiverTour && <GuidedTour steps={caregiverTourSteps} onFinish={() => setShowCaregiverTour(false)} />}
           {showCaregiverTourConfirm && (
             <ConfirmDialog
-              title="Replay guided tour?"
-              body="We'll walk you through the main features again, starting from the Dashboard."
-              confirmLabel="Replay"
+              title={t(uiLang, "confirm.replayTourTitle")}
+              body={t(uiLang, "confirm.replayTourBody")}
+              confirmLabel={t(uiLang, "confirm.replay")}
               onConfirm={() => { setShowCaregiverTourConfirm(false); setShowCaregiverTour(true); }}
               onCancel={() => setShowCaregiverTourConfirm(false)}
             />
           )}
 
           {/* Bottom navigation */}
-          <div className="shrink-0 bg-card/95 backdrop-blur-md border-t border-border px-2 pb-6 pt-2">
-            <div className="flex items-end">
-              {NAV_ITEMS.map(item => {
-                const isActive = activeTab === item.id;
-                if (item.fab) {
-                  return (
-                    <div key={item.id} className="flex-1 flex flex-col items-center">
-                      <button
-                        onClick={() => setScreen(item.id)}
-                        data-tour={`nav-${item.id}`}
-                        className={`w-14 h-14 rounded-full flex items-center justify-center -mt-7 shadow-lg active:scale-95 transition-transform bg-primary ${isActive ? "ring-4 ring-primary/25" : ""}`}
-                      >
-                        <item.icon size={24} className="text-primary-foreground" />
-                      </button>
-                      <span className={`text-[10px] font-medium mt-1 ${isActive ? "text-primary" : "text-muted-foreground"}`}>{item.label}</span>
-                    </div>
-                  );
-                }
-                return (
-                  <button
-                    key={item.id}
-                    onClick={() => setScreen(item.id)}
-                    data-tour={`nav-${item.id}`}
-                    className="flex-1 flex flex-col items-center gap-1 py-1 relative"
-                  >
-                    <div className={`w-10 h-7 rounded-2xl flex items-center justify-center transition-colors ${isActive ? "bg-primary" : ""}`}>
-                      <item.icon size={18} className={isActive ? "text-primary-foreground" : "text-muted-foreground"} />
-                    </div>
-                    <span className={`text-[10px] font-medium transition-colors ${isActive ? "text-primary" : "text-muted-foreground"}`}>
-                      {item.label}
-                    </span>
-                  </button>
-                );
-              })}
-            </div>
-          </div>
+          <BottomNav activeTab={activeTab} onSelect={setScreen} />
         </AccessibilityProvider>
         </div>
       </div>

@@ -72,16 +72,40 @@ normally forbids touching `services/hermes/` or `supabase/`**; cross-cutting
 work across that boundary needs explicit user sign-off (as happened for the
 Hermes wiring — see MEMORY.md).
 
+All clock-time entry goes through one component, `components/TimesPicker.tsx`:
+`TimesPicker` (a medication's one-or-more dose times) and `TimeField` (a single
+time — meal times, bedtime). Both set times with the same tap-only stepper; no
+screen should reintroduce a raw `<input type="time">` (see MEMORY.md for why).
+Used by the guided setup wizard's routine + medication steps, the caregiver's
+`AddPrescriptionSheet`, and `ElderlySettingsScreen`. `TimesPicker` speaks the
+app's 12h display strings (`Medication.times`); `TimeField` speaks 24h `HH:MM`
+(what `ProfileDetails.mealTimes` stores). `TimesPicker`'s quick chips take an
+optional `routine` prop so they offer the elder's own meal/bed times rather than
+generic defaults.
+
+The elderly wizard's step order is `account → profile → conditions → allergies →
+routine → current-meds → med-history → done`. **`routine` comes before the
+medication steps deliberately** — meal/bedtime answers are the frame people
+describe doses against ("one after breakfast").
+
 Voice input/output is client-side (browser Web Speech API — `SpeechRecognition`
 + `speechSynthesis`), not routed through Hermes; it degrades gracefully where
-unsupported.
+unsupported. Text-to-speech goes through the shared `lib/speech.ts::speak`
+(cancel→speak race fix + `voiceschanged` voice selection). Whether Mei reads
+replies aloud is one persisted setting — `voiceOutput` on `AccessibilityProvider`
+(`accessibility.tsx`, key `dosewise:accessibility`) — read/written by both
+Settings "Read Aloud" toggles, both chats, and the in-chat "Language & voice"
+switch (don't reintroduce a separate per-chat voice `useState`).
 
 ## Backend (`services/hermes`)
 
 FastAPI service, `uv`-managed. Key files:
 - `main.py` — app factory, lifespan (wires LLM client, Supabase, Telegram,
   rate limiter, CORS), `hermes-serve` entry point.
-- `api/routes.py` — `/health`, `/agent/turn`, `/telegram/webhook`.
+- `api/routes.py` — `/health`, `/agent/turn`, `/telegram/webhook`, and
+  `/profile/extract` (the structured "pull" API: reads an uploaded PDF/photo and
+  returns `{fields}` for onboarding autofill; API-key gated but **jwt-free** since
+  it's stateless — no Supabase/identity; impl in `agent/extract.py`).
 - `agent/loop.py` — the provider-agnostic tool-calling loop (OpenAI default,
   Gemini/Anthropic alternatives; Anthropic is the automatic silent-key fallback).
 - `agent/soul.md` + `agent/prompts.py` — the Dosewise persona/system prompt.

@@ -3,6 +3,8 @@ import { RefreshCw, CheckCircle2, ChevronLeft, ChevronRight, Clock, AlertTriangl
 import { useAccessibility } from "../../accessibility.tsx";
 import type { Patient, Medication, MedStatus } from "../../types";
 import { MED_PHOTOS, MED_SIMPLE, MED_SHAPES, MEAL_TIMES } from "../../data/medications";
+import { useLanguage } from "../../lib/languageContext";
+import { t, localizeMedText } from "../../lib/language";
 
 // --- timeline window: morning (6 AM) to night (11 PM) ----------------------
 // One row per hour, in normal document flow rather than pixel-per-minute
@@ -15,7 +17,9 @@ import { MED_PHOTOS, MED_SIMPLE, MED_SHAPES, MEAL_TIMES } from "../../data/medic
 const START_HOUR = 6;
 const END_HOUR = 23;
 const HOURS = Array.from({ length: END_HOUR - START_HOUR + 1 }, (_, i) => START_HOUR + i);
-const LIST_BOTTOM_PAD = 140;               // clears the bottom nav
+const LIST_BOTTOM_PAD = 28;                // small breathing room; the bottom nav
+                                           // is an in-flow sibling, already excluded
+                                           // from this flex-1 scroll area
 
 // DEMO ONLY: pretend "now" is this clock time so missed/upcoming states are
 // visible regardless of the real clock. Set to null to use the real time.
@@ -69,12 +73,14 @@ const input24hTo12h = (v: string) => {
   return minutesToClock(hh * 60 + mm);
 };
 
-export function ElderlyHomeScreen({ patient, onLogDose, onOpenTravel }: {
+export function ElderlyHomeScreen({ patient, onLogDose, onOpenTravel, justAddedMed }: {
   patient: Patient;
   onLogDose: (id: number, takenAt?: string) => void;
   onOpenTravel: () => void;
+  justAddedMed?: string | null;
 }) {
   const { colourBlind } = useAccessibility();
+  const { language } = useLanguage();
   const [now, setNow] = useState(makeNow());
   const [selectedDay, setSelectedDay] = useState<Date>(new Date());
   const [confirmedId, setConfirmedId] = useState<number | null>(null);
@@ -83,6 +89,10 @@ export function ElderlyHomeScreen({ patient, onLogDose, onOpenTravel }: {
   const [takenInput, setTakenInput] = useState("");
   const [showJump, setShowJump] = useState(false);
   const scrollRef = useRef<HTMLDivElement>(null);
+  // Tracks which day we've already snap-scrolled for, so the snap fires once per
+  // day (on mount / day change) and never re-yanks the user back to "now" when
+  // hourRows rebuilds each minute as the clock ticks.
+  const scrolledForDayRef = useRef<string>("");
   // DOM node for the "now" divider row — used to scroll-to-now against real
   // layout instead of a pixel formula, since hour rows are no longer
   // time-scaled (which is also what makes overlap between cards impossible).
@@ -163,6 +173,11 @@ export function ElderlyHomeScreen({ patient, onLogDose, onOpenTravel }: {
   useEffect(() => {
     const el = scrollRef.current;
     if (!el) return;
+    // Snap once per day: skip if we've already snapped for this selected day, so a
+    // minute-tick rebuild of hourRows can't drag the view back to "now" mid-scroll.
+    const dayKey = selectedDay.toDateString();
+    if (scrolledForDayRef.current === dayKey) return;
+    scrolledForDayRef.current = dayKey;
     if (isSelectedToday) jumpToNow("auto");
     else el.scrollTo({ top: 0 });
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -203,7 +218,7 @@ export function ElderlyHomeScreen({ patient, onLogDose, onOpenTravel }: {
     const isTaken = m.status === "taken";
     const isMissed = m.status === "missed";
     const photo = MED_PHOTOS[m.name] ?? "https://images.unsplash.com/photo-1584308666744-24d5c474f2ae?w=120&h=120&fit=crop&auto=format";
-    const direction = MED_SIMPLE[m.name] ?? "Take as directed by your doctor.";
+    const direction = MED_SIMPLE[m.name] ?? t(language, "home.takeAsDirected");
     const shape = MED_SHAPES[m.name];
     const clock = resolveDose(m).clock;
     const timeCls = isNext ? "bg-primary text-white" : isMissed ? "bg-orange-100 text-orange-700" : "bg-muted text-muted-foreground";
@@ -216,7 +231,7 @@ export function ElderlyHomeScreen({ patient, onLogDose, onOpenTravel }: {
           </div>
           <div className="flex-1 min-w-0">
             <p className="text-sm font-semibold text-muted-foreground line-through leading-snug">{m.name}</p>
-            <p className="text-xs text-muted-foreground/70">{m.takenAt ? `Taken at ${m.takenAt}` : "Taken"}</p>
+            <p className="text-xs text-muted-foreground/70">{m.takenAt ? t(language, "home.takenAt", { time: m.takenAt }) : t(language, "common.taken")}</p>
             {colourBlind && shape && <p className="text-xs text-muted-foreground/70">{shape.shape} · {shape.marking}</p>}
           </div>
           <div className="flex flex-col items-end gap-1 shrink-0">
@@ -227,7 +242,9 @@ export function ElderlyHomeScreen({ patient, onLogDose, onOpenTravel }: {
       );
     }
 
-    const cardCls = isNext ? "border-2 border-primary bg-sky-50/60 shadow-sm"
+    const justAdded = !!justAddedMed && m.name === justAddedMed;
+    const cardCls = justAdded ? "border-2 border-emerald-400 bg-emerald-50/60 shadow-sm ring-2 ring-emerald-300/50"
+                  : isNext ? "border-2 border-primary bg-sky-50/60 shadow-sm"
                   : isMissed ? "border-2 border-orange-400 bg-orange-50 shadow-sm"
                   : "border border-border bg-card";
 
@@ -240,18 +257,25 @@ export function ElderlyHomeScreen({ patient, onLogDose, onOpenTravel }: {
             </div>
             <div className="flex-1 min-w-0">
               <div className="flex items-start justify-between gap-2">
-                <div className="flex items-center gap-1.5 flex-wrap">
-                  <p className="font-bold text-[17px] text-foreground leading-snug">{m.name}</p>
+                <div className="flex items-center gap-1.5 flex-wrap min-w-0">
+                  <p className="font-bold text-[17px] text-foreground leading-snug break-words min-w-0">{m.name}</p>
+                  {justAdded && (
+                    <span className="flex items-center gap-1 bg-emerald-100 text-emerald-700 text-[10px] font-bold px-2 py-0.5 rounded-full">
+                      <Check size={9} strokeWidth={3} />{t(language, "prescription.justAdded")}
+                    </span>
+                  )}
                   {isMissed && (
                     <span className="flex items-center gap-1 bg-orange-100 text-orange-700 text-[10px] font-bold px-2 py-0.5 rounded-full">
-                      <AlertTriangle size={9} />Missed
+                      <AlertTriangle size={9} />{t(language, "common.missed")}
                     </span>
                   )}
                 </div>
-                <span className={`text-base font-bold px-2.5 py-0.5 rounded-xl shrink-0 whitespace-nowrap ${timeCls}`}>{clock}</span>
+                {/* Long medication names would otherwise push this badge past the
+                    card edge; step it down a size rather than let it clip. */}
+                <span className={`${m.name.length > 20 ? "text-sm px-2" : "text-base px-2.5"} font-bold py-0.5 rounded-xl shrink-0 whitespace-nowrap ${timeCls}`}>{clock}</span>
               </div>
-              <p className="text-sm text-muted-foreground mt-1.5">{direction}</p>
-              {vague && <p className="text-xs text-primary/80 mt-1">🕒 {note} · around {minutesToClock(resolveDose(m).minutes)}</p>}
+              <p className="text-sm text-muted-foreground mt-1.5">{localizeMedText(language, m.name, "simple", direction)}</p>
+              {vague && <p className="text-xs text-primary/80 mt-1">🕒 {t(language, "home.vagueTimeNote", { note: note ?? "", clock: minutesToClock(resolveDose(m).minutes) })}</p>}
               {colourBlind && shape && <p className="text-xs text-muted-foreground mt-1">{shape.shape} · {shape.marking}</p>}
             </div>
           </div>
@@ -267,12 +291,12 @@ export function ElderlyHomeScreen({ patient, onLogDose, onOpenTravel }: {
             <div className={`w-6 h-6 rounded-full border-2 flex items-center justify-center ${isNext ? "border-primary" : "border-orange-500"}`}>
               <Check size={12} strokeWidth={3} className={isNext ? "text-primary" : "text-orange-600"} />
             </div>
-            I Took It ✓
+            {t(language, "home.iTookIt")}
           </button>
         ) : (
           <div className="w-full flex items-center justify-center gap-2 py-2.5 border-t border-border/40">
             <Clock size={13} className="text-muted-foreground" />
-            <p className="text-xs text-muted-foreground font-medium">{isFuture(selectedDay) ? "Scheduled" : "Coming up"}</p>
+            <p className="text-xs text-muted-foreground font-medium">{isFuture(selectedDay) ? t(language, "home.scheduled") : t(language, "home.comingUp")}</p>
           </div>
         )}
       </div>
@@ -285,7 +309,7 @@ export function ElderlyHomeScreen({ patient, onLogDose, onOpenTravel }: {
   const formatTravelDate = (d: string) => new Date(d).toLocaleDateString("en-SG", { day: "numeric", month: "short" });
 
   return (
-    <div className="flex flex-col flex-1 overflow-hidden relative">
+    <div className="flex flex-col flex-1 min-h-0 overflow-hidden relative">
       {/* Travel Mode indicator — display only; the schedule below still runs on
           local time, it doesn't actually shift to the destination timezone. */}
       {travelActive && travelPlan && (
@@ -295,9 +319,9 @@ export function ElderlyHomeScreen({ patient, onLogDose, onOpenTravel }: {
         >
           <p className="flex items-center gap-1.5 text-xs font-semibold text-primary">
             <Plane size={13} className="shrink-0" />
-            Travel Mode · {formatTravelDate(travelPlan.startDate)}–{formatTravelDate(travelPlan.endDate)}
+            {t(language, "common.travelMode")} · {formatTravelDate(travelPlan.startDate)}–{formatTravelDate(travelPlan.endDate)}
           </p>
-          <p className="text-[11px] text-primary/80">Times shown in {travelPlan.timezone}</p>
+          <p className="text-[11px] text-primary/80">{t(language, "home.timesShownIn", { tz: travelPlan.timezone })}</p>
         </button>
       )}
 
@@ -309,7 +333,7 @@ export function ElderlyHomeScreen({ patient, onLogDose, onOpenTravel }: {
           </button>
           <div className="flex-1 text-center">
             <p className={`text-sm font-bold leading-tight ${isSelectedToday ? "text-primary" : "text-foreground"}`}>
-              {isSelectedToday ? "Today" : selectedDay.toLocaleDateString("en-SG", { weekday: "long" })}
+              {isSelectedToday ? t(language, "home.today") : selectedDay.toLocaleDateString("en-SG", { weekday: "long" })}
             </p>
             <p className="text-xs text-muted-foreground">{selectedDay.toLocaleDateString("en-SG", { day: "numeric", month: "long" })}</p>
           </div>
@@ -318,7 +342,7 @@ export function ElderlyHomeScreen({ patient, onLogDose, onOpenTravel }: {
           </button>
           {!isSelectedToday && (
             <button onClick={() => setSelectedDay(new Date())} className="ml-1 text-xs font-bold px-3 h-9 rounded-xl bg-primary text-primary-foreground active:opacity-80">
-              Today
+              {t(language, "home.today")}
             </button>
           )}
         </div>
@@ -326,7 +350,7 @@ export function ElderlyHomeScreen({ patient, onLogDose, onOpenTravel }: {
           <div className="flex-1 h-1.5 bg-muted rounded-full overflow-hidden">
             <div className="h-full bg-emerald-500 rounded-full transition-all" style={{ width: `${total ? (takenCount / total) * 100 : 0}%` }} />
           </div>
-          <p className="text-xs font-semibold text-muted-foreground shrink-0">{takenCount}/{total} taken</p>
+          <p className="text-xs font-semibold text-muted-foreground shrink-0">{takenCount}/{total} {t(language, "home.taken")}</p>
         </div>
       </div>
 
@@ -335,7 +359,7 @@ export function ElderlyHomeScreen({ patient, onLogDose, onOpenTravel }: {
         <div className="mx-4 mb-1 bg-amber-50 border border-amber-200 rounded-xl px-3 py-2 shrink-0 relative z-20">
           <div className="flex items-center gap-2">
             <RefreshCw size={13} className="text-amber-600 shrink-0" />
-            <p className="text-sm font-semibold text-amber-900">Refill needed soon</p>
+            <p className="text-sm font-semibold text-amber-900">{t(language, "home.refillNeeded")}</p>
             <p className="text-xs text-amber-700 ml-auto font-medium">{refillAlerts.map(m => m.name).join(", ")}</p>
           </div>
         </div>
@@ -373,7 +397,7 @@ export function ElderlyHomeScreen({ patient, onLogDose, onOpenTravel }: {
           ))}
 
           {slots.length === 0 && (
-            <div className="text-center text-sm text-muted-foreground pt-8">No medications scheduled.</div>
+            <div className="text-center text-sm text-muted-foreground pt-8">{t(language, "home.noSchedule")}</div>
           )}
         </div>
       </div>
@@ -385,7 +409,7 @@ export function ElderlyHomeScreen({ patient, onLogDose, onOpenTravel }: {
           className="absolute bottom-4 right-4 z-30 flex items-center gap-1.5 bg-primary text-primary-foreground rounded-full pl-3 pr-4 py-2.5 shadow-lg active:scale-95 transition-transform"
         >
           <LocateFixed size={16} />
-          <span className="text-sm font-bold">Now</span>
+          <span className="text-sm font-bold">{t(language, "home.now")}</span>
         </button>
       )}
 
@@ -394,7 +418,7 @@ export function ElderlyHomeScreen({ patient, onLogDose, onOpenTravel }: {
         <div className={`absolute inset-0 z-40 flex items-center justify-center pointer-events-none transition-opacity duration-500 ${toastVisible ? "opacity-100" : "opacity-0"}`}>
           <div className="bg-emerald-500 text-white rounded-2xl px-6 py-5 flex items-center gap-3 shadow-xl">
             <CheckCircle2 size={24} />
-            <p className="font-semibold text-base">Recorded! Well done 🌟</p>
+            <p className="font-semibold text-base">{t(language, "home.recorded")}</p>
           </div>
         </div>
       )}
@@ -404,7 +428,7 @@ export function ElderlyHomeScreen({ patient, onLogDose, onOpenTravel }: {
         <div className="absolute inset-0 z-50 flex items-end justify-center bg-black/40" onClick={() => setPendingDose(null)}>
           <div className="w-full bg-background rounded-t-3xl p-5 pb-7 animate-in slide-in-from-bottom duration-200" onClick={e => e.stopPropagation()}>
             <div className="flex items-center justify-between mb-4">
-              <h3 className="font-['Fraunces'] text-xl font-semibold text-foreground">Mark as taken</h3>
+              <h3 className="font-['Fraunces'] text-xl font-semibold text-foreground">{t(language, "home.markTaken")}</h3>
               <button onClick={() => setPendingDose(null)} className="w-8 h-8 rounded-full bg-muted flex items-center justify-center">
                 <X size={16} className="text-muted-foreground" />
               </button>
@@ -416,11 +440,11 @@ export function ElderlyHomeScreen({ patient, onLogDose, onOpenTravel }: {
               </div>
               <div>
                 <p className="font-bold text-[17px] text-foreground">{pendingDose.name}</p>
-                <p className="text-sm text-muted-foreground">Scheduled for {resolveDose(pendingDose).clock}</p>
+                <p className="text-sm text-muted-foreground">{t(language, "home.scheduledFor", { clock: resolveDose(pendingDose).clock })}</p>
               </div>
             </div>
 
-            <label className="block text-sm font-semibold text-foreground mb-2">What time did you take it?</label>
+            <label className="block text-sm font-semibold text-foreground mb-2">{t(language, "home.whatTime")}</label>
             <div className="flex items-center gap-2 mb-3">
               <input
                 type="time"
@@ -429,13 +453,13 @@ export function ElderlyHomeScreen({ patient, onLogDose, onOpenTravel }: {
                 className="flex-1 bg-input-background border border-border rounded-xl px-4 py-3 text-lg font-bold text-foreground outline-none focus:border-primary"
               />
               <button onClick={() => setTakenInput(to24hInput(new Date()))} className="px-4 py-3 rounded-xl bg-muted text-sm font-bold text-foreground active:bg-muted/70">
-                Just now
+                {t(language, "home.justNow")}
               </button>
             </div>
-            <p className="text-xs text-muted-foreground mb-5">You'll log it as <span className="font-semibold text-foreground">{takenInput ? input24hTo12h(takenInput) : "—"}</span></p>
+            <p className="text-xs text-muted-foreground mb-5">{t(language, "home.willLogAs", { time: takenInput ? input24hTo12h(takenInput) : "—" })}</p>
 
             <button onClick={confirmTake} className="w-full h-13 py-4 rounded-2xl bg-primary text-primary-foreground text-base font-bold active:scale-[0.98] transition-transform flex items-center justify-center gap-2">
-              <Check size={18} strokeWidth={3} />Confirm
+              <Check size={18} strokeWidth={3} />{t(language, "home.confirm")}
             </button>
           </div>
         </div>

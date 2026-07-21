@@ -70,9 +70,9 @@ export function TravelModeSheet({ patient, elderId, onClose, onSaved }: {
   };
 
   return (
-    <div className="absolute inset-0 z-50 flex flex-col justify-end">
+    <div className="absolute inset-0 z-50 flex items-end p-3">
       <div className="absolute inset-0 bg-black/40 backdrop-blur-[1px]" onClick={onClose} />
-      <div className="relative bg-card rounded-t-3xl shadow-2xl overflow-hidden flex flex-col max-h-[90%]">
+      <div className="relative w-full bg-card rounded-3xl border border-border shadow-2xl overflow-hidden flex flex-col max-h-full animate-in slide-in-from-bottom duration-200">
         <div className="flex justify-center pt-3 pb-1 shrink-0">
           <div className="w-10 h-1 bg-border rounded-full" />
         </div>

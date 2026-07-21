@@ -1,4 +1,6 @@
 import { useEffect, useRef, useState } from "react";
+import { useLanguage } from "../lib/languageContext";
+import { t } from "../lib/language";
 
 export interface TourStep {
   target: string; // CSS selector for the element to spotlight
@@ -17,6 +19,7 @@ interface Rect { top: number; left: number; width: number; height: number }
 // fresh on every step change, retrying a few frames in case the new tab's
 // content hasn't mounted yet.
 export function GuidedTour({ steps, onFinish }: { steps: TourStep[]; onFinish: () => void }) {
+  const { language } = useLanguage();
   const [index, setIndex] = useState(0);
   const [rect, setRect] = useState<Rect | null>(null);
   const [navRect, setNavRect] = useState<Rect | null>(null);
@@ -115,15 +118,15 @@ export function GuidedTour({ steps, onFinish }: { steps: TourStep[]; onFinish: (
         <p className="text-sm text-muted-foreground leading-relaxed mb-3">{step.body}</p>
         <div className="flex items-center gap-1.5">
           <button onClick={onFinish} className="text-xs text-muted-foreground font-medium px-2 py-2 shrink-0">
-            Skip tour
+            {t(language, "tour.skip")}
           </button>
           {index > 0 && (
             <button onClick={back} className="h-9 px-3 rounded-xl border border-border text-foreground text-xs font-semibold shrink-0">
-              Back
+              {t(language, "tour.back")}
             </button>
           )}
           <button onClick={next} className="flex-1 h-9 rounded-xl bg-primary text-primary-foreground text-xs font-semibold">
-            {isLast ? "Done" : "Next"}
+            {isLast ? t(language, "tour.done") : t(language, "tour.next")}
           </button>
         </div>
       </div>

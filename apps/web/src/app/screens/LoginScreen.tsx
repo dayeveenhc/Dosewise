@@ -60,19 +60,19 @@ export function LoginScreen({ onBack, onGetStarted }: { onBack: () => void; onGe
       {/* Form */}
       <div className="flex flex-col gap-3 px-6 flex-1">
         <div>
-          <label className="block text-xs font-semibold text-foreground mb-1.5">Email</label>
+          <label className="block text-xs font-semibold text-foreground mb-1.5">{t(language, "wizard.email")}</label>
           <input
             type="email"
             value={email}
             onChange={e => setEmail(e.target.value)}
             onKeyDown={e => e.key === "Enter" && handleSubmit()}
-            placeholder="you@example.com"
+            placeholder={t(language, "wizard.emailPlaceholder")}
             className={fieldCls}
             autoComplete="email"
           />
         </div>
         <div>
-          <label className="block text-xs font-semibold text-foreground mb-1.5">Password</label>
+          <label className="block text-xs font-semibold text-foreground mb-1.5">{t(language, "wizard.password")}</label>
           <input
             type="password"
             value={password}

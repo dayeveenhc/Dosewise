@@ -14,7 +14,7 @@ from fakes import (
     openai_response,
     openai_tool_call,
 )
-from hermes.agent.loop import run_agent_turn
+from hermes.agent.loop import _RETRY_REPLY, run_agent_turn
 from hermes.channels.session import SessionState
 from hermes.config import get_settings
 from hermes.tools.base import ToolContext
@@ -81,5 +81,6 @@ async def test_openai_loop_iteration_cap_falls_back(monkeypatch):
         openai_response(openai_message(tool_calls=[openai_tool_call("list_medications", {})])),
     ])
     reply, tools_used, _ = await run_agent_turn(client, _ctx(db), "loop forever")
-    assert "person" in reply.lower()
+    # Hitting the cap now recovers with a gentle retry, not a human handoff.
+    assert reply == _RETRY_REPLY
     assert len(tools_used) >= 8

@@ -6,12 +6,17 @@ interface AccessibilitySettings {
   fontSize: FontSize;
   highContrast: boolean;
   colourBlind: boolean;
+  // Whether Mei reads her replies aloud (browser speechSynthesis). The single
+  // persisted source of truth for the "Read Aloud" toggle *and* the in-chat
+  // voice switch — both read/write it here so they never disagree.
+  voiceOutput: boolean;
 }
 
 interface AccessibilityContextValue extends AccessibilitySettings {
   setFontSize: (size: FontSize) => void;
   setHighContrast: (on: boolean) => void;
   setColourBlind: (on: boolean) => void;
+  setVoiceOutput: (on: boolean) => void;
 }
 
 const STORAGE_KEY = "dosewise:accessibility";
@@ -26,7 +31,7 @@ const FONT_SIZE_PX: Record<FontSize, string> = {
   xxlarge: "21px",
 };
 
-const DEFAULTS: AccessibilitySettings = { fontSize: "large", highContrast: false, colourBlind: false };
+const DEFAULTS: AccessibilitySettings = { fontSize: "large", highContrast: false, colourBlind: false, voiceOutput: true };
 
 function loadInitial(): AccessibilitySettings {
   try {
@@ -57,6 +62,7 @@ export function AccessibilityProvider({ children }: { children: ReactNode }) {
     setFontSize: (fontSize) => setSettings(s => ({ ...s, fontSize })),
     setHighContrast: (highContrast) => setSettings(s => ({ ...s, highContrast })),
     setColourBlind: (colourBlind) => setSettings(s => ({ ...s, colourBlind })),
+    setVoiceOutput: (voiceOutput) => setSettings(s => ({ ...s, voiceOutput })),
   };
 
   return <AccessibilityContext.Provider value={value}>{children}</AccessibilityContext.Provider>;

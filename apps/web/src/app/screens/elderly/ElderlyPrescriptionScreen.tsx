@@ -1,18 +1,45 @@
 import { useState } from "react";
-import { Plus, BookOpen, ChevronDown, Play, Eye, History } from "lucide-react";
+import { Plus, BookOpen, ChevronDown, Play, Eye, History, Check, Clock } from "lucide-react";
 import { useAccessibility } from "../../accessibility.tsx";
-import type { Patient } from "../../types";
+import type { Medication, Patient } from "../../types";
+import { to24h } from "../../lib/medications";
 import { MED_PLAIN, MED_SIMPLE, MED_SHAPES, EYEDROP_STEPS } from "../../data/medications";
 import { MedAvatar } from "../../components/shared";
 import { useLanguage } from "../../lib/languageContext";
 import { t } from "../../lib/language";
 
-export function ElderlyPrescriptionScreen({ patient, onOpenAI, onAddRx }: { patient: Patient; onOpenAI: (msg?: string) => void; onAddRx: () => void }) {
+interface GroupedMed extends Medication { times: string[] }
+
+// Collapse the schedule's per-time-slot entries back into one entry per real
+// medication, keeping every time it's taken. Falls back to the name as the key
+// for demo/seed data that has no `medicationId`.
+function groupByMedication(meds: Medication[]): GroupedMed[] {
+  const byKey = new Map<string, GroupedMed>();
+  const out: GroupedMed[] = [];
+  for (const m of meds) {
+    const existing = byKey.get(m.medicationId ?? m.name);
+    if (existing) {
+      if (!existing.times.includes(m.time)) existing.times.push(m.time);
+      continue;
+    }
+    const grouped: GroupedMed = { ...m, times: [m.time] };
+    byKey.set(m.medicationId ?? m.name, grouped);
+    out.push(grouped);
+  }
+  for (const g of out) g.times.sort((a, b) => to24h(a).localeCompare(to24h(b)));
+  return out;
+}
+
+export function ElderlyPrescriptionScreen({ patient, onOpenAI, onAddRx, justAddedMed }: { patient: Patient; onOpenAI: (msg?: string) => void; onAddRx: () => void; justAddedMed?: string | null }) {
   const { colourBlind } = useAccessibility();
   const { language } = useLanguage();
   const [helpOpen, setHelpOpen] = useState<number | null>(null);
   const [pastOpen, setPastOpen] = useState(false);
   const pastMedications = patient.pastMedications ?? [];
+  // `patient.medications` is one entry per (medication, time-slot) — right for the
+  // schedule, wrong here: a twice-daily pill is one prescription, not two. Group
+  // back by medication and keep its times for the schedule indicator.
+  const prescriptions = groupByMedication(patient.medications);
 
   return (
     <div className="flex-1 overflow-y-auto scrollbar-none">
@@ -20,7 +47,7 @@ export function ElderlyPrescriptionScreen({ patient, onOpenAI, onAddRx }: { pati
 
         {/* Header */}
         <div className="flex items-center justify-between pt-1">
-          <p className="text-sm text-muted-foreground">{t(language, "prescription.count", { count: patient.medications.length })}</p>
+          <p className="text-sm text-muted-foreground">{t(language, "prescription.count", { count: prescriptions.length })}</p>
           <button
             onClick={onAddRx}
             data-tour="elder-add-prescription"
@@ -32,12 +59,12 @@ export function ElderlyPrescriptionScreen({ patient, onOpenAI, onAddRx }: { pati
 
         {/* Medication cards — tour target framed tightly around just these, not the whole page */}
         <div data-tour="elder-medlist" className="space-y-3">
-        {patient.medications.length === 0 && (
+        {prescriptions.length === 0 && (
           <div className="bg-muted/40 rounded-2xl p-6 text-center">
             <p className="text-sm text-muted-foreground">{t(language, "prescription.empty")}</p>
           </div>
         )}
-        {patient.medications.map(m => {
+        {prescriptions.map(m => {
           const plain       = MED_PLAIN[m.name];
           const direction   = MED_SIMPLE[m.name] ?? t(language, "home.takeAsDirected");
           const shape       = MED_SHAPES[m.name];
@@ -46,15 +73,23 @@ export function ElderlyPrescriptionScreen({ patient, onOpenAI, onAddRx }: { pati
           const supplyPct   = Math.min(100, Math.round((supplyDays / 30) * 100));
           const isEyeDrop   = m.name === "Latanoprost Eye Drops";
           const isHelpOpen  = helpOpen === m.id;
+          const justAdded   = !!justAddedMed && m.name === justAddedMed;
 
           return (
-            <div key={m.id} className="bg-card rounded-2xl border border-border overflow-hidden shadow-sm">
+            <div key={m.id} className={`bg-card rounded-2xl border overflow-hidden shadow-sm ${justAdded ? "border-2 border-emerald-400 ring-2 ring-emerald-300/50" : "border-border"}`}>
               <div className="p-4">
                 <div className="flex items-start gap-3">
                   <MedAvatar name={m.name} size={62} className="rounded-xl shrink-0" />
                   <div className="flex-1 min-w-0">
                     <div className="flex items-start justify-between gap-2">
-                      <p className="font-bold text-[17px] text-foreground leading-snug">{m.name}</p>
+                      <div className="flex items-center gap-1.5 flex-wrap min-w-0">
+                        <p className="font-bold text-[17px] text-foreground leading-snug">{m.name}</p>
+                        {justAdded && (
+                          <span className="flex items-center gap-1 bg-emerald-100 text-emerald-700 text-[10px] font-bold px-2 py-0.5 rounded-full">
+                            <Check size={9} strokeWidth={3} />{t(language, "prescription.justAdded")}
+                          </span>
+                        )}
+                      </div>
                       {lowRefill && (
                         <span className="shrink-0 text-xs font-bold text-red-600 bg-red-100 px-2.5 py-1 rounded-full whitespace-nowrap">
                           {t(language, "prescription.daysLeftBadge", { days: m.refillDaysLeft ?? 0 })}
@@ -93,6 +128,25 @@ export function ElderlyPrescriptionScreen({ patient, onOpenAI, onAddRx }: { pati
                     <ChevronDown size={13} className={`ml-auto shrink-0 transition-transform ${isHelpOpen ? "rotate-180" : ""}`} />
                   </button>
                 )}
+
+                {/* Schedule — one card covers every time this medicine is taken */}
+                <div className="mt-3">
+                  <div className="flex items-center gap-1.5 mb-1.5">
+                    <Clock size={12} className="text-primary shrink-0" />
+                    <p className="text-xs font-semibold text-foreground">
+                      {m.times.length === 1
+                        ? t(language, "prescription.onceADay")
+                        : t(language, "prescription.timesADay", { count: m.times.length })}
+                    </p>
+                  </div>
+                  <div className="flex flex-wrap gap-1.5">
+                    {m.times.map(time => (
+                      <span key={time} className="text-xs font-semibold text-primary bg-secondary border border-primary/20 rounded-lg px-2 py-1 whitespace-nowrap">
+                        {time}
+                      </span>
+                    ))}
+                  </div>
+                </div>
 
                 {/* Supply bar — always shown */}
                 <div className="mt-3">

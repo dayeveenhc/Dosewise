@@ -2,7 +2,9 @@ import { useState, useRef } from "react";
 import type { ReactNode, ChangeEvent } from "react";
 import { X, Check, Plus, Pill, Camera, PenLine, Image as ImageIcon, Sparkles } from "lucide-react";
 import type { Medication } from "../types";
-import { MED_COLOURS, PRESET_TIMES, MEDICATION_CATALOG, COMMON_CONDITIONS, MED_PHOTOS } from "../data/medications";
+import { MED_COLOURS, MEDICATION_CATALOG, COMMON_CONDITIONS, MED_PHOTOS } from "../data/medications";
+import { TimesPicker, defaultDoseTime } from "../components/TimesPicker";
+import type { RoutineTimes } from "../components/TimesPicker";
 import { agentTurn, fileToBase64 } from "../lib/hermes";
 
 interface AddPrescriptionSheetProps {
@@ -10,9 +12,13 @@ interface AddPrescriptionSheetProps {
   onAdd: (med: Omit<Medication, "id" | "status"> & { times?: string[] }) => Promise<unknown> | void;
   onAdded?: () => void;
   initialTab?: "scan" | "manual";
+  // The elder's meal/bedtime routine, so the time picker's quick chips offer
+  // their actual times rather than generic defaults.
+  routine?: RoutineTimes;
   // Called after the agent commits a scanned prescription server-side, so the
   // parent can refetch the medication list (there is no local onAdd for this path).
-  onAgentAdded?: () => void;
+  // Receives the added medication name so the parent can highlight it as proof.
+  onAgentAdded?: (name?: string) => void;
 }
 
 // A small type-ahead input: shows filtered suggestions as the user types.
@@ -58,7 +64,7 @@ function TypeAhead<T>({ value, onChange, onPick, items, filter, label, render, p
   );
 }
 
-export function AddPrescriptionSheet({ onClose, onAdd, onAdded, initialTab = "manual", onAgentAdded }: AddPrescriptionSheetProps) {
+export function AddPrescriptionSheet({ onClose, onAdd, onAdded, initialTab = "manual", routine, onAgentAdded }: AddPrescriptionSheetProps) {
   const [tab, setTab] = useState<"scan" | "manual">(initialTab);
   const [scannedPhoto, setScannedPhoto] = useState<string | null>(null);
   const [scanning, setScanning] = useState(false);
@@ -72,20 +78,15 @@ export function AddPrescriptionSheet({ onClose, onAdd, onAdded, initialTab = "ma
   const [name, setName] = useState("");
   const [dose, setDose] = useState("");
   const [purpose, setPurpose] = useState("");
-  const [selectedTimes, setSelectedTimes] = useState<string[]>(["8:00 AM"]);
-  const [customTime, setCustomTime] = useState("");
-  const [useCustomTime, setUseCustomTime] = useState(false);
+  const [selectedTimes, setSelectedTimes] = useState<string[]>([defaultDoseTime(routine)]);
   const [refillDays, setRefillDays] = useState("");
   const [colour, setColour] = useState(MED_COLOURS[0].hex);
 
-  const isValid = name.trim() && dose.trim() && purpose.trim();
+  const isValid = name.trim() && dose.trim() && purpose.trim() && selectedTimes.length > 0;
 
   const handleAdd = async () => {
     if (!isValid || submitState === "saving") return;
-    const chosenTimes = [
-      ...selectedTimes,
-      ...(useCustomTime && customTime.trim() ? [customTime.trim()] : []),
-    ].filter(Boolean);
+    const chosenTimes = selectedTimes;
     setSubmitState("saving");
     setSubmitError(null);
     try {
@@ -141,9 +142,10 @@ export function AddPrescriptionSheet({ onClose, onAdd, onAdded, initialTab = "ma
     setCommitting(false);
     // actions only contains add_prescription once the write actually committed
     // (never on the propose turn) — a reliable "it's really saved" signal.
-    if (actions.some(a => a.tool === "add_prescription")) {
+    const added = actions.find(a => a.tool === "add_prescription");
+    if (added) {
       setCommitted(true);
-      onAgentAdded?.();
+      onAgentAdded?.(added.name);
     }
   };
 
@@ -315,32 +317,7 @@ export function AddPrescriptionSheet({ onClose, onAdd, onAdded, initialTab = "ma
               </div>
 
               {/* Time */}
-              <div>
-                <label className="block text-xs font-semibold text-foreground mb-1.5">Scheduled time</label>
-                <div className="flex flex-wrap gap-2 mb-2">
-                  {PRESET_TIMES.map(t => (
-                    <button
-                      key={t}
-                      onClick={() => {
-                        setSelectedTimes(prev => prev.includes(t) ? prev.filter(item => item !== t) : [...prev, t]);
-                        setUseCustomTime(false);
-                      }}
-                      className={`text-xs font-medium rounded-xl px-3 py-1.5 border transition-colors ${selectedTimes.includes(t) ? "bg-primary text-primary-foreground border-primary" : "bg-muted text-muted-foreground border-border"}`}
-                    >
-                      {t}
-                    </button>
-                  ))}
-                  <button
-                    onClick={() => setUseCustomTime(true)}
-                    className={`text-xs font-medium rounded-xl px-3 py-1.5 border transition-colors ${useCustomTime ? "bg-primary text-primary-foreground border-primary" : "bg-muted text-muted-foreground border-border"}`}
-                  >
-                    Custom
-                  </button>
-                </div>
-                {useCustomTime && (
-                  <input value={customTime} onChange={e => setCustomTime(e.target.value)} placeholder="e.g. 10:30 AM" className={inputCls} />
-                )}
-              </div>
+              <TimesPicker times={selectedTimes} onChange={setSelectedTimes} label="Scheduled times" routine={routine} />
 
               {/* Refill supply */}
               <div>
@@ -375,7 +352,7 @@ export function AddPrescriptionSheet({ onClose, onAdd, onAdded, initialTab = "ma
                   </div>
                   <div>
                     <p className="text-sm font-semibold text-foreground">{name} <span className="text-xs font-normal text-muted-foreground">{dose}</span></p>
-                    <p className="text-[11px] text-muted-foreground">{purpose} · {([...(selectedTimes || []), ...(useCustomTime && customTime.trim() ? [customTime.trim()] : [])].filter(Boolean).join(" • ") || "8:00 AM")}</p>
+                    <p className="text-[11px] text-muted-foreground">{purpose} · {selectedTimes.join(" • ") || "8:00 AM"}</p>
                   </div>
                 </div>
               )}
