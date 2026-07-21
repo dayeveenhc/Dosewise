@@ -114,48 +114,88 @@ export const VOICE_DEMOS = [
 ];
 
 // Common conditions offered as type-ahead suggestions for the "Purpose" field.
-export const COMMON_CONDITIONS = [
-  "Diabetes", "Blood Pressure", "Cholesterol", "Joint Pain", "Blood Thinning",
-  "Heart Rate", "Glaucoma", "Acid Reflux", "Asthma", "Thyroid", "Osteoporosis",
-  "Pain Relief", "Allergy", "Anxiety", "Fluid Retention", "Vitamins",
+// `value` is the canonical English string that actually gets stored (never
+// machine-translated, matching the app's policy for stored patient data);
+// `labelKey` is only used to localize what's *displayed* in the suggestion list.
+export const COMMON_CONDITIONS: { value: string; labelKey: string }[] = [
+  { value: "Diabetes", labelKey: "catalog.condition.diabetes" },
+  { value: "Blood Pressure", labelKey: "catalog.condition.bloodPressure" },
+  { value: "Cholesterol", labelKey: "catalog.condition.cholesterol" },
+  { value: "Joint Pain", labelKey: "catalog.condition.jointPain" },
+  { value: "Blood Thinning", labelKey: "catalog.condition.bloodThinning" },
+  { value: "Heart Rate", labelKey: "catalog.condition.heartRate" },
+  { value: "Glaucoma", labelKey: "catalog.condition.glaucoma" },
+  { value: "Acid Reflux", labelKey: "catalog.condition.acidReflux" },
+  { value: "Asthma", labelKey: "catalog.condition.asthma" },
+  { value: "Thyroid", labelKey: "catalog.condition.thyroid" },
+  { value: "Osteoporosis", labelKey: "catalog.condition.osteoporosis" },
+  { value: "Pain Relief", labelKey: "catalog.condition.painRelief" },
+  { value: "Allergy", labelKey: "catalog.condition.allergy" },
+  { value: "Anxiety", labelKey: "catalog.condition.anxiety" },
+  { value: "Fluid Retention", labelKey: "catalog.condition.fluidRetention" },
+  { value: "Vitamins", labelKey: "catalog.condition.vitamins" },
 ];
 
 // Starter list for the allergy type-ahead — not a real medical database, just
 // enough common entries to make autofill useful today. Free text is still
 // allowed for anything not on this list.
-export const COMMON_ALLERGIES = [
-  "Peanuts", "Tree nuts", "Shellfish", "Fish", "Eggs", "Milk", "Soy", "Wheat / Gluten",
-  "Sesame", "Latex", "Pollen", "Dust mites", "Pet dander", "Bee stings", "Mould",
+export const COMMON_ALLERGIES: { value: string; labelKey: string }[] = [
+  { value: "Peanuts", labelKey: "catalog.allergy.peanuts" },
+  { value: "Tree nuts", labelKey: "catalog.allergy.treeNuts" },
+  { value: "Shellfish", labelKey: "catalog.allergy.shellfish" },
+  { value: "Fish", labelKey: "catalog.allergy.fish" },
+  { value: "Eggs", labelKey: "catalog.allergy.eggs" },
+  { value: "Milk", labelKey: "catalog.allergy.milk" },
+  { value: "Soy", labelKey: "catalog.allergy.soy" },
+  { value: "Wheat / Gluten", labelKey: "catalog.allergy.wheatGluten" },
+  { value: "Sesame", labelKey: "catalog.allergy.sesame" },
+  { value: "Latex", labelKey: "catalog.allergy.latex" },
+  { value: "Pollen", labelKey: "catalog.allergy.pollen" },
+  { value: "Dust mites", labelKey: "catalog.allergy.dustMites" },
+  { value: "Pet dander", labelKey: "catalog.allergy.petDander" },
+  { value: "Bee stings", labelKey: "catalog.allergy.beeStings" },
+  { value: "Mould", labelKey: "catalog.allergy.mould" },
 ];
 
 // Starter list for the medicine-allergy type-ahead — common drugs/drug classes
 // people report reactions to.
-export const COMMON_DRUG_ALLERGIES = [
-  "Penicillin", "Sulfa drugs", "Aspirin", "Ibuprofen", "Codeine", "Morphine",
-  "Iodine contrast dye", "Local anaesthetics", "Certain antibiotics",
+export const COMMON_DRUG_ALLERGIES: { value: string; labelKey: string }[] = [
+  { value: "Penicillin", labelKey: "catalog.drugAllergy.penicillin" },
+  { value: "Sulfa drugs", labelKey: "catalog.drugAllergy.sulfaDrugs" },
+  { value: "Aspirin", labelKey: "catalog.drugAllergy.aspirin" },
+  { value: "Ibuprofen", labelKey: "catalog.drugAllergy.ibuprofen" },
+  { value: "Codeine", labelKey: "catalog.drugAllergy.codeine" },
+  { value: "Morphine", labelKey: "catalog.drugAllergy.morphine" },
+  { value: "Iodine contrast dye", labelKey: "catalog.drugAllergy.iodineContrastDye" },
+  { value: "Local anaesthetics", labelKey: "catalog.drugAllergy.localAnaesthetics" },
+  { value: "Certain antibiotics", labelKey: "catalog.drugAllergy.certainAntibiotics" },
 ];
 
 // Catalogue of common medications for the type-ahead. Picking one auto-fills the
-// usual purpose and a typical dose, which the user can still edit.
-export const MEDICATION_CATALOG: { name: string; purpose: string; dose: string }[] = [
-  { name: "Metformin",             purpose: "Diabetes",        dose: "500mg" },
-  { name: "Gliclazide",            purpose: "Diabetes",        dose: "80mg" },
-  { name: "Insulin",               purpose: "Diabetes",        dose: "per sliding scale" },
-  { name: "Amlodipine",            purpose: "Blood Pressure",  dose: "5mg" },
-  { name: "Losartan",              purpose: "Blood Pressure",  dose: "50mg" },
-  { name: "Ramipril",              purpose: "Blood Pressure",  dose: "5mg" },
-  { name: "Atorvastatin",          purpose: "Cholesterol",     dose: "20mg" },
-  { name: "Simvastatin",           purpose: "Cholesterol",     dose: "20mg" },
-  { name: "Celecoxib",             purpose: "Joint Pain",      dose: "200mg" },
-  { name: "Paracetamol",           purpose: "Pain Relief",     dose: "500mg" },
-  { name: "Warfarin",              purpose: "Blood Thinning",  dose: "3mg" },
-  { name: "Aspirin",               purpose: "Blood Thinning",  dose: "100mg" },
-  { name: "Bisoprolol",            purpose: "Heart Rate",      dose: "2.5mg" },
-  { name: "Metoprolol",            purpose: "Heart Rate",      dose: "50mg" },
-  { name: "Latanoprost Eye Drops", purpose: "Glaucoma",        dose: "1 drop each eye" },
-  { name: "Omeprazole",            purpose: "Acid Reflux",     dose: "20mg" },
-  { name: "Salbutamol Inhaler",    purpose: "Asthma",          dose: "2 puffs" },
-  { name: "Levothyroxine",         purpose: "Thyroid",         dose: "50mcg" },
-  { name: "Furosemide",            purpose: "Fluid Retention", dose: "40mg" },
-  { name: "Calcium + Vitamin D",   purpose: "Osteoporosis",    dose: "1 tablet" },
+// usual purpose and a typical dose, which the user can still edit. `purpose` is
+// the canonical English value that gets stored; `purposeKey` (drawn from the
+// same catalog.condition.* vocabulary as COMMON_CONDITIONS) only localizes the
+// suggestion-list display. `dose` strings are left untranslated — locale-invariant
+// (e.g. "500mg") or too safety-sensitive to machine-translate.
+export const MEDICATION_CATALOG: { name: string; purpose: string; purposeKey: string; dose: string }[] = [
+  { name: "Metformin",             purpose: "Diabetes",        purposeKey: "catalog.condition.diabetes",        dose: "500mg" },
+  { name: "Gliclazide",            purpose: "Diabetes",        purposeKey: "catalog.condition.diabetes",        dose: "80mg" },
+  { name: "Insulin",               purpose: "Diabetes",        purposeKey: "catalog.condition.diabetes",        dose: "per sliding scale" },
+  { name: "Amlodipine",            purpose: "Blood Pressure",  purposeKey: "catalog.condition.bloodPressure",   dose: "5mg" },
+  { name: "Losartan",              purpose: "Blood Pressure",  purposeKey: "catalog.condition.bloodPressure",   dose: "50mg" },
+  { name: "Ramipril",              purpose: "Blood Pressure",  purposeKey: "catalog.condition.bloodPressure",   dose: "5mg" },
+  { name: "Atorvastatin",          purpose: "Cholesterol",     purposeKey: "catalog.condition.cholesterol",     dose: "20mg" },
+  { name: "Simvastatin",           purpose: "Cholesterol",     purposeKey: "catalog.condition.cholesterol",     dose: "20mg" },
+  { name: "Celecoxib",             purpose: "Joint Pain",      purposeKey: "catalog.condition.jointPain",       dose: "200mg" },
+  { name: "Paracetamol",           purpose: "Pain Relief",     purposeKey: "catalog.condition.painRelief",      dose: "500mg" },
+  { name: "Warfarin",              purpose: "Blood Thinning",  purposeKey: "catalog.condition.bloodThinning",   dose: "3mg" },
+  { name: "Aspirin",               purpose: "Blood Thinning",  purposeKey: "catalog.condition.bloodThinning",   dose: "100mg" },
+  { name: "Bisoprolol",            purpose: "Heart Rate",      purposeKey: "catalog.condition.heartRate",       dose: "2.5mg" },
+  { name: "Metoprolol",            purpose: "Heart Rate",      purposeKey: "catalog.condition.heartRate",       dose: "50mg" },
+  { name: "Latanoprost Eye Drops", purpose: "Glaucoma",        purposeKey: "catalog.condition.glaucoma",        dose: "1 drop each eye" },
+  { name: "Omeprazole",            purpose: "Acid Reflux",     purposeKey: "catalog.condition.acidReflux",      dose: "20mg" },
+  { name: "Salbutamol Inhaler",    purpose: "Asthma",          purposeKey: "catalog.condition.asthma",          dose: "2 puffs" },
+  { name: "Levothyroxine",         purpose: "Thyroid",         purposeKey: "catalog.condition.thyroid",         dose: "50mcg" },
+  { name: "Furosemide",            purpose: "Fluid Retention", purposeKey: "catalog.condition.fluidRetention",  dose: "40mg" },
+  { name: "Calcium + Vitamin D",   purpose: "Osteoporosis",    purposeKey: "catalog.condition.osteoporosis",    dose: "1 tablet" },
 ];

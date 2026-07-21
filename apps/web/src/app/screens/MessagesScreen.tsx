@@ -1,8 +1,11 @@
 import { useState } from "react";
 import { Users, Send } from "lucide-react";
 import { MESSAGES } from "../data/patients";
+import { useLanguage } from "../lib/languageContext";
+import { t } from "../lib/language";
 
 export function MessagesScreen() {
+  const { language } = useLanguage();
   const [messages, setMessages] = useState(MESSAGES);
   const [draft, setDraft] = useState("");
 
@@ -21,7 +24,7 @@ export function MessagesScreen() {
       <div className="px-4 py-3 bg-card border-b border-border">
         <div className="flex items-center gap-2 mb-0.5">
           <Users size={14} className="text-muted-foreground" />
-          <p className="text-xs text-muted-foreground font-medium">Mdm Tan Bee Leng — Care Team</p>
+          <p className="text-xs text-muted-foreground font-medium">Mdm Tan Bee Leng — {t(language, "messages.careTeam")}</p>
         </div>
         <div className="flex items-center gap-2">
           {["WM", "SF", "SN"].map((init, i) => (
@@ -60,7 +63,7 @@ export function MessagesScreen() {
             <textarea
               value={draft}
               onChange={e => setDraft(e.target.value)}
-              placeholder="Leave a note for the care team..."
+              placeholder={t(language, "messages.placeholder")}
               rows={draft.split("\n").length > 1 ? 3 : 1}
               className="w-full bg-transparent text-sm text-foreground placeholder:text-muted-foreground resize-none outline-none leading-relaxed"
               onKeyDown={e => { if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); send(); } }}
@@ -75,7 +78,7 @@ export function MessagesScreen() {
           </button>
         </div>
         <div className="flex gap-2 mt-2 flex-wrap">
-          {["Morning meds taken ✓", "Please call at noon", "Call doctor needed"].map(s => (
+          {[t(language, "messages.quickMorningMeds"), t(language, "messages.quickCallNoon"), t(language, "messages.quickCallDoctor")].map(s => (
             <button key={s} onClick={() => setDraft(s)} className="text-[11px] bg-secondary border border-primary/20 text-primary rounded-full px-2.5 py-1 font-medium">
               {s}
             </button>

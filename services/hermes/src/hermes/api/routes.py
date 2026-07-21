@@ -2,10 +2,13 @@
 
 from __future__ import annotations
 
+import asyncio
 import base64
+import json
 import logging
 
 from fastapi import APIRouter, Depends, Header, HTTPException, Request
+from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 
 from ..agent.extract import extract_profile_fields
@@ -52,8 +55,12 @@ class AgentTurnResponse(BaseModel):
     actions: list[dict] = []
 
 
-@router.post("/agent/turn", response_model=AgentTurnResponse, dependencies=[Depends(require_api_key)])
-async def agent_turn(body: AgentTurnRequest, request: Request) -> AgentTurnResponse:
+def _authenticate_and_check_rate_limit(
+    body: AgentTurnRequest, request: Request
+) -> tuple[str, object]:
+    """Resolve elder_id from the JWT (or dev fallback) and enforce the per-user
+    turn rate limit. Raises HTTPException on failure. Shared by /agent/turn and
+    /agent/turn/stream so the two auth paths can't silently diverge."""
     app = request.app.state
     settings = get_settings()
 
@@ -81,7 +88,15 @@ async def agent_turn(body: AgentTurnRequest, request: Request) -> AgentTurnRespo
                 detail="rate limit exceeded",
                 headers={"Retry-After": str(int(retry_after) + 1)},
             )
+    return elder_id, app
 
+
+def _prepare_message(
+    body: AgentTurnRequest, elder_id: str
+) -> tuple[str, bytes | None] | AgentTurnResponse:
+    """Decode any attachment and fold PDF text into the message text. Returns an
+    early AgentTurnResponse for the friendly-nudge / decode-failure cases (never
+    raises), so both call sites just check the return type."""
     try:
         image_bytes = base64.b64decode(body.image_base64) if body.image_base64 else None
 
@@ -108,10 +123,15 @@ async def agent_turn(body: AgentTurnRequest, request: Request) -> AgentTurnRespo
             reply="Sorry, I'm having trouble right now. Please try again in a moment.",
             tools_used=[],
         )
+    return message, image_bytes
 
-    # Reuse (or create) this elder's persistent session so pending_proposal and the
-    # message history carry across requests — otherwise scan-propose-confirm can
-    # never complete over HTTP and every turn starts with no memory.
+
+def _build_context(
+    app, elder_id: str, image_bytes: bytes | None
+) -> tuple[ToolContext, SessionState]:
+    """Reuse (or create) this elder's persistent session so pending_proposal and the
+    message history carry across requests — otherwise scan-propose-confirm can
+    never complete over HTTP and every turn starts with no memory."""
     state = app.http_sessions.get(elder_id)
     if state is None:
         state = SessionState(elder_id)
@@ -124,6 +144,21 @@ async def agent_turn(body: AgentTurnRequest, request: Request) -> AgentTurnRespo
     if image_bytes is not None:
         state.pending_image = image_bytes
     ctx = ToolContext(supabase=app.supabase, elder_id=elder_id, session=state)
+    return ctx, state
+
+
+@router.post(
+    "/agent/turn", response_model=AgentTurnResponse, dependencies=[Depends(require_api_key)]
+)
+async def agent_turn(body: AgentTurnRequest, request: Request) -> AgentTurnResponse:
+    elder_id, app = _authenticate_and_check_rate_limit(body, request)
+
+    prepared = _prepare_message(body, elder_id)
+    if isinstance(prepared, AgentTurnResponse):
+        return prepared
+    message, image_bytes = prepared
+
+    ctx, state = _build_context(app, elder_id, image_bytes)
     try:
         reply, tools_used, state.messages = await run_agent_turn(
             app.llm_client,
@@ -148,6 +183,78 @@ async def agent_turn(body: AgentTurnRequest, request: Request) -> AgentTurnRespo
     return AgentTurnResponse(
         reply=reply, tools_used=tools_used, actions=ctx.committed_actions
     )
+
+
+def _sse(event: dict) -> str:
+    return f"data: {json.dumps(event)}\n\n"
+
+
+@router.post("/agent/turn/stream", dependencies=[Depends(require_api_key)])
+async def agent_turn_stream(body: AgentTurnRequest, request: Request) -> StreamingResponse:
+    """Same contract as /agent/turn, but streams a `tool_start`/`tool_end` SSE
+    event per tool call as the agent loop runs, ending with a `final` event
+    carrying the same fields as AgentTurnResponse. Added alongside (not
+    replacing) /agent/turn — existing callers are unaffected."""
+    elder_id, app = _authenticate_and_check_rate_limit(body, request)
+
+    prepared = _prepare_message(body, elder_id)
+    if isinstance(prepared, AgentTurnResponse):
+        async def _early_events():
+            yield _sse({"type": "final", **prepared.model_dump()})
+
+        return StreamingResponse(_early_events(), media_type="text/event-stream")
+    message, image_bytes = prepared
+
+    ctx, state = _build_context(app, elder_id, image_bytes)
+    queue: asyncio.Queue = asyncio.Queue()
+
+    async def on_event(event: dict) -> None:
+        await queue.put(event)
+
+    async def run() -> None:
+        try:
+            reply, tools_used, state.messages = await run_agent_turn(
+                app.llm_client,
+                ctx,
+                message,
+                image_bytes=image_bytes,
+                history=state.messages,
+                reply_language=body.reply_language,
+                on_event=on_event,
+            )
+            await queue.put(
+                {
+                    "type": "final",
+                    "reply": reply,
+                    "tools_used": tools_used,
+                    "actions": ctx.committed_actions,
+                }
+            )
+        except Exception:
+            log.exception("agent turn (stream) failed for elder_id=%s", elder_id)
+            await queue.put(
+                {
+                    "type": "final",
+                    "reply": "Sorry, I'm having trouble right now. Please try again in a moment.",
+                    "tools_used": [],
+                    "actions": [],
+                }
+            )
+        finally:
+            await queue.put(None)  # sentinel: no more events
+
+    async def events():
+        task = asyncio.create_task(run())
+        try:
+            while True:
+                event = await queue.get()
+                if event is None:
+                    break
+                yield _sse(event)
+        finally:
+            await task
+
+    return StreamingResponse(events(), media_type="text/event-stream")
 
 
 class ProfileExtractRequest(BaseModel):

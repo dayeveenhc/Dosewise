@@ -4,6 +4,8 @@ import type { Patient } from "../types";
 import { fetchProfile, saveProfile } from "../lib/profile";
 import { fieldCls } from "./setup/GuidedSetupWizard";
 import { Toggle } from "./elderly/ElderlySettingsScreen";
+import { useLanguage } from "../lib/languageContext";
+import { t } from "../lib/language";
 
 const TIMEZONES = [
   "Singapore (UTC+8)", "Malaysia (UTC+8)", "Thailand (UTC+7)", "Indonesia — Jakarta (UTC+7)",
@@ -18,6 +20,7 @@ interface TravelPlan { startDate: string; endDate: string; timezone: string }
 export function TravelModeSheet({ patient, elderId, onClose, onSaved }: {
   patient: Patient; elderId?: string; onClose: () => void; onSaved?: (plan: TravelPlan | undefined) => void;
 }) {
+  const { language } = useLanguage();
   const [enabled, setEnabled] = useState(false);
   const [startDate, setStartDate] = useState("");
   const [endDate, setEndDate] = useState("");
@@ -80,9 +83,9 @@ export function TravelModeSheet({ patient, elderId, onClose, onSaved }: {
         <div className="flex items-center justify-between px-5 pb-3 pt-1 border-b border-border shrink-0">
           <div>
             <h2 className="font-['Fraunces'] text-lg font-semibold text-foreground flex items-center gap-2">
-              <Plane size={17} className="text-primary" />Travel Mode
+              <Plane size={17} className="text-primary" />{t(language, "common.travelMode")}
             </h2>
-            <p className="text-xs text-muted-foreground">Plan medicines and reminders for a trip</p>
+            <p className="text-xs text-muted-foreground">{t(language, "travel.subtitle")}</p>
           </div>
           <button onClick={onClose} className="w-8 h-8 rounded-full bg-muted flex items-center justify-center">
             <X size={14} className="text-foreground" />
@@ -92,8 +95,8 @@ export function TravelModeSheet({ patient, elderId, onClose, onSaved }: {
         <div className="overflow-y-auto scrollbar-none px-5 py-4 space-y-4">
           <div className="flex items-center justify-between bg-muted/40 rounded-xl px-3.5 py-3">
             <div>
-              <p className="text-sm font-semibold text-foreground">Travel Mode</p>
-              <p className="text-xs text-muted-foreground">{enabled ? "On for your upcoming trip" : "Off — turn on to plan a trip"}</p>
+              <p className="text-sm font-semibold text-foreground">{t(language, "common.travelMode")}</p>
+              <p className="text-xs text-muted-foreground">{enabled ? t(language, "travel.onLabel") : t(language, "travel.offLabel")}</p>
             </div>
             <Toggle on={enabled} onToggle={() => setEnabled(v => !v)} />
           </div>
@@ -102,45 +105,45 @@ export function TravelModeSheet({ patient, elderId, onClose, onSaved }: {
             <>
               <div className="space-y-3">
                 <div>
-                  <label className="block text-xs font-semibold text-foreground mb-1.5">From</label>
+                  <label className="block text-xs font-semibold text-foreground mb-1.5">{t(language, "travel.from")}</label>
                   <input type="date" value={startDate} onChange={e => setStartDate(e.target.value)} className={fieldCls} />
                 </div>
                 <div>
-                  <label className="block text-xs font-semibold text-foreground mb-1.5">To</label>
+                  <label className="block text-xs font-semibold text-foreground mb-1.5">{t(language, "travel.to")}</label>
                   <input type="date" value={endDate} min={startDate || undefined} onChange={e => setEndDate(e.target.value)} className={fieldCls} />
                 </div>
               </div>
 
               <div>
                 <label className="block text-xs font-semibold text-foreground mb-1.5 flex items-center gap-1.5">
-                  <Globe size={13} />Destination timezone
+                  <Globe size={13} />{t(language, "travel.destinationTimezone")}
                 </label>
                 <select value={timezone} onChange={e => setTimezone(e.target.value)} className={fieldCls}>
                   {TIMEZONES.map(tz => <option key={tz}>{tz}</option>)}
                 </select>
-                <p className="text-[11px] text-muted-foreground mt-1.5">We'll note the time difference so dose reminders stay on schedule.</p>
+                <p className="text-[11px] text-muted-foreground mt-1.5">{t(language, "travel.timezoneNote")}</p>
               </div>
 
               {days > 0 && (
                 <div>
                   <p className="text-sm font-semibold text-foreground mb-2 flex items-center gap-1.5">
-                    <Package size={14} className="text-primary" />Packing list — {days} day{days > 1 ? "s" : ""}
+                    <Package size={14} className="text-primary" />{t(language, "travel.packingList", { days, unit: days > 1 ? t(language, "travel.days") : t(language, "travel.day") })}
                   </p>
                   {packingList.length > 0 ? (
                     <div className="bg-muted/40 rounded-xl divide-y divide-border/60">
                       {packingList.map(m => (
                         <div key={m.name} className="flex items-center justify-between px-3.5 py-2.5">
                           <p className="text-sm font-medium text-foreground">{m.name} <span className="text-xs text-muted-foreground font-normal">{m.dose}</span></p>
-                          <span className="text-xs font-bold text-primary bg-primary/10 rounded-full px-2.5 py-1 whitespace-nowrap">{m.qty} doses</span>
+                          <span className="text-xs font-bold text-primary bg-primary/10 rounded-full px-2.5 py-1 whitespace-nowrap">{t(language, "travel.dosesCount", { qty: m.qty })}</span>
                         </div>
                       ))}
                     </div>
                   ) : (
-                    <p className="text-sm text-muted-foreground">No active medicines to pack.</p>
+                    <p className="text-sm text-muted-foreground">{t(language, "travel.noActiveMeds")}</p>
                   )}
                   <div className="bg-secondary/60 rounded-xl px-3.5 py-3 mt-2">
-                    <p className="text-xs font-semibold text-foreground mb-1">Also bring:</p>
-                    <p className="text-xs text-muted-foreground leading-relaxed">A copy of your prescriptions · Your doctor's contact number · A few extra days' supply in case of delays</p>
+                    <p className="text-xs font-semibold text-foreground mb-1">{t(language, "travel.alsoBring")}</p>
+                    <p className="text-xs text-muted-foreground leading-relaxed">{t(language, "travel.alsoBringItems")}</p>
                   </div>
                 </div>
               )}
@@ -155,7 +158,7 @@ export function TravelModeSheet({ patient, elderId, onClose, onSaved }: {
             className="w-full h-12 rounded-2xl bg-primary text-primary-foreground text-sm font-semibold flex items-center justify-center gap-2 disabled:opacity-40 active:scale-[0.98] transition-transform"
           >
             {saving ? <Loader2 size={16} className="animate-spin" /> : saved ? <Check size={16} /> : null}
-            {saving ? "Saving…" : saved ? "Saved!" : enabled ? "Save travel plan" : hadSavedPlan ? "Turn off Travel Mode" : "Close"}
+            {saving ? t(language, "settings.saving") : saved ? t(language, "settings.saved") : enabled ? t(language, "travel.saveTravelPlan") : hadSavedPlan ? t(language, "travel.turnOff") : t(language, "link.close")}
           </button>
         </div>
       </div>

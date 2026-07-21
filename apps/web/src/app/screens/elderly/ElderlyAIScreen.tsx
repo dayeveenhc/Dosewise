@@ -3,9 +3,10 @@ import type { ChangeEvent } from "react";
 import { Volume2, Mic, Send, AlertTriangle, Brain, Circle, Check, Trash2, Plus, Camera, FileText, Pill, Globe, Sparkles, ChevronUp, X, Plane } from "lucide-react";
 import type { Patient } from "../../types";
 import type { EMsg, ElderlyTab, DoctorQ } from "./types";
-import { agentTurn, extractProfile, fileToBase64 } from "../../lib/hermes";
+import { agentTurnStream, extractProfile, fileToBase64 } from "../../lib/hermes";
+import type { AgentTurnEvent } from "../../lib/hermes";
 import { fetchProfile, saveProfile, toProfileDetails, mergeProfileDetails } from "../../lib/profile";
-import { firstRoutableAction } from "../../lib/agentActions";
+import { firstRoutableAction, ACTION_TARGETS } from "../../lib/agentActions";
 import { useLanguage } from "../../lib/languageContext";
 import { useAccessibility } from "../../accessibility.tsx";
 import { t, LANGUAGE_OPTIONS, speechLangFor } from "../../lib/language";
@@ -199,14 +200,48 @@ export function ElderlyAIScreen({ patient, elderId, onLogDose, onNavigate, onMed
     rec.start();
   };
 
+  // Sentinel id for the single transient "working on it" bubble a live turn may
+  // show — always at most one at a time, so a fixed id lets us update/replace it
+  // in place rather than accumulating one bubble per tool call.
+  const LIVE_STEP_ID = -1;
+
   const send = async (text: string, imageBase64?: string, pdfBase64?: string, displayImage?: string) => {
-    const t = text.trim();
-    if (!t || sending) return;
-    setMessages(prev => [...prev, { id: Date.now(), role: "user", text: t, time: nowLabel(), image: displayImage }]);
+    const trimmed = text.trim();
+    if (!trimmed || sending) return;
+    setMessages(prev => [...prev, { id: Date.now(), role: "user", text: trimmed, time: nowLabel(), image: displayImage }]);
     setQuickOpen(false);
     scrollToBottom();
     setSending(true);
-    const { reply, actions } = await agentTurn(t, imageBase64, pdfBase64);
+
+    // Live, as-it-happens progress: the moment a routable write's tool call
+    // starts we show a "working on it" bubble, and the moment it lands (not
+    // once the whole reply text is back) we navigate — "first wins" if a turn
+    // commits more than one routable action, matching firstRoutableAction below.
+    let navigated = false;
+    const onEvent = (event: AgentTurnEvent) => {
+      const target = event.tool ? ACTION_TARGETS[event.tool] : undefined;
+      if (!target) return;
+      if (event.type === "tool_start") {
+        const label = t(language, target.labelKey);
+        setMessages(prev => [
+          ...prev.filter(m => m.id !== LIVE_STEP_ID),
+          { id: LIVE_STEP_ID, role: "agent", text: t(language, "ai.workingOnYourLabel", { label }), time: nowLabel(), isConfirmation: true },
+        ]);
+        scrollToBottom();
+      } else if (event.type === "tool_end" && !event.is_error && !navigated) {
+        navigated = true;
+        const done = t(language, target.doneKey);
+        const label = t(language, target.labelKey);
+        setMessages(prev => [
+          ...prev.filter(m => m.id !== LIVE_STEP_ID),
+          { id: LIVE_STEP_ID, role: "agent", text: t(language, "ai.openingYourLabel", { done, detail: "", label }), time: nowLabel(), isConfirmation: true },
+        ]);
+        scrollToBottom();
+        setTimeout(() => onNavigate(target.elderly), 600);
+      }
+    };
+
+    const { reply, actions } = await agentTurnStream(trimmed, onEvent, imageBase64, pdfBase64);
     setMessages(prev => [...prev, { id: Date.now() + 1, role: "agent", text: reply, time: nowLabel() }]);
     setSending(false);
     scrollToBottom();
@@ -225,15 +260,19 @@ export function ElderlyAIScreen({ patient, elderId, onLogDose, onNavigate, onMed
     // as visible proof the dose really landed on the timeline.
     const added = actions.find(a => a.tool === "add_prescription");
     if (added?.name) onMedAdded?.(added.name);
-    // When the write has a destination screen, confirm it and guide the user there.
-    const routed = firstRoutableAction(actions);
-    if (routed) {
-      const detail = routed.action.tool === "add_prescription" && routed.action.summary ? `: ${routed.action.summary}` : "";
-      const done = t(language, routed.target.doneKey);
-      const label = t(language, routed.target.labelKey);
-      setMessages(prev => [...prev, { id: Date.now() + 2, role: "agent", text: t(language, "ai.openingYourLabel", { done, detail, label }), time: nowLabel(), isConfirmation: true }]);
-      scrollToBottom();
-      setTimeout(() => onNavigate(routed.target.elderly), 1200);
+    // The live tool_end handler above already showed the confirmation bubble and
+    // navigated for the common case. This only fires as a fallback — e.g. a
+    // routable action whose event never arrived (older/non-streaming path).
+    if (!navigated) {
+      const routed = firstRoutableAction(actions);
+      if (routed) {
+        const detail = routed.action.tool === "add_prescription" && routed.action.summary ? `: ${routed.action.summary}` : "";
+        const done = t(language, routed.target.doneKey);
+        const label = t(language, routed.target.labelKey);
+        setMessages(prev => [...prev, { id: Date.now() + 2, role: "agent", text: t(language, "ai.openingYourLabel", { done, detail, label }), time: nowLabel(), isConfirmation: true }]);
+        scrollToBottom();
+        setTimeout(() => onNavigate(routed.target.elderly), 1200);
+      }
     }
   };
 
@@ -547,8 +586,8 @@ export function ElderlyAIScreen({ patient, elderId, onLogDose, onNavigate, onMed
           </div>
 
           {/* hidden inputs used by "Update profile" and "Add prescription" */}
-          <input ref={reportRef} type="file" accept="image/*,application/pdf" className="hidden" onChange={onReportFile} />
-          <input ref={rxPhotoRef} type="file" accept="image/*" capture="environment" className="hidden" onChange={onRxPhotoFile} />
+          <input ref={reportRef} type="file" accept="image/*,application/pdf" className="sr-only" onChange={onReportFile} />
+          <input ref={rxPhotoRef} type="file" accept="image/*" capture="environment" className="sr-only" onChange={onRxPhotoFile} />
 
           {/* Language & voice sheet */}
           {showLangSheet && (

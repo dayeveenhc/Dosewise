@@ -408,7 +408,11 @@ async def set_medication_reminder(
         ctx.session.pending_reminder = None
         ctx.session.awaiting_confirmation = False
     ctx.committed_actions.append(
-        {"tool": "set_medication_reminder", "summary": f"{name} at {', '.join(valid)}", "name": name}
+        {
+            "tool": "set_medication_reminder",
+            "summary": f"{name} at {', '.join(valid)}",
+            "name": name,
+        }
     )
     return (
         f"Saved. I'll remind you to take {name} at "

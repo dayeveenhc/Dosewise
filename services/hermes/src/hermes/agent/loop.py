@@ -18,6 +18,7 @@ import asyncio
 import base64
 import json
 import logging
+from collections.abc import Awaitable, Callable
 
 from ..config import get_settings
 from ..tools import ToolContext, get_handler, tool_schemas
@@ -38,6 +39,11 @@ _RETRY_REPLY = (
     "Could you say it once more, a little more simply?"
 )
 _CACHE = {"type": "ephemeral"}
+
+# Optional per-tool-call progress callback, threaded through the loop below.
+# Every call site guards with `if on_event` so passing None (every caller today
+# except the web SSE endpoint) costs nothing extra on the hot path.
+OnEvent = Callable[[dict], Awaitable[None]]
 
 
 def _cached_system(system: str) -> list[dict]:
@@ -67,6 +73,7 @@ async def run_agent_turn(
     image_media_type: str = "image/jpeg",
     history: list | None = None,
     reply_language: str | None = None,
+    on_event: OnEvent | None = None,
 ) -> tuple[str, list[str], list]:
     """Run one turn. Returns (reply_text, tools_used, updated_messages)."""
     dialect = await _elder_dialect(ctx)
@@ -92,15 +99,18 @@ async def run_agent_turn(
     eff = llm.effective_provider()
     if eff == "openai":
         reply, tools_used, messages = await _run_openai(
-            client, ctx, system, user_text, image_bytes, image_media_type, history
+            client, ctx, system, user_text, image_bytes, image_media_type, history,
+            on_event=on_event,
         )
     elif eff == "gemini":
         reply, tools_used, messages = await _run_gemini(
-            client, ctx, system, user_text, image_bytes, image_media_type, history
+            client, ctx, system, user_text, image_bytes, image_media_type, history,
+            on_event=on_event,
         )
     else:
         reply, tools_used, messages = await _run_anthropic(
-            client, ctx, system, user_text, image_bytes, image_media_type, history
+            client, ctx, system, user_text, image_bytes, image_media_type, history,
+            on_event=on_event,
         )
 
     await _persist(ctx, user_text, reply, tools_used)
@@ -145,16 +155,24 @@ async def persist_exchange(
 # ---------------------------------------------------------------------------
 # Shared tool dispatch
 # ---------------------------------------------------------------------------
-async def _dispatch_tool(ctx: ToolContext, name: str, tool_input: dict) -> tuple[str, bool]:
+async def _dispatch_tool(
+    ctx: ToolContext, name: str, tool_input: dict, *, on_event: OnEvent | None = None
+) -> tuple[str, bool]:
     """Run a tool handler; returns (output_text, is_error)."""
+    if on_event:
+        await on_event({"type": "tool_start", "tool": name})
     handler = get_handler(name)
     if handler is None:
-        return f"Unknown tool '{name}'.", True
-    try:
-        return await handler(ctx, **(tool_input or {})), False
-    except Exception as exc:  # surface tool failures to the model, don't crash
-        log.exception("tool %s failed", name)
-        return f"Tool error: {exc}", True
+        output, is_error = f"Unknown tool '{name}'.", True
+    else:
+        try:
+            output, is_error = await handler(ctx, **(tool_input or {})), False
+        except Exception as exc:  # surface tool failures to the model, don't crash
+            log.exception("tool %s failed", name)
+            output, is_error = f"Tool error: {exc}", True
+    if on_event:
+        await on_event({"type": "tool_end", "tool": name, "is_error": is_error})
+    return output, is_error
 
 
 # ---------------------------------------------------------------------------
@@ -186,7 +204,8 @@ def _parse_tool_args(raw: str | None) -> dict:
 
 
 async def _run_openai(
-    client, ctx, system, user_text, image_bytes, image_media_type, history
+    client, ctx, system, user_text, image_bytes, image_media_type, history,
+    *, on_event: OnEvent | None = None,
 ) -> tuple[str, list[str], list]:
     settings = get_settings()
     messages: list[dict] = list(history or [])
@@ -236,7 +255,10 @@ async def _run_openai(
             tools_used.append(tc.function.name)
         outs = await asyncio.gather(
             *(
-                _dispatch_tool(ctx, tc.function.name, _parse_tool_args(tc.function.arguments))
+                _dispatch_tool(
+                    ctx, tc.function.name, _parse_tool_args(tc.function.arguments),
+                    on_event=on_event,
+                )
                 for tc in tool_calls
             )
         )
@@ -261,7 +283,8 @@ async def _run_openai(
 # Anthropic (Claude) — messages API with tool_use / tool_result blocks
 # ---------------------------------------------------------------------------
 async def _run_anthropic(
-    anthropic, ctx, system, user_text, image_bytes, image_media_type, history
+    anthropic, ctx, system, user_text, image_bytes, image_media_type, history,
+    *, on_event: OnEvent | None = None,
 ) -> tuple[str, list[str], list]:
     settings = get_settings()
     messages: list[dict] = list(history or [])
@@ -308,7 +331,7 @@ async def _run_anthropic(
         for block in tool_blocks:
             tools_used.append(block.name)
         outs = await asyncio.gather(
-            *(_dispatch_tool(ctx, b.name, b.input) for b in tool_blocks)
+            *(_dispatch_tool(ctx, b.name, b.input, on_event=on_event) for b in tool_blocks)
         )
 
         results: list[dict] = []
@@ -371,7 +394,8 @@ def _anthropic_text(response) -> str:
 # Gemini (Google) — generate_content with functionCall / functionResponse parts
 # ---------------------------------------------------------------------------
 async def _run_gemini(
-    client, ctx, system, user_text, image_bytes, image_media_type, history
+    client, ctx, system, user_text, image_bytes, image_media_type, history,
+    *, on_event: OnEvent | None = None,
 ) -> tuple[str, list[str], list]:
     from google.genai import types
 
@@ -413,7 +437,7 @@ async def _run_gemini(
         for fc in calls:
             tools_used.append(fc.name)
         outs = await asyncio.gather(
-            *(_dispatch_tool(ctx, fc.name, dict(fc.args or {})) for fc in calls)
+            *(_dispatch_tool(ctx, fc.name, dict(fc.args or {}), on_event=on_event) for fc in calls)
         )
         response_parts = [
             types.Part.from_function_response(name=fc.name, response={"result": out})

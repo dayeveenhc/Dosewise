@@ -87,6 +87,93 @@ export async function agentTurn(
   }
 }
 
+// A single SSE event from /agent/turn/stream. "tool_start"/"tool_end" arrive as
+// the agent loop dispatches each tool call; the terminal "final" event carries
+// the same fields as AgentTurnResponse (reply/tools_used/actions).
+export interface AgentTurnEvent {
+  type: "tool_start" | "tool_end" | "final";
+  tool?: string;
+  is_error?: boolean;
+  reply?: string;
+  tools_used?: string[];
+  actions?: AgentAction[];
+}
+
+// Streaming variant of agentTurn — same contract and fallback behaviour, but
+// calls onEvent for each "tool_start"/"tool_end" as the agent loop runs, then
+// resolves with the same AgentTurnResponse shape agentTurn returns. Uses
+// fetch()'s streaming body reader rather than EventSource, since EventSource
+// can't send a POST body or the JWT/API-key headers this endpoint needs.
+export async function agentTurnStream(
+  message: string,
+  onEvent: (event: AgentTurnEvent) => void,
+  imageBase64?: string,
+  pdfBase64?: string
+): Promise<AgentTurnResponse> {
+  try {
+    const { data: { session } } = await supabase.auth.getSession();
+    if (!session) {
+      console.warn("[dosewise] agentTurnStream: no Supabase session — user is signed out");
+      return fallback(FALLBACK_SIGNED_OUT);
+    }
+
+    const replyLanguage = replyLanguageFor(readStoredLanguage());
+
+    const resp = await fetch(`${HERMES_URL}/agent/turn/stream`, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        ...(HERMES_API_KEY ? { "X-Hermes-Api-Key": HERMES_API_KEY } : {}),
+      },
+      body: JSON.stringify({
+        message,
+        jwt: session.access_token,
+        image_base64: imageBase64,
+        pdf_base64: pdfBase64,
+        reply_language: replyLanguage,
+      }),
+    });
+    if (!resp.ok || !resp.body) {
+      const detail = await resp.text().catch(() => "");
+      console.warn(`[dosewise] agentTurnStream: HTTP ${resp.status} from /agent/turn/stream`, detail);
+      if (resp.status === 401) return fallback(FALLBACK_SIGNED_OUT);
+      if (resp.status === 429) return fallback(FALLBACK_RATE_LIMIT);
+      return fallback(FALLBACK_GENERIC);
+    }
+
+    const reader = resp.body.getReader();
+    const decoder = new TextDecoder();
+    let buffer = "";
+    let result: AgentTurnResponse | null = null;
+    for (;;) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      buffer += decoder.decode(value, { stream: true });
+      let sep: number;
+      // SSE frames are separated by a blank line ("\n\n").
+      while ((sep = buffer.indexOf("\n\n")) !== -1) {
+        const frame = buffer.slice(0, sep);
+        buffer = buffer.slice(sep + 2);
+        if (!frame.startsWith("data: ")) continue;
+        const event: AgentTurnEvent = JSON.parse(frame.slice("data: ".length));
+        if (event.type === "final") {
+          result = {
+            reply: event.reply ?? "",
+            tools_used: event.tools_used ?? [],
+            actions: event.actions ?? [],
+          };
+        } else {
+          onEvent(event);
+        }
+      }
+    }
+    return result ?? fallback(FALLBACK_GENERIC);
+  } catch (err) {
+    console.warn("[dosewise] agentTurnStream: request failed before a reply", err);
+    return fallback(FALLBACK_UNREACHABLE);
+  }
+}
+
 // Structured fields read from an uploaded record by Hermes's /profile/extract
 // "pull" endpoint (snake_case mirrors services/hermes/src/hermes/agent/extract.py).
 export interface ExtractedMed {

@@ -49,16 +49,39 @@ _PROFILE_SCHEMA = {
         "gender": {"type": "string", "enum": ["Female", "Male"], "description": "If stated."},
         "weight_kg": {"type": "number", "description": "Body weight in kilograms."},
         "height_cm": {"type": "number", "description": "Height in centimetres."},
-        "conditions": {"type": "array", "items": {"type": "string"}, "description": "Diagnosed medical conditions."},
-        "allergies": {"type": "array", "items": {"type": "string"}, "description": "General (non-drug) allergies."},
-        "drug_allergies": {"type": "array", "items": {"type": "string"}, "description": "Medication/drug allergies."},
-        "current_meds": {"type": "array", "items": _MED_ITEM, "description": "Medications the patient currently takes."},
-        "past_meds": {"type": "array", "items": _MED_ITEM, "description": "Medications taken in the past / discontinued."},
+        "conditions": {
+            "type": "array",
+            "items": {"type": "string"},
+            "description": "Diagnosed medical conditions.",
+        },
+        "allergies": {
+            "type": "array",
+            "items": {"type": "string"},
+            "description": "General (non-drug) allergies.",
+        },
+        "drug_allergies": {
+            "type": "array",
+            "items": {"type": "string"},
+            "description": "Medication/drug allergies.",
+        },
+        "current_meds": {
+            "type": "array",
+            "items": _MED_ITEM,
+            "description": "Medications the patient currently takes.",
+        },
+        "past_meds": {
+            "type": "array",
+            "items": _MED_ITEM,
+            "description": "Medications taken in the past / discontinued.",
+        },
     },
 }
 
 _TOOL_NAME = "record_profile"
-_TOOL_DESCRIPTION = "Record the structured medical-profile fields read from the patient's uploaded record."
+_TOOL_DESCRIPTION = (
+    "Record the structured medical-profile fields read from the patient's "
+    "uploaded record."
+)
 
 _SYSTEM = (
     "You extract structured medical-profile fields from a patient's uploaded "

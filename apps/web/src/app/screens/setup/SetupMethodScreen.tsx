@@ -101,7 +101,7 @@ export function SetupMethodScreen({
             <p className="text-sm text-muted-foreground leading-relaxed">{t(language, "setup.uploadRecordsDesc")}</p>
           </div>
         </button>
-        <input ref={fileRef} type="file" accept="image/*,application/pdf" className="hidden" onChange={onFile} />
+        <input ref={fileRef} type="file" accept="image/*,application/pdf" className="sr-only" onChange={onFile} />
         {note && <p className="text-xs text-muted-foreground px-1 -mt-2">{note}</p>}
 
         {/* Guided questions */}

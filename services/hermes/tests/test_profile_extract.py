@@ -36,7 +36,9 @@ def _client(app):
 async def test_pdf_text_extracted_into_fields(monkeypatch):
     seen: dict = {}
 
-    async def fake_extract(client, *, image_bytes=None, image_media_type="image/jpeg", pdf_text=None):
+    async def fake_extract(
+        client, *, image_bytes=None, image_media_type="image/jpeg", pdf_text=None
+    ):
         seen["pdf_text"] = pdf_text
         seen["image_bytes"] = image_bytes
         return {"full_name": "Tan Ah Kow", "conditions": ["Type 2 Diabetes"], "weight_kg": 68}
@@ -64,7 +66,9 @@ async def test_pdf_text_extracted_into_fields(monkeypatch):
 async def test_image_upload_sniffs_media_type(monkeypatch):
     seen: dict = {}
 
-    async def fake_extract(client, *, image_bytes=None, image_media_type="image/jpeg", pdf_text=None):
+    async def fake_extract(
+        client, *, image_bytes=None, image_media_type="image/jpeg", pdf_text=None
+    ):
         seen["image_media_type"] = image_media_type
         seen["image_len"] = len(image_bytes or b"")
         return {"current_meds": [{"name": "Metformin", "dose": "500mg", "time": "08:00"}]}

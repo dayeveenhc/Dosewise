@@ -12,6 +12,12 @@ import type { RoutineTimes } from "../../components/TimesPicker";
 import type { PrefillMed, Role, WizardPrefill } from "../../lib/profile";
 import { useLanguage } from "../../lib/languageContext";
 import { t } from "../../lib/language";
+import type { AppLanguage } from "../../lib/language";
+
+// Maps a {value, labelKey} catalog entry list into the {value, label} pairs
+// TagList/type-aheads render — display localizes, the stored `value` doesn't.
+export const withCatalogLabels = (items: { value: string; labelKey: string }[], language: AppLanguage) =>
+  items.map(i => ({ value: i.value, label: t(language, i.labelKey) }));
 
 // A small shared gender picker — icon + label per option, used both here and
 // in ElderlySettingsScreen's "edit what you answered" section.
@@ -100,7 +106,7 @@ function ContinueButton({ onClick, disabled, loading, children = "Continue" }: {
 }
 
 export function TagList({ label, placeholder, items, suggestions, extractField, onAdd, onRemove }: {
-  label: string; placeholder: string; items: string[]; suggestions?: string[];
+  label: string; placeholder: string; items: string[]; suggestions?: { value: string; label: string }[];
   extractField?: "conditions" | "allergies" | "drug_allergies";
   onAdd: (v: string) => void; onRemove: (i: number) => void;
 }) {
@@ -135,7 +141,7 @@ export function TagList({ label, placeholder, items, suggestions, extractField, 
   const { language } = useLanguage();
   const q = value.trim().toLowerCase();
   const matches = q && suggestions
-    ? suggestions.filter(s => s.toLowerCase().includes(q) && !items.includes(s)).slice(0, 6)
+    ? suggestions.filter(s => s.label.toLowerCase().includes(q) && !items.includes(s.value)).slice(0, 6)
     : [];
   return (
     <div className="mb-5">
@@ -171,13 +177,13 @@ export function TagList({ label, placeholder, items, suggestions, extractField, 
               {scanning ? <Sparkles size={16} className="text-primary animate-pulse" /> : <Camera size={18} className="text-foreground" />}
             </button>
           )}
-          <input ref={scanRef} type="file" accept="image/*,application/pdf" className="hidden" onChange={onScanFile} />
+          <input ref={scanRef} type="file" accept="image/*,application/pdf" className="sr-only" onChange={onScanFile} />
         </div>
         {open && matches.length > 0 && (
           <div className="absolute z-20 left-0 right-0 mt-1 bg-card border border-border rounded-xl shadow-lg overflow-hidden max-h-48 overflow-y-auto">
             {matches.map(m => (
-              <button key={m} onMouseDown={e => { e.preventDefault(); submit(m); }} className="w-full text-left px-3.5 py-2.5 hover:bg-muted active:bg-muted border-b border-border/50 last:border-0 transition-colors text-sm text-foreground">
-                {m}
+              <button key={m.value} onMouseDown={e => { e.preventDefault(); submit(m.value); }} className="w-full text-left px-3.5 py-2.5 hover:bg-muted active:bg-muted border-b border-border/50 last:border-0 transition-colors text-sm text-foreground">
+                {m.label}
               </button>
             ))}
           </div>
@@ -252,7 +258,7 @@ function MedList({ meds, extractKind, routine, onAdd, onRemove }: { meds: DraftM
           bias straight into the camera when it's present, which blocks picking
           an existing PDF from Files. Omitting it still offers "Take Photo" as
           one of the native picker's options, so scanning still works. */}
-      <input ref={fileRef} type="file" accept="image/*,application/pdf" className="hidden" onChange={onFile} />
+      <input ref={fileRef} type="file" accept="image/*,application/pdf" className="sr-only" onChange={onFile} />
       {meds.length > 0 && (
         <div className="space-y-2 mb-3">
           {meds.map((m, i) => (
@@ -402,7 +408,7 @@ export function GuidedSetupWizard({ mode, hasSession, elderId: initialElderId, p
   const steps = allSteps;
   const step = steps[stepIndex];
   const total = steps.length;
-  const showBackButton = !elderId && step !== "done";
+  const showBackButton = step !== "done";
 
   const goNext = () => setStepIndex(i => Math.min(i + 1, steps.length - 1));
   const goBack = () => setStepIndex(i => Math.max(i - 1, 0));
@@ -523,7 +529,7 @@ export function GuidedSetupWizard({ mode, hasSession, elderId: initialElderId, p
           <StepHeader title={t(language, "wizard.conditionsTitle")} subtitle={t(language, "wizard.conditionsSubtitle")} />
           {prefilled && <ReviewBadge />}
           <div className="flex-1">
-            <TagList label={t(language, "common.medicalConditions")} placeholder={t(language, "wizard.conditionsPlaceholder")} items={conditions} suggestions={COMMON_CONDITIONS} extractField="conditions" onAdd={v => setConditions(p => [...p, v])} onRemove={i => setConditions(p => p.filter((_, j) => j !== i))} />
+            <TagList label={t(language, "common.medicalConditions")} placeholder={t(language, "wizard.conditionsPlaceholder")} items={conditions} suggestions={withCatalogLabels(COMMON_CONDITIONS, language)} extractField="conditions" onAdd={v => setConditions(p => [...p, v])} onRemove={i => setConditions(p => p.filter((_, j) => j !== i))} />
           </div>
           <ContinueButton onClick={goNext}>{conditions.length ? t(language, "wizard.continue") : t(language, "wizard.skipForNow")}</ContinueButton>
         </>
@@ -534,8 +540,8 @@ export function GuidedSetupWizard({ mode, hasSession, elderId: initialElderId, p
           <StepHeader title={t(language, "wizard.allergiesTitle")} subtitle={t(language, "wizard.allergiesSubtitle")} />
           {prefilled && <ReviewBadge />}
           <div className="flex-1">
-            <TagList label={t(language, "settings.generalAllergies")} placeholder={t(language, "wizard.allergiesPlaceholder")} items={allergies} suggestions={COMMON_ALLERGIES} extractField="allergies" onAdd={v => setAllergies(p => [...p, v])} onRemove={i => setAllergies(p => p.filter((_, j) => j !== i))} />
-            <TagList label={t(language, "settings.medicationAllergies")} placeholder={t(language, "wizard.drugAllergiesPlaceholder")} items={drugAllergies} suggestions={COMMON_DRUG_ALLERGIES} extractField="drug_allergies" onAdd={v => setDrugAllergies(p => [...p, v])} onRemove={i => setDrugAllergies(p => p.filter((_, j) => j !== i))} />
+            <TagList label={t(language, "settings.generalAllergies")} placeholder={t(language, "wizard.allergiesPlaceholder")} items={allergies} suggestions={withCatalogLabels(COMMON_ALLERGIES, language)} extractField="allergies" onAdd={v => setAllergies(p => [...p, v])} onRemove={i => setAllergies(p => p.filter((_, j) => j !== i))} />
+            <TagList label={t(language, "settings.medicationAllergies")} placeholder={t(language, "wizard.drugAllergiesPlaceholder")} items={drugAllergies} suggestions={withCatalogLabels(COMMON_DRUG_ALLERGIES, language)} extractField="drug_allergies" onAdd={v => setDrugAllergies(p => [...p, v])} onRemove={i => setDrugAllergies(p => p.filter((_, j) => j !== i))} />
           </div>
           <ContinueButton onClick={goNext}>{t(language, "wizard.continue")}</ContinueButton>
         </>

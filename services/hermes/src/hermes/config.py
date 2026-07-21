@@ -20,7 +20,11 @@ _REPO_ROOT = Path(__file__).resolve().parents[4]
 # Allows a second process (e.g. a demo/ngrok instance run alongside prod) to load
 # an entirely separate .env file instead of the shared repo-root one. Unset in
 # normal/prod operation, so this is a no-op there.
-_ENV_FILE = Path(os.environ["HERMES_ENV_FILE"]) if os.environ.get("HERMES_ENV_FILE") else _REPO_ROOT / ".env"
+_ENV_FILE = (
+    Path(os.environ["HERMES_ENV_FILE"])
+    if os.environ.get("HERMES_ENV_FILE")
+    else _REPO_ROOT / ".env"
+)
 
 
 class Settings(BaseSettings):

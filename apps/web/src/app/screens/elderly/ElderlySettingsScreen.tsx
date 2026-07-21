@@ -7,7 +7,7 @@ import type { FontSize } from "../../accessibility.tsx";
 import type { Patient } from "../../types";
 import { MED_SHAPES, COMMON_CONDITIONS, COMMON_ALLERGIES, COMMON_DRUG_ALLERGIES } from "../../data/medications";
 import { fetchProfile, saveProfile, calculateAge } from "../../lib/profile";
-import { TagList, fieldCls, GenderPicker } from "../setup/GuidedSetupWizard";
+import { TagList, fieldCls, GenderPicker, withCatalogLabels } from "../setup/GuidedSetupWizard";
 import { MedAvatar } from "../../components/shared";
 import { TimeField } from "../../components/TimesPicker";
 import { CallMockup } from "../../components/CallMockup";
@@ -154,9 +154,9 @@ export function ElderlySettingsScreen({ patient, elderId, onUpdatePatient, onBac
             </div>
           </div>
 
-          <TagList label={t(language, "settings.medicalConditions")} placeholder="e.g. Diabetes, Blood Pressure" items={conditionsDraft} suggestions={COMMON_CONDITIONS} onAdd={v => setConditionsDraft(p => [...p, v])} onRemove={i => setConditionsDraft(p => p.filter((_, j) => j !== i))} />
-          <TagList label={t(language, "settings.generalAllergies")} placeholder="e.g. Peanuts, Shellfish" items={allergiesDraft} suggestions={COMMON_ALLERGIES} onAdd={v => setAllergiesDraft(p => [...p, v])} onRemove={i => setAllergiesDraft(p => p.filter((_, j) => j !== i))} />
-          <TagList label={t(language, "settings.medicationAllergies")} placeholder="e.g. Penicillin" items={drugAllergiesDraft} suggestions={COMMON_DRUG_ALLERGIES} onAdd={v => setDrugAllergiesDraft(p => [...p, v])} onRemove={i => setDrugAllergiesDraft(p => p.filter((_, j) => j !== i))} />
+          <TagList label={t(language, "settings.medicalConditions")} placeholder={t(language, "wizard.conditionsPlaceholder")} items={conditionsDraft} suggestions={withCatalogLabels(COMMON_CONDITIONS, language)} onAdd={v => setConditionsDraft(p => [...p, v])} onRemove={i => setConditionsDraft(p => p.filter((_, j) => j !== i))} />
+          <TagList label={t(language, "settings.generalAllergies")} placeholder={t(language, "wizard.allergiesPlaceholder")} items={allergiesDraft} suggestions={withCatalogLabels(COMMON_ALLERGIES, language)} onAdd={v => setAllergiesDraft(p => [...p, v])} onRemove={i => setAllergiesDraft(p => p.filter((_, j) => j !== i))} />
+          <TagList label={t(language, "settings.medicationAllergies")} placeholder={t(language, "wizard.drugAllergiesPlaceholder")} items={drugAllergiesDraft} suggestions={withCatalogLabels(COMMON_DRUG_ALLERGIES, language)} onAdd={v => setDrugAllergiesDraft(p => [...p, v])} onRemove={i => setDrugAllergiesDraft(p => p.filter((_, j) => j !== i))} />
 
           <div>
             <p className="text-sm font-semibold text-foreground mb-2">{t(language, "settings.mealsSleep")}</p>

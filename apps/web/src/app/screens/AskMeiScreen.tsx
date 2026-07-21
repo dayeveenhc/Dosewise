@@ -2,8 +2,9 @@ import { useEffect, useRef, useState } from "react";
 import type { ChangeEvent } from "react";
 import { Send, TrendingUp, Plane, Check, Sparkles, ChevronDown, Camera, FileText, Pill, Globe, Mic, Volume2, X } from "lucide-react";
 import type { Patient, Screen } from "../types";
-import { agentTurn, fileToBase64 } from "../lib/hermes";
-import { firstRoutableAction } from "../lib/agentActions";
+import { agentTurnStream, fileToBase64 } from "../lib/hermes";
+import type { AgentTurnEvent } from "../lib/hermes";
+import { firstRoutableAction, ACTION_TARGETS } from "../lib/agentActions";
 import { WeeklySummarySheet } from "./WeeklySummarySheet";
 import { TravelModeSheet } from "./TravelModeSheet";
 import { useLanguage } from "../lib/languageContext";
@@ -117,6 +118,11 @@ export function AskMeiScreen({ patient, elderId, onUpdatePatient, onNavigate, on
     rec.start();
   };
 
+  // Sentinel id for the single transient "working on it" bubble a live turn may
+  // show — always at most one at a time, so a fixed id lets us update/replace it
+  // in place rather than accumulating one bubble per tool call.
+  const LIVE_STEP_ID = -1;
+
   const send = async (text: string, imageBase64?: string, pdfBase64?: string, displayImage?: string) => {
     const trimmed = text.trim();
     if (!trimmed || sending) return;
@@ -124,7 +130,36 @@ export function AskMeiScreen({ patient, elderId, onUpdatePatient, onNavigate, on
     setQuickOpen(false);
     scrollToBottom();
     setSending(true);
-    const { reply, actions } = await agentTurn(trimmed, imageBase64, pdfBase64);
+
+    // Live, as-it-happens progress: the moment a routable write's tool call
+    // starts we show a "working on it" bubble, and the moment it lands (not
+    // once the whole reply text is back) we navigate — "first wins" if a turn
+    // commits more than one routable action, matching firstRoutableAction below.
+    let navigated = false;
+    const onEvent = (event: AgentTurnEvent) => {
+      const target = event.tool ? ACTION_TARGETS[event.tool] : undefined;
+      if (!target) return;
+      if (event.type === "tool_start") {
+        const label = t(language, target.labelKey);
+        setMessages(prev => [
+          ...prev.filter(m => m.id !== LIVE_STEP_ID),
+          { id: LIVE_STEP_ID, role: "agent", text: t(language, "ai.workingOnLabel", { label }), time: nowLabel(), isConfirmation: true },
+        ]);
+        scrollToBottom();
+      } else if (event.type === "tool_end" && !event.is_error && !navigated) {
+        navigated = true;
+        const done = t(language, target.doneKey);
+        const label = t(language, target.labelKey);
+        setMessages(prev => [
+          ...prev.filter(m => m.id !== LIVE_STEP_ID),
+          { id: LIVE_STEP_ID, role: "agent", text: t(language, "ai.openingLabel", { done, detail: "", label }), time: nowLabel(), isConfirmation: true },
+        ]);
+        scrollToBottom();
+        if (onNavigate) setTimeout(() => onNavigate(target.caregiver), 600);
+      }
+    };
+
+    const { reply, actions } = await agentTurnStream(trimmed, onEvent, imageBase64, pdfBase64);
     setMessages(prev => [...prev, { id: Date.now() + 1, role: "agent", text: reply, time: nowLabel() }]);
     setSending(false);
     scrollToBottom();
@@ -143,15 +178,19 @@ export function AskMeiScreen({ patient, elderId, onUpdatePatient, onNavigate, on
     // it as visible proof the dose (and its dosage) really landed.
     const added = actions.find(a => a.tool === "add_prescription");
     if (added?.name) onMedAdded?.(added.name);
-    // When the write has a destination screen, confirm it and guide the caregiver there.
-    const routed = firstRoutableAction(actions);
-    if (routed) {
-      const detail = routed.action.tool === "add_prescription" && routed.action.summary ? `: ${routed.action.summary}` : "";
-      const done = t(language, routed.target.doneKey);
-      const label = t(language, routed.target.labelKey);
-      setMessages(prev => [...prev, { id: Date.now() + 2, role: "agent", text: t(language, "ai.openingLabel", { done, detail, label }), time: nowLabel(), isConfirmation: true }]);
-      scrollToBottom();
-      if (onNavigate) setTimeout(() => onNavigate(routed.target.caregiver), 1200);
+    // The live tool_end handler above already showed the confirmation bubble and
+    // navigated for the common case. This only fires as a fallback — e.g. a
+    // routable action whose event never arrived (older/non-streaming path).
+    if (!navigated) {
+      const routed = firstRoutableAction(actions);
+      if (routed) {
+        const detail = routed.action.tool === "add_prescription" && routed.action.summary ? `: ${routed.action.summary}` : "";
+        const done = t(language, routed.target.doneKey);
+        const label = t(language, routed.target.labelKey);
+        setMessages(prev => [...prev, { id: Date.now() + 2, role: "agent", text: t(language, "ai.openingLabel", { done, detail, label }), time: nowLabel(), isConfirmation: true }]);
+        scrollToBottom();
+        if (onNavigate) setTimeout(() => onNavigate(routed.target.caregiver), 1200);
+      }
     }
   };
 
@@ -317,8 +356,8 @@ export function AskMeiScreen({ patient, elderId, onUpdatePatient, onNavigate, on
       </div>
 
       {/* hidden inputs used by "Update profile" and "Add prescription" */}
-      <input ref={reportRef} type="file" accept="image/*,application/pdf" className="hidden" onChange={onReportFile} />
-      <input ref={rxPhotoRef} type="file" accept="image/*" capture="environment" className="hidden" onChange={onRxPhotoFile} />
+      <input ref={reportRef} type="file" accept="image/*,application/pdf" className="sr-only" onChange={onReportFile} />
+      <input ref={rxPhotoRef} type="file" accept="image/*" capture="environment" className="sr-only" onChange={onRxPhotoFile} />
 
       {showSummary && <WeeklySummarySheet patient={patient} onClose={() => setShowSummary(false)} />}
       {showTravel && (

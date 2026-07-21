@@ -6,6 +6,9 @@ import { MED_COLOURS, MEDICATION_CATALOG, COMMON_CONDITIONS, MED_PHOTOS } from "
 import { TimesPicker, defaultDoseTime } from "../components/TimesPicker";
 import type { RoutineTimes } from "../components/TimesPicker";
 import { agentTurn, fileToBase64 } from "../lib/hermes";
+import { withCatalogLabels } from "./setup/GuidedSetupWizard";
+import { useLanguage } from "../lib/languageContext";
+import { t } from "../lib/language";
 
 interface AddPrescriptionSheetProps {
   onClose: () => void;
@@ -65,6 +68,7 @@ function TypeAhead<T>({ value, onChange, onPick, items, filter, label, render, p
 }
 
 export function AddPrescriptionSheet({ onClose, onAdd, onAdded, initialTab = "manual", routine, onAgentAdded }: AddPrescriptionSheetProps) {
+  const { language } = useLanguage();
   const [tab, setTab] = useState<"scan" | "manual">(initialTab);
   const [scannedPhoto, setScannedPhoto] = useState<string | null>(null);
   const [scanning, setScanning] = useState(false);
@@ -107,7 +111,7 @@ export function AddPrescriptionSheet({ onClose, onAdd, onAdded, initialTab = "ma
     } catch (error) {
       console.error("Failed to add medication", error);
       setSubmitState("idle");
-      setSubmitError("Couldn't save the medication. Please try again.");
+      setSubmitError(t(language, "prescription.saveError"));
     }
   };
 
@@ -177,8 +181,8 @@ export function AddPrescriptionSheet({ onClose, onAdd, onAdded, initialTab = "ma
         {/* Header */}
         <div className="flex items-center justify-between px-5 pb-3 pt-1 border-b border-border shrink-0">
           <div>
-            <h2 className="font-['Fraunces'] text-lg font-semibold text-foreground">Add refill / prescription</h2>
-            <p className="text-xs text-muted-foreground">Snap the label or type it in</p>
+            <h2 className="font-['Fraunces'] text-lg font-semibold text-foreground">{t(language, "prescription.add")}</h2>
+            <p className="text-xs text-muted-foreground">{t(language, "prescription.snapOrType")}</p>
           </div>
           <button onClick={onClose} className="w-8 h-8 rounded-full bg-muted flex items-center justify-center">
             <X size={14} className="text-foreground" />
@@ -192,13 +196,13 @@ export function AddPrescriptionSheet({ onClose, onAdd, onAdded, initialTab = "ma
               onClick={() => setTab("scan")}
               className={`flex-1 flex items-center justify-center gap-1.5 py-2.5 rounded-lg text-sm font-semibold transition-colors ${tab === "scan" ? "bg-card text-foreground shadow-sm" : "text-muted-foreground"}`}
             >
-              <Camera size={16} />Scan photo
+              <Camera size={16} />{t(language, "prescription.scanPhotoTab")}
             </button>
             <button
               onClick={() => setTab("manual")}
               className={`flex-1 flex items-center justify-center gap-1.5 py-2.5 rounded-lg text-sm font-semibold transition-colors ${tab === "manual" ? "bg-card text-foreground shadow-sm" : "text-muted-foreground"}`}
             >
-              <PenLine size={16} />Enter manually
+              <PenLine size={16} />{t(language, "prescription.enterManuallyTab")}
             </button>
           </div>
         </div>
@@ -211,13 +215,13 @@ export function AddPrescriptionSheet({ onClose, onAdd, onAdded, initialTab = "ma
                   when it's present, which blocks picking an existing PDF from
                   Files. Omitting it still offers "Take Photo" as one of the
                   native picker's options, so scanning still works. */}
-              <input ref={fileRef} type="file" accept="image/*,application/pdf" className="hidden" onChange={onFile} />
+              <input ref={fileRef} type="file" accept="image/*,application/pdf" className="sr-only" onChange={onFile} />
               {scanning ? (
                 <div className="border-2 border-primary/30 bg-primary/5 rounded-2xl p-6 flex flex-col items-center text-center gap-3">
                   {scannedPhoto && <img src={scannedPhoto} alt="scan" className="w-24 h-24 rounded-xl object-cover" />}
                   <div className="flex items-center gap-2 text-primary">
                     <Sparkles size={16} className="animate-pulse" />
-                    <span className="text-sm font-semibold">Reading the label…</span>
+                    <span className="text-sm font-semibold">{t(language, "prescription.readingLabel")}</span>
                   </div>
                 </div>
               ) : proposal ? (
@@ -228,7 +232,7 @@ export function AddPrescriptionSheet({ onClose, onAdd, onAdded, initialTab = "ma
                   </div>
                   {committed ? (
                     <button onClick={onClose} className="w-full bg-primary text-primary-foreground rounded-2xl py-3.5 text-sm font-semibold flex items-center justify-center gap-2">
-                      <Check size={16} /> Done
+                      <Check size={16} /> {t(language, "prescription.done")}
                     </button>
                   ) : (
                     <div className="flex gap-2">
@@ -237,7 +241,7 @@ export function AddPrescriptionSheet({ onClose, onAdd, onAdded, initialTab = "ma
                         disabled={committing}
                         className="flex-1 h-12 rounded-2xl border border-border text-muted-foreground text-sm font-semibold disabled:opacity-40"
                       >
-                        Retake
+                        {t(language, "prescription.retake")}
                       </button>
                       <button
                         onClick={confirmScan}
@@ -245,7 +249,7 @@ export function AddPrescriptionSheet({ onClose, onAdd, onAdded, initialTab = "ma
                         className="flex-1 h-12 rounded-2xl bg-primary text-primary-foreground text-sm font-semibold flex items-center justify-center gap-2 disabled:opacity-40"
                       >
                         {committing ? <Sparkles size={15} className="animate-pulse" /> : <Check size={15} />}
-                        {committing ? "Saving…" : "Yes, add it"}
+                        {committing ? t(language, "settings.saving") : t(language, "prescription.yesAddIt")}
                       </button>
                     </div>
                   )}
@@ -259,17 +263,17 @@ export function AddPrescriptionSheet({ onClose, onAdd, onAdded, initialTab = "ma
                     <div className="w-14 h-14 rounded-full bg-primary/10 flex items-center justify-center">
                       <Camera size={26} className="text-primary" />
                     </div>
-                    <p className="text-[15px] font-semibold text-foreground">Take a photo or upload a file</p>
-                    <p className="text-xs text-muted-foreground leading-relaxed">Snap the medication box or prescription label, or upload a photo/PDF of it — Mei will read it and check the details with you.</p>
+                    <p className="text-[15px] font-semibold text-foreground">{t(language, "prescription.takePhotoOrUpload")}</p>
+                    <p className="text-xs text-muted-foreground leading-relaxed">{t(language, "prescription.snapOrUploadDesc")}</p>
                   </button>
                   <button
                     onClick={onSamplePhoto}
                     className="w-full flex items-center justify-center gap-2 py-2.5 rounded-xl bg-muted text-sm font-semibold text-foreground active:bg-muted/70"
                   >
-                    <ImageIcon size={15} />Try with a sample photo
+                    <ImageIcon size={15} />{t(language, "prescription.trySamplePhoto")}
                   </button>
-                  <p className="text-center text-[11px] text-muted-foreground">Prefer to type it?{" "}
-                    <button onClick={() => setTab("manual")} className="text-primary font-semibold underline">Enter manually</button>
+                  <p className="text-center text-[11px] text-muted-foreground">{t(language, "prescription.preferToType")}{" "}
+                    <button onClick={() => setTab("manual")} className="text-primary font-semibold underline">{t(language, "prescription.enterManuallyTab")}</button>
                   </p>
                 </>
               )}
@@ -278,7 +282,7 @@ export function AddPrescriptionSheet({ onClose, onAdd, onAdded, initialTab = "ma
             <>
               {/* Medication name — type-ahead */}
               <div>
-                <label className="block text-xs font-semibold text-foreground mb-1.5">Medication name <span className="text-destructive">*</span></label>
+                <label className="block text-xs font-semibold text-foreground mb-1.5">{t(language, "wizard.medicationName")} <span className="text-destructive">*</span></label>
                 <TypeAhead
                   value={name}
                   onChange={setName}
@@ -286,11 +290,11 @@ export function AddPrescriptionSheet({ onClose, onAdd, onAdded, initialTab = "ma
                   items={MEDICATION_CATALOG}
                   filter={(m, q) => m.name.toLowerCase().includes(q)}
                   label={m => m.name}
-                  placeholder="Start typing, e.g. Metf…"
+                  placeholder={t(language, "prescription.namePlaceholder")}
                   render={m => (
                     <div className="flex items-center justify-between gap-2">
                       <span className="text-sm font-medium text-foreground">{m.name}</span>
-                      <span className="text-[11px] text-muted-foreground">{m.purpose} · {m.dose}</span>
+                      <span className="text-[11px] text-muted-foreground">{t(language, m.purposeKey)} · {m.dose}</span>
                     </div>
                   )}
                 />
@@ -298,37 +302,37 @@ export function AddPrescriptionSheet({ onClose, onAdd, onAdded, initialTab = "ma
 
               {/* Dose */}
               <div>
-                <label className="block text-xs font-semibold text-foreground mb-1.5">Dose <span className="text-destructive">*</span></label>
-                <input value={dose} onChange={e => setDose(e.target.value)} placeholder="e.g. 500mg, 2 tablets, 1 drop each eye" className={inputCls} />
+                <label className="block text-xs font-semibold text-foreground mb-1.5">{t(language, "prescription.dose")} <span className="text-destructive">*</span></label>
+                <input value={dose} onChange={e => setDose(e.target.value)} placeholder={t(language, "prescription.dosePlaceholder")} className={inputCls} />
               </div>
 
               {/* Purpose / condition — type-ahead */}
               <div>
-                <label className="block text-xs font-semibold text-foreground mb-1.5">Purpose / Condition <span className="text-destructive">*</span></label>
+                <label className="block text-xs font-semibold text-foreground mb-1.5">{t(language, "prescription.purposeCondition")} <span className="text-destructive">*</span></label>
                 <TypeAhead
                   value={purpose}
                   onChange={setPurpose}
-                  onPick={c => setPurpose(c)}
-                  items={COMMON_CONDITIONS}
-                  filter={(c, q) => c.toLowerCase().includes(q)}
-                  label={c => c}
-                  placeholder="e.g. Diabetes, Blood Pressure"
+                  onPick={c => setPurpose(c.value)}
+                  items={withCatalogLabels(COMMON_CONDITIONS, language)}
+                  filter={(c, q) => c.label.toLowerCase().includes(q)}
+                  label={c => c.label}
+                  placeholder={t(language, "wizard.conditionsPlaceholder")}
                 />
               </div>
 
               {/* Time */}
-              <TimesPicker times={selectedTimes} onChange={setSelectedTimes} label="Scheduled times" routine={routine} />
+              <TimesPicker times={selectedTimes} onChange={setSelectedTimes} label={t(language, "prescription.scheduledTimes")} routine={routine} />
 
               {/* Refill supply */}
               <div>
-                <label className="block text-xs font-semibold text-foreground mb-1.5">Current supply (days remaining)</label>
-                <input type="number" value={refillDays} onChange={e => setRefillDays(e.target.value)} placeholder="e.g. 28" min={1} className={inputCls} />
-                <p className="text-[11px] text-muted-foreground mt-1">You'll be alerted when this runs low.</p>
+                <label className="block text-xs font-semibold text-foreground mb-1.5">{t(language, "prescription.currentSupply")}</label>
+                <input type="number" value={refillDays} onChange={e => setRefillDays(e.target.value)} placeholder={t(language, "prescription.supplyPlaceholder")} min={1} className={inputCls} />
+                <p className="text-[11px] text-muted-foreground mt-1">{t(language, "prescription.alertedWhenLow")}</p>
               </div>
 
               {/* Colour */}
               <div>
-                <label className="block text-xs font-semibold text-foreground mb-2">Colour label</label>
+                <label className="block text-xs font-semibold text-foreground mb-2">{t(language, "prescription.colourLabel")}</label>
                 <div className="flex gap-3">
                   {MED_COLOURS.map(c => (
                     <button
@@ -371,7 +375,7 @@ export function AddPrescriptionSheet({ onClose, onAdd, onAdded, initialTab = "ma
             {submitState !== "idle" && (
               <div className={`rounded-xl border px-3 py-2.5 flex items-center gap-2 text-sm ${submitState === "saving" ? "border-primary/20 bg-primary/10 text-primary" : "border-emerald-200 bg-emerald-50 text-emerald-700"}`}>
                 {submitState === "saving" ? <Sparkles size={14} className="animate-pulse" /> : <Check size={14} />}
-                <span>{submitState === "saving" ? "Saving medication…" : "Medication added"}</span>
+                <span>{submitState === "saving" ? t(language, "prescription.savingMedication") : t(language, "prescription.medicationAdded")}</span>
               </div>
             )}
             <button
@@ -380,7 +384,7 @@ export function AddPrescriptionSheet({ onClose, onAdd, onAdded, initialTab = "ma
               className="w-full bg-primary text-primary-foreground rounded-2xl py-3.5 text-sm font-semibold flex items-center justify-center gap-2 disabled:opacity-40 transition-opacity"
             >
               {submitState === "saving" ? <Sparkles size={16} className="animate-pulse" /> : submitState === "success" ? <Check size={16} /> : <Plus size={16} />}
-              {submitState === "saving" ? "Adding…" : submitState === "success" ? "Added" : `Add ${name || "medication"}`}
+              {submitState === "saving" ? t(language, "prescription.adding") : submitState === "success" ? t(language, "prescription.added") : t(language, "prescription.addNamed", { name: name || t(language, "prescription.medicationFallback") })}
             </button>
           </div>
         )}
