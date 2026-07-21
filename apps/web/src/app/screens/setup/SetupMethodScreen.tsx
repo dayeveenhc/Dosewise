@@ -1,24 +1,32 @@
 import { useRef, useState } from "react";
 import type { ChangeEvent } from "react";
-import { ArrowLeft, ClipboardList, Lock, ChevronRight, FileUp, Loader2 } from "lucide-react";
+import { ArrowLeft, ClipboardList, Lock, ChevronRight, FileUp, Loader2, QrCode } from "lucide-react";
 import { useLanguage } from "../../lib/languageContext";
 import { t } from "../../lib/language";
 import { extractProfile, fileToBase64 } from "../../lib/hermes";
 import { buildWizardPrefill, type WizardPrefill } from "../../lib/profile";
+import { ScanLovedOneSheet } from "../../components/ScanLovedOneSheet";
 
 export function SetupMethodScreen({
+  mode,
   onBack,
   onGuided,
   onExtracted,
+  onScanLinked,
 }: {
+  mode: "caregiver" | "elderly";
   onBack: () => void;
   onGuided: () => void;
   onExtracted: (prefill: WizardPrefill) => void;
+  // Caregiver-only: completes onboarding straight into the dashboard with
+  // Margaret already linked, skipping the guided wizard entirely.
+  onScanLinked: () => void;
 }) {
   const { language } = useLanguage();
   const fileRef = useRef<HTMLInputElement>(null);
   const [loading, setLoading] = useState(false);
   const [note, setNote] = useState<string | null>(null);
+  const [showScan, setShowScan] = useState(false);
 
   const hasAnything = (p: WizardPrefill) =>
     !!p.fullName || Object.keys(p.details).length > 0 || p.currentMeds.length > 0 || p.pastMeds.length > 0;
@@ -117,11 +125,31 @@ export function SetupMethodScreen({
           </div>
           <ChevronRight size={18} className="text-muted-foreground mt-1 shrink-0" />
         </button>
+
+        {/* Scan a loved one's QR code — caregiver-only: links straight to an
+            existing elder's profile instead of creating a new one. */}
+        {mode === "caregiver" && (
+          <button
+            onClick={() => setShowScan(true)}
+            className="w-full text-left rounded-2xl bg-card shadow-sm p-5 flex items-start gap-4 active:scale-[0.98] transition-transform"
+          >
+            <div className="w-11 h-11 rounded-xl bg-accent flex items-center justify-center shrink-0 mt-0.5">
+              <QrCode size={20} className="text-accent-foreground" />
+            </div>
+            <div className="flex-1">
+              <p className="font-semibold text-foreground text-[15px] leading-snug">Scan a loved one's QR code</p>
+              <p className="text-sm text-muted-foreground leading-relaxed">Already have their code? Link to their existing profile instead.</p>
+            </div>
+            <ChevronRight size={18} className="text-muted-foreground mt-1 shrink-0" />
+          </button>
+        )}
       </div>
 
       <p className="text-center text-[11px] text-muted-foreground leading-relaxed px-6 pb-10">
         {t(language, "common.setupMinutes")}
       </p>
+
+      {showScan && <ScanLovedOneSheet onClose={() => setShowScan(false)} onConfirm={onScanLinked} />}
     </div>
   );
 }

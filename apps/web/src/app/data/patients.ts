@@ -53,6 +53,35 @@ export const PATIENTS: Patient[] = [
       { name: "Wong Beng Huat", role: "Son", phone: "+65 9456 7890" },
     ],
   },
+  // Same profile as the scripted walkthrough's Margaret (screens/walkthrough/
+  // ScenarioWalkthroughPage.tsx) and the QR-scan onboarding demo (App.tsx's
+  // MARGARET_LINK_PROFILE) — kept here too so she's visible in the caregiver
+  // interface immediately, without going through either of those flows.
+  {
+    id: 3,
+    name: "Margaret Tan",
+    nickname: "Margaret",
+    age: 76,
+    relation: "Mother",
+    photo: "https://images.unsplash.com/photo-1566616213894-2d4e1baee5d8?w=80&h=80&fit=crop&auto=format",
+    bloodType: "O+",
+    conditions: ["Type 2 Diabetes", "Hypertension", "High Cholesterol"],
+    allergies: [],
+    adherenceToday: 0,
+    adherenceWeek: 88,
+    lastChecked: "Just now",
+    medications: [
+      { id: 10, name: "Metformin", dose: "500mg", time: "8:30 AM", status: "upcoming", purpose: "Diabetes", colour: "#0D5C8A" },
+      { id: 11, name: "Amlodipine", dose: "5mg", time: "8:30 AM", status: "upcoming", purpose: "Blood Pressure", colour: "#2E7D32" },
+      { id: 12, name: "Atorvastatin", dose: "20mg", time: "8:30 AM", status: "upcoming", purpose: "Cholesterol", colour: "#7B3F9E" },
+      { id: 13, name: "Metformin", dose: "500mg", time: "9:00 PM", status: "upcoming", purpose: "Diabetes", colour: "#0D5C8A" },
+    ],
+    contacts: [
+      { name: "Wei Liang", role: "Son (Primary Caregiver)", phone: "+65 9123 4567", isPrimary: true },
+    ],
+    mealTimes: { breakfast: "08:30", lunch: "12:30", dinner: "19:00" },
+    sleepTime: "21:00",
+  },
 ];
 
 export const NOTIFICATIONS: Notification[] = [

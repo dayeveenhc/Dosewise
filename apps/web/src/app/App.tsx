@@ -37,6 +37,36 @@ import { ScanLinkSheet } from "./components/ScanLinkSheet";
 import { LanguageProvider, readStoredLanguage } from "./lib/languageContext";
 import { t } from "./lib/language";
 
+// Seeded when a caregiver "scans" Margaret's QR code during onboarding (see
+// ScanLovedOneSheet) — mocked the same way handleAddPatient below already
+// mocks caregiver-to-elder linking, just with a full profile instead of an
+// empty stub, since this one represents scanning an *existing* elder's code
+// rather than adding a brand-new person from scratch.
+const MARGARET_LINK_PROFILE: Omit<Patient, "id" | "medications"> & { medications: Omit<Medication, "id">[] } = {
+  name: "Margaret Tan",
+  nickname: "Margaret",
+  age: 76,
+  relation: "Mother",
+  photo: "https://images.unsplash.com/photo-1566616213894-2d4e1baee5d8?w=80&h=80&fit=crop&auto=format",
+  bloodType: "O+",
+  conditions: ["Type 2 Diabetes", "Hypertension", "High Cholesterol"],
+  allergies: [],
+  medications: [
+    { name: "Metformin", dose: "500mg", time: "8:30 AM", status: "upcoming", purpose: "Diabetes", colour: "#0D5C8A" },
+    { name: "Amlodipine", dose: "5mg", time: "8:30 AM", status: "upcoming", purpose: "Blood Pressure", colour: "#2E7D32" },
+    { name: "Atorvastatin", dose: "20mg", time: "8:30 AM", status: "upcoming", purpose: "Cholesterol", colour: "#7B3F9E" },
+    { name: "Metformin", dose: "500mg", time: "9:00 PM", status: "upcoming", purpose: "Diabetes", colour: "#0D5C8A" },
+  ],
+  contacts: [
+    { name: "Wei Liang", role: "Son (Primary Caregiver)", phone: "+65 9123 4567", isPrimary: true },
+  ],
+  adherenceToday: 0,
+  adherenceWeek: 88,
+  lastChecked: "Just now",
+  mealTimes: { breakfast: "08:30", lunch: "12:30", dinner: "19:00" },
+  sleepTime: "21:00",
+};
+
 export default function App() {
   const [session, setSession] = useState<Session | null>(null);
   const [authLoading, setAuthLoading] = useState(true);
@@ -296,6 +326,28 @@ export default function App() {
     setSelectedPatient(patients.length);
   };
 
+  // Caregiver onboarding's "scan a loved one's QR code" step (ScanLovedOneSheet)
+  // — same local-mock depth as handleAddPatient above, but with Margaret's full
+  // seeded profile instead of an empty stub, since this represents linking to
+  // an elder who already has real data rather than adding a brand-new one.
+  const handleLinkMargaret = () => {
+    // She's already in PATIENTS (data/patients.ts) by default — select her
+    // instead of adding a duplicate "Margaret Tan" card.
+    const existingIndex = patients.findIndex(p => p.name === MARGARET_LINK_PROFILE.name);
+    if (existingIndex !== -1) {
+      setSelectedPatient(existingIndex);
+      return;
+    }
+    const newPatientId = patients.reduce((max, p) => Math.max(max, p.id), 0) + 1;
+    const baseMedId = patients.flatMap(p => p.medications).reduce((max, m) => Math.max(max, m.id), 0) + 1;
+    setPatients(prev => [...prev, {
+      ...MARGARET_LINK_PROFILE,
+      id: newPatientId,
+      medications: MARGARET_LINK_PROFILE.medications.map((m, i) => ({ ...m, id: baseMedId + i })),
+    }]);
+    setSelectedPatient(patients.length);
+  };
+
   const handleAddPrescription = async (med: Omit<Medication, "id" | "status"> & { times?: string[] }) => {
     if (!elderId) return;
     const timeHHMMs = (med.times && med.times.length ? med.times : [med.time]).map(t => to24h(t));
@@ -419,9 +471,17 @@ export default function App() {
             )}
             {preAuthStage === "method" && (
               <SetupMethodScreen
+                mode={pendingMode}
                 onBack={() => setPreAuthStage("mode")}
                 onGuided={() => { setWizardPrefill(undefined); setPreAuthStage("wizard"); }}
                 onExtracted={(prefill) => { setWizardPrefill(prefill); setPreAuthStage("wizard"); }}
+                onScanLinked={() => {
+                  handleLinkMargaret();
+                  setNeedsWizard(false);
+                  setScreen("dashboard");
+                  setJustOnboarded(true);
+                  setAppMode(pendingMode);
+                }}
               />
             )}
             {preAuthStage === "wizard" && (

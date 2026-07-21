@@ -2,15 +2,15 @@ import {
   ClipboardList, CheckCircle2, AlertTriangle, Circle, Send, RefreshCw,
   Clock, MessageSquare,
 } from "lucide-react";
-import type { Patient, Screen } from "../types";
-import { Card, SectionHeader, QuickAction } from "../components/shared";
-import { PillIcon, shapeFor } from "../components/PillIcon";
-import { MED_SHAPES } from "../data/medications";
-import { useAccessibility } from "../accessibility.tsx";
-import { useLanguage } from "../lib/languageContext";
-import { t } from "../lib/language";
+import type { Patient, Screen } from "../../types";
+import { Card, SectionHeader, QuickAction } from "../../components/shared";
+import { PillIcon, shapeFor } from "../../components/PillIcon";
+import { MED_SHAPES } from "../../data/medications";
+import { useAccessibility } from "../../accessibility.tsx";
+import { useLanguage } from "../../lib/languageContext";
+import { t } from "../../lib/language";
 
-export function DashboardScreen({ patient, onNavigate, onSendReminder }: { patient: Patient; onNavigate: (s: Screen) => void; onSendReminder: (medName?: string) => void }) {
+export function WalkthroughCaregiverDashboard({ patient, onNavigate, onSendReminder }: { patient: Patient; onNavigate: (s: Screen) => void; onSendReminder: (medName?: string) => void }) {
   const { language } = useLanguage();
   const { colourBlind } = useAccessibility();
   const taken = patient.medications.filter(m => m.status === "taken").length;

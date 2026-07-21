@@ -5,31 +5,19 @@ import { useLanguage } from "../../lib/languageContext";
 import { t } from "../../lib/language";
 import { fetchPendingLinkRequests, respondToLinkRequest, type PendingLinkRequest } from "../../lib/careLinks";
 
-// Demo seed: a pending link request from Wei Liang, shown alongside whatever
-// the account's real requests are. Its id is never sent to Supabase — see
-// the guard in respond() below — so it can't collide with or affect real data.
-const DEMO_REQUEST_ID = "demo-wei-liang";
-const DEMO_REQUEST: PendingLinkRequest = {
-  id: DEMO_REQUEST_ID,
-  caregiverName: "Wei Liang",
-  relationship: "Son",
-  requestedAt: new Date().toISOString(),
-};
-
-export function ElderlyNotificationsScreen({ careMessages, elderId }: { careMessages: Message[]; elderId?: string }) {
+export function WalkthroughNotificationsScreen({ careMessages, elderId }: { careMessages: Message[]; elderId?: string }) {
   const { language } = useLanguage();
-  const [requests, setRequests] = useState<PendingLinkRequest[]>([DEMO_REQUEST]);
+  const [requests, setRequests] = useState<PendingLinkRequest[]>([]);
   const [busy, setBusy] = useState<string | null>(null);
 
   useEffect(() => {
     if (!elderId) return;
-    void fetchPendingLinkRequests(elderId).then(real => setRequests(prev => [...prev.filter(r => r.id === DEMO_REQUEST_ID), ...real]));
+    void fetchPendingLinkRequests(elderId).then(setRequests);
   }, [elderId]);
 
   const respond = async (id: string, accept: boolean) => {
     setBusy(id);
-    // The demo request has no real care_links row — resolve it locally instead.
-    const ok = id === DEMO_REQUEST_ID ? true : await respondToLinkRequest(id, accept);
+    const ok = await respondToLinkRequest(id, accept);
     setBusy(null);
     if (ok) setRequests(prev => prev.filter(r => r.id !== id));
   };

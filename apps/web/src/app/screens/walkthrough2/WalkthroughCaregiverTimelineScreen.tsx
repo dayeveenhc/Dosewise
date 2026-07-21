@@ -1,0 +1,288 @@
+import { useState } from "react";
+import { ChevronLeft, ChevronRight, Clock, Send, Check, AlertTriangle } from "lucide-react";
+import type { Patient, Medication, MedStatus } from "../../types";
+import { StatusPill, MedAvatar } from "../../components/shared";
+import { MED_SIMPLE } from "../../data/medications";
+import { DASH_DAYS } from "../../lib/constants";
+import { useLanguage } from "../../lib/languageContext";
+import { t } from "../../lib/language";
+
+// Which medication's afternoon dose Wei Liang has noticed running late, and
+// which weekdays (this week only — see weekOffset guards below) it happened
+// on. "Today" always counts as late too — that's the 3rd occurrence he's
+// looking at live in this scenario, regardless of what time she eventually
+// logs it as taken.
+const LATE_AFTERNOON_MED = "Amlodipine";
+const LATE_WEEKDAYS = new Set([1, 3]); // Monday, Wednesday
+
+export function WalkthroughCaregiverTimelineScreen({ patient, justAddedMed, onSendReminder, pinnedNow }: { patient: Patient; justAddedMed?: string | null; onSendReminder: (medName?: string) => void; pinnedNow: Date }) {
+  const { language } = useLanguage();
+  const [view, setView] = useState<"daily" | "weekly">("daily");
+  const today = pinnedNow;
+  const [weekOffset, setWeekOffset] = useState(0);
+  const [selectedDay, setSelectedDay] = useState<Date>(today);
+  const now = pinnedNow;
+
+  const statusConfig: Record<MedStatus, { dot: string; line: string }> = {
+    taken: { dot: "bg-emerald-500", line: "border-emerald-200" },
+    missed: { dot: "bg-orange-500", line: "border-orange-200" },
+    upcoming: { dot: "bg-sky-400", line: "border-sky-200" },
+    skipped: { dot: "bg-stone-400", line: "border-stone-200" },
+  };
+  const weekDotCls: Record<MedStatus, string> = {
+    taken: "bg-emerald-500",
+    missed: "bg-orange-500",
+    upcoming: "bg-sky-400",
+    skipped: "bg-stone-300",
+  };
+
+  // Not every medication is due every day — Celecoxib is taken once every 2 days as an example.
+  const isDueOnDay = (medName: string, day: Date): boolean => {
+    if (medName === "Celecoxib") {
+      const epochDay = Math.floor(day.getTime() / 86400000);
+      return epochDay % 2 === 0;
+    }
+    return true;
+  };
+
+  const isToday = (d: Date) => d.toDateString() === today.toDateString();
+  const isPast  = (d: Date) => d < today && !isToday(d);
+  const isSelectedToday = isToday(selectedDay);
+
+  const weekDays = Array.from({ length: 7 }, (_, i) => {
+    const d = new Date(today);
+    d.setDate(today.getDate() - today.getDay() + i + weekOffset * 7);
+    return d;
+  });
+  const weekLabel = weekDays[3].toLocaleDateString("en-SG", { month: "long", year: "numeric" });
+
+  const statusForDay = (m: Medication, day: Date): MedStatus => {
+    if (isToday(day)) return m.status;
+    if (isPast(day))  return (day.getDate() * 3 + m.id) % 10 > 2 ? "taken" : "missed";
+    return "upcoming";
+  };
+
+  const toMin = (t: string) => {
+    const [h, m] = t.replace(/ (AM|PM)/, "").split(":").map(Number);
+    const isPM = t.includes("PM") && h !== 12;
+    return (isPM ? h + 12 : h === 12 && t.includes("AM") ? 0 : h) * 60 + m;
+  };
+  const dayMeds = patient.medications
+    .filter(m => isDueOnDay(m.name, selectedDay))
+    .map(m => ({ ...m, status: statusForDay(m, selectedDay) as MedStatus }))
+    .sort((a, b) => toMin(a.time) - toMin(b.time));
+
+  return (
+    <div className="px-4 py-5">
+      <div className="flex items-baseline justify-between mb-4">
+        <h2 className="font-['Fraunces'] text-xl font-semibold text-foreground">{t(language, "common.schedule")}</h2>
+        <span className="text-lg font-mono font-bold text-black">
+          {now.toLocaleTimeString("en-SG", { hour: "numeric", minute: "2-digit" })}
+        </span>
+      </div>
+
+      {/* Week strip */}
+      <div className="bg-card rounded-2xl border border-border px-3 pt-3 pb-2 mb-4">
+        <div className="flex items-center justify-between mb-2">
+          <div className="flex items-center gap-0.5">
+            <button onClick={() => setWeekOffset(o => o - 1)} className="w-7 h-7 flex items-center justify-center active:opacity-60 transition-opacity">
+              <ChevronLeft size={16} className="text-foreground" />
+            </button>
+            <span className="text-xs font-semibold text-foreground px-1">{weekLabel}</span>
+            <button onClick={() => setWeekOffset(o => o + 1)} className="w-7 h-7 flex items-center justify-center active:opacity-60 transition-opacity">
+              <ChevronRight size={16} className="text-foreground" />
+            </button>
+          </div>
+          <button
+            onClick={() => { setSelectedDay(new Date()); setWeekOffset(0); }}
+            className={`flex items-center gap-1.5 text-xs font-bold px-3 py-1.5 rounded-full transition-all ${
+              isSelectedToday && weekOffset === 0
+                ? "bg-primary/10 text-primary cursor-default"
+                : "bg-primary text-primary-foreground active:opacity-80"
+            }`}
+          >
+            <Clock size={11} />
+            {t(language, "common.today")}
+          </button>
+        </div>
+        <div className="flex gap-1">
+          {weekDays.map((d, i) => {
+            const todayDay     = isToday(d);
+            const selectedDay_ = d.toDateString() === selectedDay.toDateString();
+            const pastDay      = isPast(d);
+            const adherenceDot = pastDay
+              ? ((d.getDate() * 3 + 5) % 10 > 2 ? "bg-emerald-400" : "bg-orange-400")
+              : todayDay ? "bg-primary" : "bg-muted-foreground/20";
+
+            return (
+              <button
+                key={i}
+                disabled={view === "weekly"}
+                onClick={() => setSelectedDay(d)}
+                className={`flex-1 flex flex-col items-center gap-1 py-2 rounded-xl transition-colors
+                  ${view === "weekly" ? "cursor-default" : ""}
+                  ${selectedDay_ && !todayDay ? "bg-primary/10 ring-2 ring-primary/40" : ""}
+                  ${todayDay && selectedDay_ ? "bg-primary/10 ring-2 ring-primary" : ""}
+                  ${todayDay && !selectedDay_ ? "bg-primary/5" : ""}
+                  ${!todayDay && !selectedDay_ && view === "daily" ? "active:bg-muted/50" : ""}
+                `}
+              >
+                <p className={`text-[10px] font-semibold ${todayDay ? "text-primary" : selectedDay_ ? "text-primary" : "text-muted-foreground"}`}>
+                  {DASH_DAYS[d.getDay()]}
+                </p>
+                <p className={`text-sm font-bold ${todayDay || selectedDay_ ? "text-primary" : "text-foreground"}`}>
+                  {d.getDate()}
+                </p>
+                <div className={`w-1.5 h-1.5 rounded-full ${adherenceDot}`} />
+              </button>
+            );
+          })}
+        </div>
+      </div>
+
+      {/* Daily / Weekly toggle */}
+      <div className="flex bg-muted rounded-xl p-1 mb-4">
+        <button
+          onClick={() => setView("daily")}
+          className={`flex-1 py-2 rounded-lg text-xs font-semibold transition-colors ${view === "daily" ? "bg-card text-foreground shadow-sm" : "text-muted-foreground"}`}
+        >
+          {t(language, "common.daily")}
+        </button>
+        <button
+          onClick={() => setView("weekly")}
+          className={`flex-1 py-2 rounded-lg text-xs font-semibold transition-colors ${view === "weekly" ? "bg-card text-foreground shadow-sm" : "text-muted-foreground"}`}
+        >
+          {t(language, "common.weekly")}
+        </button>
+      </div>
+
+      {view === "daily" ? (
+        <div className="relative">
+          {dayMeds.map((med, i) => {
+            const cfg = statusConfig[med.status];
+            const direction = MED_SIMPLE[med.name] ?? t(language, "home.takeAsDirected");
+            const lowRefill = med.refillDaysLeft !== undefined && med.refillDaysLeft <= 7;
+            const supplyDays = med.refillDaysLeft ?? 30;
+            const supplyPct = Math.min(100, Math.round((supplyDays / 30) * 100));
+            // Highlight (and prove) a just-added medication is on the timeline —
+            // keyed by name because the slot id re-hashes on refetch.
+            const justAdded = isSelectedToday && !!justAddedMed && med.name === justAddedMed;
+            return (
+              <div key={med.id} className="flex gap-4 mb-1">
+                {/* Timeline rail */}
+                <div className="flex flex-col items-center w-6 shrink-0 pt-1">
+                  <div className={`w-3 h-3 rounded-full shrink-0 ${cfg.dot} shadow-sm`} />
+                  {i < dayMeds.length - 1 && <div className="w-px flex-1 bg-border mt-1" />}
+                </div>
+                {/* Entry — home-page schedule card styling */}
+                <div className={`flex-1 mb-4 bg-card rounded-2xl border shadow-sm overflow-hidden ${justAdded ? "border-2 border-emerald-400 ring-2 ring-emerald-300/50" : cfg.line}`}>
+                  <div className="flex items-start gap-3 px-4 py-3">
+                    <MedAvatar name={med.name} size={44} className="rounded-lg shrink-0" />
+                    <div className="flex-1 min-w-0">
+                      <div className="flex items-center gap-2 flex-wrap">
+                        <p className="text-sm font-semibold text-foreground">{med.name}{med.dose ? ` · ${med.dose}` : ""}</p>
+                        {justAdded && (
+                          <span className="flex items-center gap-1 bg-emerald-100 text-emerald-700 text-[10px] font-bold px-2 py-0.5 rounded-full">
+                            <Check size={9} strokeWidth={3} />{t(language, "prescription.justAdded")}
+                          </span>
+                        )}
+                      </div>
+                      <p className="text-xs text-muted-foreground">{direction}</p>
+                      <p className="text-[11px] text-muted-foreground font-mono mt-0.5 whitespace-nowrap">
+                        {med.status === "taken" ? `Taken at ${med.takenAt}` : `Scheduled ${med.time}`}
+                      </p>
+                    </div>
+                    <StatusPill status={med.status} small />
+                  </div>
+                  <div className="px-4 pb-3">
+                    <div className="flex items-center justify-between mb-1">
+                      <p className="text-[10px] text-muted-foreground">{t(language, "prescription.supply")}</p>
+                      <p className={`text-[10px] font-bold ${lowRefill ? "text-red-600" : "text-foreground"}`}>{supplyDays}/30 days</p>
+                    </div>
+                    <div className="w-full h-1.5 bg-muted rounded-full overflow-hidden">
+                      <div
+                        className={`h-full rounded-full ${lowRefill ? "bg-red-400" : "bg-primary"}`}
+                        style={{ width: `${supplyPct}%` }}
+                      />
+                    </div>
+                  </div>
+                  {med.status === "missed" && (
+                    <div className="px-4 pb-3">
+                      <button onClick={() => onSendReminder(med.name)} className="w-full bg-orange-50 border border-orange-200 text-orange-700 text-xs font-semibold rounded-xl py-2 flex items-center justify-center gap-1.5">
+                        <Send size={11} /> {t(language, "common.sendReminder")} to patient
+                      </button>
+                    </div>
+                  )}
+                </div>
+              </div>
+            );
+          })}
+        </div>
+      ) : (
+        <div>
+          {weekOffset === 0 && (
+            <div className="bg-amber-50 border border-amber-200 rounded-2xl px-4 py-3 mb-3 flex items-start gap-3">
+              <AlertTriangle size={16} className="text-amber-600 shrink-0 mt-0.5" />
+              <div>
+                <p className="text-sm font-semibold text-amber-900">Pattern noticed</p>
+                <p className="text-xs text-amber-800 mt-0.5 leading-relaxed">
+                  {LATE_AFTERNOON_MED}'s afternoon dose has run late <span className="font-bold">3 times this week</span> — Monday, Wednesday, and today.
+                </p>
+              </div>
+            </div>
+          )}
+          <div className="bg-card rounded-2xl border border-border overflow-hidden">
+            {/* Week header */}
+            <div className="grid grid-cols-[1fr_repeat(7,28px)] gap-1 px-3 pt-3 pb-2 border-b border-border">
+              <span />
+              {weekDays.map((d, i) => (
+                <div key={i} className="flex flex-col items-center">
+                  <span className={`text-[9px] font-semibold ${isToday(d) ? "text-primary" : "text-muted-foreground"}`}>{DASH_DAYS[d.getDay()]}</span>
+                  <span className={`text-[11px] font-bold ${isToday(d) ? "text-primary" : "text-foreground"}`}>{d.getDate()}</span>
+                </div>
+              ))}
+            </div>
+            {/* Rows per medication */}
+            <div className="divide-y divide-border">
+              {patient.medications.map(med => (
+                <div key={med.id} className="grid grid-cols-[1fr_repeat(7,28px)] gap-1 items-center px-3 py-2.5">
+                  <div className="min-w-0 pr-2">
+                    <p className="text-xs font-semibold text-foreground truncate">{med.name}</p>
+                    <p className="text-[10px] text-muted-foreground">{med.time}</p>
+                  </div>
+                  {weekDays.map((d, i) => {
+                    if (!isDueOnDay(med.name, d)) {
+                      return (
+                        <div key={i} className="flex items-center justify-center">
+                          <span className="text-muted-foreground/40 text-xs leading-none">✕</span>
+                        </div>
+                      );
+                    }
+                    const s = statusForDay(med, d);
+                    // Layered on top of the normal taken/missed/upcoming dot — a
+                    // ring, not a colour swap, so "late" reads as "this
+                    // happened, but later than it should have" rather than
+                    // replacing what actually happened that day.
+                    const isLate = weekOffset === 0 && med.name === LATE_AFTERNOON_MED && (LATE_WEEKDAYS.has(d.getDay()) || isToday(d));
+                    return (
+                      <div key={i} className="flex items-center justify-center">
+                        <div className={`w-2.5 h-2.5 rounded-full ${weekDotCls[s]} ${isLate ? "ring-2 ring-amber-400 ring-offset-1" : ""}`} title={isLate ? "Late" : undefined} />
+                      </div>
+                    );
+                  })}
+                </div>
+              ))}
+            </div>
+            <div className="flex items-center gap-4 px-4 py-3 border-t border-border flex-wrap">
+              <span className="flex items-center gap-1.5 text-[10px] text-muted-foreground"><div className="w-2 h-2 rounded-full bg-emerald-500" />{t(language, "common.taken")}</span>
+              <span className="flex items-center gap-1.5 text-[10px] text-muted-foreground"><div className="w-2 h-2 rounded-full bg-orange-500" />{t(language, "common.missed")}</span>
+              <span className="flex items-center gap-1.5 text-[10px] text-muted-foreground"><div className="w-2 h-2 rounded-full bg-sky-400" />{t(language, "common.upcoming")}</span>
+              <span className="flex items-center gap-1.5 text-[10px] text-muted-foreground"><span className="text-muted-foreground/40">✕</span>{t(language, "common.notDue")}</span>
+              <span className="flex items-center gap-1.5 text-[10px] text-muted-foreground"><div className="w-2 h-2 rounded-full bg-emerald-500 ring-2 ring-amber-400 ring-offset-1" />Late</span>
+            </div>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
