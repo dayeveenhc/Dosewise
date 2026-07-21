@@ -1,6 +1,6 @@
 import { useRef, useState } from "react";
 import type { ReactNode, ChangeEvent } from "react";
-import { ArrowLeft, Loader2, Plus, X, Check, Coffee, Utensils, UtensilsCrossed, Moon, PartyPopper, Users, Camera, Sparkles, Venus, Mars } from "lucide-react";
+import { ArrowLeft, Loader2, Plus, X, Check, Sunrise, Coffee, Utensils, UtensilsCrossed, Moon, PartyPopper, Users, Camera, Sparkles, Venus, Mars } from "lucide-react";
 import { supabase } from "../../lib/supabase";
 import { saveProfile } from "../../lib/profile";
 import { addMedication, archiveMedication, to24h } from "../../lib/medications";
@@ -337,6 +337,7 @@ export function GuidedSetupWizard({ mode, hasSession, elderId: initialElderId, o
   const [drugAllergies, setDrugAllergies] = useState<string[]>([]);
   const [currentMeds, setCurrentMeds] = useState<DraftMed[]>([]);
   const [pastMeds, setPastMeds] = useState<DraftMed[]>([]);
+  const [wakeTime, setWakeTime] = useState("07:00");
   const [breakfast, setBreakfast] = useState("08:00");
   const [lunch, setLunch] = useState("12:30");
   const [dinner, setDinner] = useState("19:00");
@@ -385,6 +386,7 @@ export function GuidedSetupWizard({ mode, hasSession, elderId: initialElderId, o
         gender: gender || undefined,
         conditions,
         allergies, drugAllergies,
+        wakeTime,
         mealTimes: { breakfast, lunch, dinner },
         sleepTime,
       });
@@ -513,6 +515,13 @@ export function GuidedSetupWizard({ mode, hasSession, elderId: initialElderId, o
           <StepHeader title="When do you usually eat and sleep?" subtitle="Some medications are timed around meals — this helps us remind you at the right moment." />
           <div className="space-y-4 flex-1">
             <div className="flex items-center gap-3">
+              <div className="w-9 h-9 rounded-xl bg-secondary flex items-center justify-center shrink-0"><Sunrise size={16} className="text-primary" /></div>
+              <div className="flex-1">
+                <label className="block text-xs font-semibold text-foreground mb-1">Wake up time</label>
+                <input type="time" value={wakeTime} onChange={e => setWakeTime(e.target.value)} className={fieldCls} />
+              </div>
+            </div>
+            <div className="flex items-center gap-3">
               <div className="w-9 h-9 rounded-xl bg-secondary flex items-center justify-center shrink-0"><Coffee size={16} className="text-primary" /></div>
               <div className="flex-1">
                 <label className="block text-xs font-semibold text-foreground mb-1">Breakfast</label>
@@ -536,7 +545,7 @@ export function GuidedSetupWizard({ mode, hasSession, elderId: initialElderId, o
             <div className="flex items-center gap-3">
               <div className="w-9 h-9 rounded-xl bg-secondary flex items-center justify-center shrink-0"><Moon size={16} className="text-primary" /></div>
               <div className="flex-1">
-                <label className="block text-xs font-semibold text-foreground mb-1">Bedtime</label>
+                <label className="block text-xs font-semibold text-foreground mb-1">Sleep time</label>
                 <input type="time" value={sleepTime} onChange={e => setSleepTime(e.target.value)} className={fieldCls} />
               </div>
             </div>

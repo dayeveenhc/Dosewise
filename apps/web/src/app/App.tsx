@@ -45,6 +45,10 @@ export default function App() {
   // Settings, so backing out of the picker can restore what they were on
   // instead of stranding them mid-"onboarding".
   const [modeBeforeSwitch, setModeBeforeSwitch] = useState<AppMode>("caregiver");
+  // The signed-in caregiver's own identity, for the caregiver Settings
+  // Account card — kept separate from `patients` (the elder being cared for)
+  // so the two never get conflated.
+  const [caregiverAccount, setCaregiverAccount] = useState<{ name: string | null; email: string | null }>({ name: null, email: null });
   // True only when a session exists but has no profile row yet (e.g. signed in
   // without ever finishing setup) — routes back through the wizard instead of
   // treating the mode picker as a quick preview-mode switch.
@@ -172,12 +176,11 @@ export default function App() {
   // patient slot on login, keeping the mock cosmetic fields (photo, contacts, etc.)
   // that have no equivalent column in the real schema.
   useEffect(() => {
-    // Also gated on appMode: elderId becomes truthy the moment the wizard's
-    // account step creates a session, long before the wizard finishes saving
-    // the rest of the profile (name, age, conditions...) via saveProfile.
-    // Fetching immediately would show stale/empty data in the app that follows
-    // — wait until onboarding is actually done (appMode flips) to load for real.
-    if (!elderId || appMode === "onboarding") return;
+    // Gated to elderly mode specifically — not just "not onboarding". elderId
+    // is the signed-in account's own id regardless of which mode they're in,
+    // so without this a caregiver's own profile (name, age, conditions...)
+    // would overwrite the elder patient record's display fields below.
+    if (!elderId || appMode !== "elderly") return;
     (async () => {
       await ensureProfile(elderId);
       const [medications, profile, pastMedications] = await Promise.all([
@@ -203,6 +206,7 @@ export default function App() {
         gender: profile?.details.gender ?? prev[0].gender,
         weightKg: profile?.details.weightKg ?? prev[0].weightKg,
         heightCm: profile?.details.heightCm ?? prev[0].heightCm,
+        wakeTime: profile?.details.wakeTime ?? prev[0].wakeTime,
         mealTimes: profile?.details.mealTimes ?? prev[0].mealTimes,
         sleepTime: profile?.details.sleepTime ?? prev[0].sleepTime,
         travelPlan: profile?.details.travelPlan ?? prev[0].travelPlan,
@@ -215,6 +219,18 @@ export default function App() {
         adherenceToday,
         adherenceWeek: adherenceToday, // no historical "missed" records exist to compute a real week figure
       }, ...prev.slice(1)]);
+    })();
+  }, [elderId, appMode]);
+
+  // The caregiver's own name/email for their Settings Account card — loaded
+  // independently of the elder-data effect above so switching modes never
+  // lets one identity leak into the other's display.
+  useEffect(() => {
+    if (!elderId || appMode !== "caregiver") return;
+    (async () => {
+      await ensureProfile(elderId);
+      const profile = await fetchProfile(elderId);
+      setCaregiverAccount({ name: profile?.fullName ?? null, email: session?.user.email ?? null });
     })();
   }, [elderId, appMode]);
 
@@ -388,8 +404,15 @@ export default function App() {
           {/* Status bar */}
           <LiveStatusBar className="bg-background/80 backdrop-blur-sm" />
 
-          {/* App header */}
-          <div className="px-4 pt-2 pb-3 bg-background/80 backdrop-blur-sm border-b border-border shrink-0">
+          {/* App header — `relative z-30` here (not just on PatientSwitcher
+              itself) matters: backdrop-blur-sm below creates its own stacking
+              context, which traps PatientSwitcher's z-[200] dropdown inside
+              it. Without an explicit z-index on this header, that trapped
+              context has no z-index of its own either, so the "Screen
+              content" sibling below — later in the DOM, same default stacking
+              level — paints on top of the whole header, dropdown included,
+              whenever the dropdown is open and overlaps it. */}
+          <div className="relative z-30 px-4 pt-2 pb-3 bg-background/80 backdrop-blur-sm border-b border-border shrink-0">
             {showBack ? (
               <div className="flex items-center gap-2 mb-2">
                 <button onClick={() => setScreen("dashboard")} className="w-8 h-8 bg-card border border-border rounded-xl flex items-center justify-center">
@@ -451,7 +474,7 @@ export default function App() {
             )}
             {screen === "ai" && <AskMeiScreen patient={patient} elderId={elderId} onUpdatePatient={handleUpdatePatient} onNavigate={setScreen} onMedsChanged={refreshMedications} />}
             {screen === "messages" && <MessagesScreen />}
-            {screen === "settings" && <SettingsScreen patient={patient} onSwitchMode={openModeSwitch} onSignOut={() => supabase.auth.signOut()} onEditProfile={() => setShowEditProfile(true)} />}
+            {screen === "settings" && <SettingsScreen patient={patient} caregiverAccount={caregiverAccount} onSwitchMode={openModeSwitch} onSignOut={() => supabase.auth.signOut()} onEditProfile={() => setShowEditProfile(true)} />}
           </div>
 
           {/* Modals */}

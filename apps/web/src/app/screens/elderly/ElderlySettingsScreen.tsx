@@ -1,5 +1,5 @@
 import { useState, useEffect } from "react";
-import { Shield, ChevronDown, Eye, Phone, RefreshCw, LogOut, Check, Loader2, Coffee, Utensils, Moon } from "lucide-react";
+import { Shield, ChevronDown, Eye, Phone, RefreshCw, LogOut, Check, Loader2, Sunrise, Coffee, Utensils, UtensilsCrossed, Moon } from "lucide-react";
 import { useAccessibility } from "../../accessibility.tsx";
 import type { FontSize } from "../../accessibility.tsx";
 import type { Patient } from "../../types";
@@ -41,6 +41,7 @@ export function ElderlySettingsScreen({ patient, elderId, onUpdatePatient, onBac
   const [conditionsDraft, setConditionsDraft] = useState<string[]>([]);
   const [allergiesDraft, setAllergiesDraft] = useState<string[]>([]);
   const [drugAllergiesDraft, setDrugAllergiesDraft] = useState<string[]>([]);
+  const [wakeDraft, setWakeDraft] = useState("07:00");
   const [breakfastDraft, setBreakfastDraft] = useState("08:00");
   const [lunchDraft, setLunchDraft] = useState("12:30");
   const [dinnerDraft, setDinnerDraft] = useState("19:00");
@@ -61,6 +62,7 @@ export function ElderlySettingsScreen({ patient, elderId, onUpdatePatient, onBac
       setConditionsDraft(d.conditions ?? []);
       setAllergiesDraft(d.allergies ?? []);
       setDrugAllergiesDraft(d.drugAllergies ?? []);
+      setWakeDraft(d.wakeTime ?? "07:00");
       setBreakfastDraft(d.mealTimes?.breakfast ?? "08:00");
       setLunchDraft(d.mealTimes?.lunch ?? "12:30");
       setDinnerDraft(d.mealTimes?.dinner ?? "19:00");
@@ -80,6 +82,7 @@ export function ElderlySettingsScreen({ patient, elderId, onUpdatePatient, onBac
       conditions: conditionsDraft,
       allergies: allergiesDraft,
       drugAllergies: drugAllergiesDraft,
+      wakeTime: wakeDraft,
       mealTimes,
       sleepTime: sleepDraft,
     });
@@ -91,6 +94,7 @@ export function ElderlySettingsScreen({ patient, elderId, onUpdatePatient, onBac
       heightCm: heightDraft ? Number(heightDraft) : undefined,
       conditions: conditionsDraft,
       allergies: [...allergiesDraft, ...drugAllergiesDraft],
+      wakeTime: wakeDraft,
       mealTimes,
       sleepTime: sleepDraft,
     });
@@ -156,19 +160,28 @@ export function ElderlySettingsScreen({ patient, elderId, onUpdatePatient, onBac
             <p className="text-sm font-semibold text-foreground mb-2">{t(language, "settings.mealsSleep")}</p>
             <div className="space-y-2.5">
               <div className="flex items-center gap-3">
+                <div className="w-9 h-9 rounded-xl bg-secondary flex items-center justify-center shrink-0"><Sunrise size={16} className="text-primary" /></div>
+                <label className="w-24 shrink-0 text-sm text-foreground">{t(language, "settings.wakeUpTime")}</label>
+                <input type="time" value={wakeDraft} onChange={e => setWakeDraft(e.target.value)} className={`${fieldCls} flex-1`} />
+              </div>
+              <div className="flex items-center gap-3">
                 <div className="w-9 h-9 rounded-xl bg-secondary flex items-center justify-center shrink-0"><Coffee size={16} className="text-primary" /></div>
+                <label className="w-24 shrink-0 text-sm text-foreground">{t(language, "settings.breakfast")}</label>
                 <input type="time" value={breakfastDraft} onChange={e => setBreakfastDraft(e.target.value)} className={`${fieldCls} flex-1`} />
               </div>
               <div className="flex items-center gap-3">
                 <div className="w-9 h-9 rounded-xl bg-secondary flex items-center justify-center shrink-0"><Utensils size={16} className="text-primary" /></div>
+                <label className="w-24 shrink-0 text-sm text-foreground">{t(language, "settings.lunch")}</label>
                 <input type="time" value={lunchDraft} onChange={e => setLunchDraft(e.target.value)} className={`${fieldCls} flex-1`} />
               </div>
               <div className="flex items-center gap-3">
-                <div className="w-9 h-9 rounded-xl bg-secondary flex items-center justify-center shrink-0"><Utensils size={16} className="text-primary" /></div>
+                <div className="w-9 h-9 rounded-xl bg-secondary flex items-center justify-center shrink-0"><UtensilsCrossed size={16} className="text-primary" /></div>
+                <label className="w-24 shrink-0 text-sm text-foreground">{t(language, "settings.dinner")}</label>
                 <input type="time" value={dinnerDraft} onChange={e => setDinnerDraft(e.target.value)} className={`${fieldCls} flex-1`} />
               </div>
               <div className="flex items-center gap-3">
                 <div className="w-9 h-9 rounded-xl bg-secondary flex items-center justify-center shrink-0"><Moon size={16} className="text-primary" /></div>
+                <label className="w-24 shrink-0 text-sm text-foreground">{t(language, "settings.sleepTime")}</label>
                 <input type="time" value={sleepDraft} onChange={e => setSleepDraft(e.target.value)} className={`${fieldCls} flex-1`} />
               </div>
             </div>

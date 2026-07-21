@@ -18,7 +18,15 @@ const CARE_TEAM_SEED: CareTeamMember[] = [
   { name: "Dr Priya Nair", role: "GP · Medical records", initials: "PN", active: false },
 ];
 
-export function SettingsScreen({ patient, onSwitchMode, onSignOut, onEditProfile }: { patient: Patient; onSwitchMode: () => void; onSignOut: () => void; onEditProfile: () => void }) {
+interface CaregiverAccount { name: string | null; email: string | null }
+
+export function SettingsScreen({ patient, caregiverAccount, onSwitchMode, onSignOut, onEditProfile }: {
+  patient: Patient;
+  caregiverAccount: CaregiverAccount;
+  onSwitchMode: () => void;
+  onSignOut: () => void;
+  onEditProfile: () => void;
+}) {
   const { language, setLanguage } = useLanguage();
   const { fontSize, setFontSize, highContrast, setHighContrast } = useAccessibility();
   const [callTarget, setCallTarget] = useState<Contact | null>(null);
@@ -32,6 +40,10 @@ export function SettingsScreen({ patient, onSwitchMode, onSignOut, onEditProfile
   const [newMemberName, setNewMemberName] = useState("");
   const [newMemberRole, setNewMemberRole] = useState("");
 
+  const caregiverInitials = caregiverAccount.name
+    ? caregiverAccount.name.trim().split(/\s+/).map(w => w[0]).slice(0, 2).join("").toUpperCase()
+    : (caregiverAccount.email ?? "?").slice(0, 2).toUpperCase();
+
   const addCareTeamMember = () => {
     if (!newMemberName.trim()) return;
     const initials = newMemberName.trim().split(/\s+/).map(w => w[0]).slice(0, 2).join("").toUpperCase();
@@ -41,19 +53,36 @@ export function SettingsScreen({ patient, onSwitchMode, onSignOut, onEditProfile
 
   return (
     <div className="px-4 py-5 space-y-5">
-      {/* Account */}
+      {/* Account — the signed-in caregiver's own identity, never the elder's */}
       <div>
         <SectionHeader title={t(language, "settings.account")} />
         <Card>
+          <div className="flex items-center gap-3 px-4 py-4">
+            <div className="w-12 h-12 rounded-2xl bg-primary flex items-center justify-center text-primary-foreground font-bold text-lg shrink-0">{caregiverInitials}</div>
+            <div className="min-w-0">
+              <p className="text-sm font-semibold text-foreground truncate">{caregiverAccount.name || caregiverAccount.email || "—"}</p>
+              {caregiverAccount.name && caregiverAccount.email && (
+                <p className="text-xs text-muted-foreground truncate">{caregiverAccount.email}</p>
+              )}
+            </div>
+          </div>
+        </Card>
+      </div>
+
+      {/* Care recipient — kept visually separate from Account above so it's
+          unambiguous that this edits the elder's profile, not the caregiver's own */}
+      <div>
+        <SectionHeader title={t(language, "settings.careRecipient")} />
+        <Card>
           <div className="flex items-center gap-3 px-4 py-4 border-b border-border">
-            <div className="w-12 h-12 rounded-2xl bg-primary flex items-center justify-center text-primary-foreground font-bold text-lg shrink-0">TW</div>
-            <div>
-              <p className="text-sm font-semibold text-foreground">Tan Wei Ming</p>
-              <p className="text-xs text-muted-foreground">Primary Caregiver · wm.tan@gmail.com</p>
+            <img src={patient.photo} alt={patient.nickname} className="w-12 h-12 rounded-2xl object-cover bg-muted shrink-0" />
+            <div className="min-w-0">
+              <p className="text-sm font-semibold text-foreground truncate">{patient.nickname}</p>
+              <p className="text-xs text-muted-foreground truncate">{patient.relation}</p>
             </div>
           </div>
           <button onClick={onEditProfile} className="w-full flex items-center justify-between px-4 py-3 text-sm text-foreground font-medium">
-            {t(language, "settings.editProfile")} <ChevronRight size={14} className="text-muted-foreground" />
+            {t(language, "settings.editCareRecipientProfile", { name: patient.nickname })} <ChevronRight size={14} className="text-muted-foreground" />
           </button>
         </Card>
       </div>

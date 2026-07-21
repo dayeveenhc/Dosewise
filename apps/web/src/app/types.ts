@@ -43,6 +43,7 @@ export interface Patient {
   gender?: string;
   weightKg?: number;
   heightCm?: number;
+  wakeTime?: string;
   mealTimes?: { breakfast?: string; lunch?: string; dinner?: string };
   sleepTime?: string;
   pastMedications?: { id: string; name: string; dose: string; purpose: string }[];
