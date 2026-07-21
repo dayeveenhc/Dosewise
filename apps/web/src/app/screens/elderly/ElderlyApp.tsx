@@ -7,7 +7,7 @@ import { ElderlyPrescriptionScreen } from "./ElderlyPrescriptionScreen";
 import { ElderlyAIScreen } from "./ElderlyAIScreen";
 import { ElderlyNotificationsScreen } from "./ElderlyNotificationsScreen";
 import { ElderlySettingsScreen } from "./ElderlySettingsScreen";
-import { AddPrescriptionSheet } from "../AddPrescriptionSheet";
+import { AddPrescriptionSheet, type MedUpdate } from "../AddPrescriptionSheet";
 import { TravelModeSheet } from "../TravelModeSheet";
 import { GuidedTour } from "../../components/GuidedTour";
 import type { TourStep } from "../../components/GuidedTour";
@@ -149,6 +149,24 @@ export function ElderlyApp({ patient, elderId, onUpdatePatient, onBack, onSignOu
     flagJustAdded(med.name);
   };
 
+  // A rescanned refill of a med they already take → fold the new dose/timing into
+  // the existing card instead of adding a duplicate. Local-only for the mockup
+  // (no server write), so a later refetch could revert it.
+  const handleUpdateMed = (id: number, patch: MedUpdate) => {
+    const target = patient.medications.find(m => m.id === id);
+    onUpdatePatient({
+      ...patient,
+      medications: patient.medications.map(m => m.id === id ? {
+        ...m,
+        dose: patch.dose || m.dose,
+        time: patch.time || m.time,
+        times: patch.times.length ? patch.times : m.times,
+        refillDaysLeft: patch.refillDaysLeft ?? m.refillDaysLeft,
+      } : m),
+    });
+    flagJustAdded(target?.name);
+  };
+
   // After the agent writes a medication change server-side (photo prescription,
   // chat-logged dose/refill), refetch so the local list isn't stale. Merge with a
   // functional update rather than spreading a closed-over `patient`, so a
@@ -268,7 +286,7 @@ export function ElderlyApp({ patient, elderId, onUpdatePatient, onBack, onSignOu
         </div>
       </div>
 
-      {addRx && <AddPrescriptionSheet initialTab={addRx} routine={{ ...patient.mealTimes, sleepTime: patient.sleepTime }} onClose={() => setAddRx(null)} onAdd={handleAddPrescription} onAdded={() => setTab("prescriptions")} onAgentAdded={(name?: string) => { void refreshMeds(); flagJustAdded(name); setTab("prescriptions"); }} />}
+      {addRx && <AddPrescriptionSheet initialTab={addRx} routine={{ ...patient.mealTimes, sleepTime: patient.sleepTime }} existingMeds={patient.medications} onUpdateMed={handleUpdateMed} scriptedRefillDemo onClose={() => setAddRx(null)} onAdd={handleAddPrescription} onAdded={() => setTab("prescriptions")} onAgentAdded={(name?: string) => { void refreshMeds(); flagJustAdded(name); setTab("prescriptions"); }} />}
       {showTravel && (
         <TravelModeSheet
           patient={patient}

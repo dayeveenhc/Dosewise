@@ -25,6 +25,7 @@ import { SettingsScreen } from "./screens/SettingsScreen";
 import { AddPrescriptionSheet } from "./screens/AddPrescriptionSheet";
 import { EditProfileSheet } from "./screens/EditProfileSheet";
 import { ElderlyApp } from "./screens/elderly/ElderlyApp";
+import type { DoctorQ } from "./screens/elderly/types";
 import { AccessibilityProvider } from "./accessibility.tsx";
 import { GuidedTour } from "./components/GuidedTour";
 import type { TourStep } from "./components/GuidedTour";
@@ -79,6 +80,16 @@ export default function App() {
   ]);
   const [showSendReminder, setShowSendReminder] = useState<{ medName?: string } | null>(null);
   const [showScanLink, setShowScanLink] = useState(false);
+  // Questions to raise with the patient's doctor — some flagged by Mei when the
+  // chat couldn't answer safely, some added by the caregiver. Powers the "Ask
+  // Doctor" tab in AskMeiScreen (mirrors the elder shell's own list).
+  const [doctorQuestions, setDoctorQuestions] = useState<DoctorQ[]>([
+    { id: 1, question: "Can Mdm Tan take Celecoxib and Metformin at the same time?", addedAt: "Added by Mei · Today",     answered: false },
+    { id: 2, question: "Is the missed midday Celecoxib linked to her joint pain?",   addedAt: "Added by Mei · Yesterday", answered: false },
+  ]);
+  const handleAddDoctorQ = (q: string) => {
+    setDoctorQuestions(prev => [{ id: Date.now(), question: q, addedAt: `Added by Mei · ${new Date().toLocaleTimeString("en-SG", { hour: "2-digit", minute: "2-digit" })}`, answered: false }, ...prev]);
+  };
 
   // Demo pop-up notifications — fires a couple of sample alerts a little
   // after landing in the caregiver app, so the top-of-screen toast UI has
@@ -381,7 +392,8 @@ export default function App() {
                 onBack={
                   !session ? () => setPreAuthStage("welcome")
                   : !needsWizard ? () => setAppMode(modeBeforeSwitch)
-                  : undefined // mid-setup with no completed profile yet — nothing sensible to go back to
+                  // Signed in but no profile yet — step back to the welcome screen.
+                  : () => setPreAuthStage("welcome")
                 }
               />
             )}
@@ -505,7 +517,20 @@ export default function App() {
                 onDismiss={id => setNotifications(prev => prev.filter(n => n.id !== id))}
               />
             )}
-            {screen === "ai" && <AskMeiScreen patient={patient} elderId={elderId} onUpdatePatient={handleUpdatePatient} onNavigate={setScreen} onMedsChanged={refreshMedications} onMedAdded={flagJustAdded} />}
+            {screen === "ai" && (
+              <AskMeiScreen
+                patient={patient}
+                elderId={elderId}
+                onUpdatePatient={handleUpdatePatient}
+                onNavigate={setScreen}
+                onMedsChanged={refreshMedications}
+                onMedAdded={flagJustAdded}
+                doctorQuestions={doctorQuestions}
+                onAddDoctorQ={handleAddDoctorQ}
+                onMarkAnswered={(id: number) => setDoctorQuestions(p => p.map(q => q.id === id ? { ...q, answered: true } : q))}
+                onDeleteQuestion={(id: number) => setDoctorQuestions(p => p.filter(q => q.id !== id))}
+              />
+            )}
             {screen === "messages" && <MessagesScreen />}
             {screen === "settings" && <SettingsScreen patient={patient} onSwitchMode={openModeSwitch} onSignOut={() => supabase.auth.signOut()} onEditProfile={() => setShowEditProfile(true)} />}
           </div>

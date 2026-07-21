@@ -31,7 +31,7 @@ const FONT_SIZE_PX: Record<FontSize, string> = {
   xxlarge: "21px",
 };
 
-const DEFAULTS: AccessibilitySettings = { fontSize: "large", highContrast: false, colourBlind: false, voiceOutput: true };
+const DEFAULTS: AccessibilitySettings = { fontSize: "small", highContrast: false, colourBlind: false, voiceOutput: true };
 
 function loadInitial(): AccessibilitySettings {
   try {

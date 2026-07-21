@@ -528,7 +528,7 @@ export function ElderlyAIScreen({ patient, elderId, onLogDose, onNavigate, onMed
               <button onClick={() => rxPhotoRef.current?.click()} className="w-10 h-10 rounded-full bg-muted text-foreground flex items-center justify-center shrink-0">
                 <Camera size={17} />
               </button>
-              <div className="flex-1 bg-input-background rounded-2xl px-3.5 py-2">
+              <div className="flex-1 bg-input-background rounded-2xl px-3.5 py-1.5 min-h-10 flex items-center">
                 <textarea
                   ref={inputRef}
                   value={input}

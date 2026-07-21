@@ -1,4 +1,4 @@
-import { useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import type { ReactNode, ChangeEvent } from "react";
 import { ArrowLeft, Loader2, Plus, X, Check, Coffee, Utensils, UtensilsCrossed, Moon, PartyPopper, Users, Camera, Sparkles, Venus, Mars } from "lucide-react";
 import { supabase } from "../../lib/supabase";
@@ -9,6 +9,7 @@ import type { ExtractedProfile } from "../../lib/hermes";
 import { MEDICATION_CATALOG, MEAL_TIMES, COMMON_CONDITIONS, COMMON_ALLERGIES, COMMON_DRUG_ALLERGIES } from "../../data/medications";
 import { TimeField, TimesPicker, defaultDoseTime } from "../../components/TimesPicker";
 import type { RoutineTimes } from "../../components/TimesPicker";
+import { resetRefillDemo } from "../AddPrescriptionSheet";
 import type { PrefillMed, Role, WizardPrefill } from "../../lib/profile";
 import { useLanguage } from "../../lib/languageContext";
 import { t } from "../../lib/language";
@@ -192,6 +193,18 @@ interface DraftMed { name: string; dose: string; times: string[] }
 const toDraftMeds = (meds?: PrefillMed[]): DraftMed[] =>
   (meds ?? []).map(m => ({ name: m.name, dose: m.dose, times: [m.time] }));
 
+// Demo "scan" result for the medication step: clicking Scan runs a mock label
+// read that surfaces these after a short loading animation (nothing is
+// pre-listed). Current meds mirror the Metformin/Amlodipine morning routine the
+// rest of the app references; the history step reads none.
+const DEMO_SCAN_MEDS: Record<"current" | "past", DraftMed[]> = {
+  current: [
+    { name: "Metformin",  dose: "500mg", times: ["8:00 AM"] },
+    { name: "Amlodipine", dose: "5mg",   times: ["8:00 AM"] },
+  ],
+  past: [],
+};
+
 function MedList({ meds, extractKind, routine, onAdd, onRemove }: { meds: DraftMed[]; extractKind: "current" | "past"; routine: RoutineTimes; onAdd: (m: DraftMed) => void; onRemove: (i: number) => void }) {
   const { language } = useLanguage();
   const [open, setOpen] = useState(false);
@@ -202,7 +215,9 @@ function MedList({ meds, extractKind, routine, onAdd, onRemove }: { meds: DraftM
   const [showSuggestions, setShowSuggestions] = useState(false);
   const [scanning, setScanning] = useState(false);
   const [proposal, setProposal] = useState<string | null>(null);
-  const fileRef = useRef<HTMLInputElement>(null);
+  const scanTimer = useRef<number | undefined>(undefined);
+
+  useEffect(() => () => window.clearTimeout(scanTimer.current), []);
 
   const submit = () => {
     if (!name.trim() || !times.length) return;
@@ -215,32 +230,25 @@ function MedList({ meds, extractKind, routine, onAdd, onRemove }: { meds: DraftM
     setProposal(null);
   };
 
-  // Real upload: the photo/PDF goes to Hermes's structured /profile/extract
-  // endpoint, which returns the medications it read. We add each one to the list
-  // (reviewable + removable) rather than guessing from a catalog substring.
-  const onFile = async (e: ChangeEvent<HTMLInputElement>) => {
-    const file = e.target.files?.[0];
-    e.target.value = "";
-    if (!file) return;
-    const isPdf = file.type === "application/pdf";
-    setScanning(true);
+  // Mock scan: no backend or file needed. Tapping Scan plays a short loading
+  // animation, then the "read" medications appear in the list (reviewable +
+  // removable) — the demo stand-in for Hermes's real /profile/extract read.
+  const runMockScan = () => {
+    window.clearTimeout(scanTimer.current);
+    setOpen(false);
     setProposal(null);
-    try {
-      const b64 = await fileToBase64(file);
-      const { fields, note } = await extractProfile(isPdf ? undefined : b64, isPdf ? b64 : undefined);
-      const found = (extractKind === "past" ? fields.past_meds : fields.current_meds) ?? [];
-      let added = 0;
-      for (const m of found) {
-        const medName = (m.name ?? "").trim();
-        if (!medName) continue;
-        onAdd({ name: medName, dose: (m.dose ?? "").trim() || t(language, "wizard.asDirected"), times: [defaultTime] });
-        added++;
+    setScanning(true);
+    scanTimer.current = window.setTimeout(() => {
+      const found = DEMO_SCAN_MEDS[extractKind];
+      for (const m of found) onAdd(m);
+      // Nothing read (history step) → drop into the manual form with a note;
+      // on a successful read the meds simply appear in the list above.
+      if (!found.length) {
+        setProposal(t(language, "wizard.uploadNoMed"));
+        setOpen(true);
       }
-      setProposal(added ? t(language, "wizard.uploadAddedCount", { count: added }) : (note ?? t(language, "wizard.uploadNoMed")));
-      if (!added) setOpen(true);
-    } finally {
       setScanning(false);
-    }
+    }, 1800);
   };
 
   const q = name.trim().toLowerCase();
@@ -248,11 +256,6 @@ function MedList({ meds, extractKind, routine, onAdd, onRemove }: { meds: DraftM
 
   return (
     <div>
-      {/* No `capture` here (unlike a camera-only capture input) — mobile browsers
-          bias straight into the camera when it's present, which blocks picking
-          an existing PDF from Files. Omitting it still offers "Take Photo" as
-          one of the native picker's options, so scanning still works. */}
-      <input ref={fileRef} type="file" accept="image/*,application/pdf" className="hidden" onChange={onFile} />
       {meds.length > 0 && (
         <div className="space-y-2 mb-3">
           {meds.map((m, i) => (
@@ -318,14 +321,21 @@ function MedList({ meds, extractKind, routine, onAdd, onRemove }: { meds: DraftM
             <button onClick={submit} disabled={!name.trim() || !times.length} className="flex-1 h-10 rounded-xl bg-primary text-primary-foreground text-sm font-bold disabled:opacity-40">{t(language, "wizard.add")}</button>
           </div>
         </div>
+      ) : scanning ? (
+        <div className="rounded-2xl border-2 border-primary/30 bg-primary/5 p-5 flex flex-col items-center text-center gap-2">
+          <div className="relative w-12 h-12 rounded-xl bg-primary/10 overflow-hidden flex items-center justify-center">
+            <Camera size={22} className="text-primary" />
+            <div className="absolute inset-x-0 h-0.5 bg-primary/80 shadow-[0_0_8px_2px] shadow-primary/50 animate-scanline" />
+          </div>
+          <p className="text-sm font-semibold text-primary">{t(language, "wizard.reading")}</p>
+        </div>
       ) : (
         <div className="flex gap-2">
           <button onClick={() => setOpen(true)} className="flex-1 h-12 rounded-2xl border-2 border-dashed border-border text-muted-foreground text-sm font-medium flex items-center justify-center gap-2 active:scale-[0.98] transition-transform">
             <Plus size={15} />{t(language, "wizard.addMedication")}
           </button>
-          <button onClick={() => fileRef.current?.click()} disabled={scanning} className="flex-1 h-12 rounded-2xl border-2 border-dashed border-primary/40 text-primary text-sm font-medium flex items-center justify-center gap-2 active:scale-[0.98] transition-transform disabled:opacity-60">
-            {scanning ? <Sparkles size={15} className="animate-pulse" /> : <Camera size={15} />}
-            {scanning ? t(language, "wizard.reading") : t(language, "wizard.scanOrUpload")}
+          <button onClick={runMockScan} disabled={scanning} className="flex-1 h-12 rounded-2xl border-2 border-dashed border-primary/40 text-primary text-sm font-medium flex items-center justify-center gap-2 active:scale-[0.98] transition-transform disabled:opacity-60">
+            <Camera size={15} />{t(language, "wizard.scanOrUpload")}
           </button>
         </div>
       )}
@@ -401,7 +411,13 @@ export function GuidedSetupWizard({ mode, hasSession, elderId: initialElderId, p
   const steps = allSteps;
   const step = steps[stepIndex];
   const total = steps.length;
-  const showBackButton = !elderId && step !== "done";
+  // Once an account exists (returning user, or just created), the account step
+  // renders as a safe name-only view — so it can be revisited without trying to
+  // sign up again. That lets every step after "account" carry a back button; the
+  // account step itself only backs out (to the setup-method screen) before the
+  // account is created.
+  const accountEstablished = hasSessionAtStart || !!elderId;
+  const showBackButton = step !== "done" && (stepIndex > 0 || !elderId);
 
   const goNext = () => setStepIndex(i => Math.min(i + 1, steps.length - 1));
   const goBack = () => setStepIndex(i => Math.max(i - 1, 0));
@@ -414,6 +430,8 @@ export function GuidedSetupWizard({ mode, hasSession, elderId: initialElderId, p
     const { data, error } = await supabase.auth.signUp({ email: email.trim(), password });
     setAccountLoading(false);
     if (error) { setAccountError(error.message); return; }
+    // Fresh account → replay the scripted refill demo from the crumpled Metformin.
+    resetRefillDemo();
     if (!data.session || !data.user) {
       setAccountInfo(t(language, "wizard.checkEmail"));
       return;
@@ -455,15 +473,15 @@ export function GuidedSetupWizard({ mode, hasSession, elderId: initialElderId, p
       {step === "account" && (
         <>
           <StepHeader
-            title={hasSessionAtStart ? t(language, "wizard.accountTitleReturning") : t(language, "wizard.accountTitleNew")}
-            subtitle={hasSessionAtStart ? t(language, "wizard.accountSubtitleReturning") : t(language, "wizard.accountSubtitleNew")}
+            title={accountEstablished ? t(language, "wizard.accountTitleReturning") : t(language, "wizard.accountTitleNew")}
+            subtitle={accountEstablished ? t(language, "wizard.accountSubtitleReturning") : t(language, "wizard.accountSubtitleNew")}
           />
           <div className="space-y-3 flex-1">
             <div>
               <label className="block text-xs font-semibold text-foreground mb-1.5">{t(language, "wizard.preferredName")}</label>
               <input value={fullName} onChange={e => setFullName(e.target.value)} placeholder={t(language, "wizard.preferredNamePlaceholder")} className={cls(fullName.trim().length > 0)} />
             </div>
-            {!hasSessionAtStart && (
+            {!accountEstablished && (
               <>
                 <div>
                   <label className="block text-xs font-semibold text-foreground mb-1.5">{t(language, "wizard.email")}</label>
@@ -478,7 +496,7 @@ export function GuidedSetupWizard({ mode, hasSession, elderId: initialElderId, p
             {accountError && <p className="text-xs text-destructive font-medium">{accountError}</p>}
             {accountInfo && <p className="text-xs text-primary font-medium">{accountInfo}</p>}
           </div>
-          {hasSessionAtStart ? (
+          {accountEstablished ? (
             <ContinueButton onClick={goNext} disabled={!fullName.trim()}>{t(language, "wizard.continue")}</ContinueButton>
           ) : (
             <ContinueButton onClick={createAccount} disabled={!email.trim() || !password.trim()} loading={accountLoading}>{t(language, "wizard.createAccount")}</ContinueButton>

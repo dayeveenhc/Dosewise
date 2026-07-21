@@ -205,3 +205,12 @@
     line-height: 1.5;
   }
 }
+
+/* Sweeping line for the mock prescription-label scanner. */
+@keyframes scanline {
+  0%   { top: 0%; }
+  100% { top: 100%; }
+}
+.animate-scanline {
+  animation: scanline 1.3s ease-in-out infinite alternate;
+}

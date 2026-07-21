@@ -1,11 +1,14 @@
-import { useState, useRef } from "react";
+import { useState, useRef, useEffect } from "react";
 import type { ReactNode, ChangeEvent } from "react";
-import { X, Check, Plus, Pill, Camera, PenLine, Image as ImageIcon, Sparkles } from "lucide-react";
+import { X, Check, Plus, Pill, Camera, PenLine, Image as ImageIcon, Sparkles, ScanLine, AlertTriangle } from "lucide-react";
 import type { Medication } from "../types";
 import { MED_COLOURS, MEDICATION_CATALOG, COMMON_CONDITIONS, MED_PHOTOS } from "../data/medications";
-import { TimesPicker, defaultDoseTime } from "../components/TimesPicker";
+import { TimesPicker, defaultDoseTime, toDisplayTime } from "../components/TimesPicker";
 import type { RoutineTimes } from "../components/TimesPicker";
-import { agentTurn, fileToBase64 } from "../lib/hermes";
+import { ConfirmDialog } from "../components/ConfirmDialog";
+
+// Patch a duplicate scan hands back to the parent to fold into the existing med.
+export interface MedUpdate { dose: string; time: string; times: string[]; refillDaysLeft?: number }
 
 interface AddPrescriptionSheetProps {
   onClose: () => void;
@@ -19,7 +22,55 @@ interface AddPrescriptionSheetProps {
   // parent can refetch the medication list (there is no local onAdd for this path).
   // Receives the added medication name so the parent can highlight it as proof.
   onAgentAdded?: (name?: string) => void;
+  // The person's current medications, so a scan of one they already take is
+  // recognised as a dose change (update the existing card) rather than a duplicate.
+  existingMeds?: Medication[];
+  onUpdateMed?: (id: number, patch: MedUpdate) => Promise<unknown> | void;
+  // Enables the scripted demo sequence (crumpled Metformin refill → clean eye
+  // drops) that advances each time a scan is committed. Off elsewhere, so the
+  // sheet just stages the single crumpled-Metformin scan.
+  scriptedRefillDemo?: boolean;
 }
+
+// --- Mock label scan (demo) --------------------------------------------------
+// The real product reads the label with Hermes' vision tool. For the mockup we
+// skip the backend and stage a short scripted sequence, advanced once per
+// committed scan:
+//   1. a *crumpled* Metformin refill — only the name reads through; dose + timing
+//      are illegible, so the person enters them by hand (and, since they already
+//      take Metformin, it updates that card instead of adding a duplicate);
+//   2. a clean Latanoprost eye-drops label — fully read, no missing fields.
+interface ScanScenario {
+  name: string; purpose: string; dose: string; refillDays: string;
+  crumpled: boolean; timeSlot: "morning" | "evening" | "bedtime"; photo: string;
+}
+const SCAN_SCENARIOS: ScanScenario[] = [
+  { name: "Metformin",             purpose: "Diabetes", dose: "",              refillDays: "",   crumpled: true,  timeSlot: "morning", photo: MED_PHOTOS["Metformin"] },
+  { name: "Latanoprost Eye Drops", purpose: "Glaucoma", dose: "1 drop each eye", refillDays: "30", crumpled: false, timeSlot: "bedtime", photo: MED_PHOTOS["Warfarin"] },
+];
+
+const SCAN_STEP_KEY = "dosewise:demo-rx-step";
+const readScanStep = (): number => {
+  try { return Math.min(SCAN_SCENARIOS.length - 1, Math.max(0, Number(localStorage.getItem(SCAN_STEP_KEY)) || 0)); }
+  catch { return 0; }
+};
+const writeScanStep = (n: number) => {
+  try { localStorage.setItem(SCAN_STEP_KEY, String(Math.min(SCAN_SCENARIOS.length - 1, n))); } catch { /* ignore */ }
+};
+
+// Rewind the scripted refill demo to step 1 (crumpled Metformin), so a freshly
+// created account starts the sequence over from the top.
+export const resetRefillDemo = () => {
+  try { localStorage.removeItem(SCAN_STEP_KEY); } catch { /* ignore */ }
+};
+
+// Resolve a scenario's vague slot to the elder's own routine time.
+const slotToTime = (slot: ScanScenario["timeSlot"], routine?: RoutineTimes) => {
+  const raw = slot === "morning" ? (routine?.breakfast || "08:00")
+            : slot === "evening" ? (routine?.dinner || "19:00")
+            : (routine?.sleepTime || "22:00");
+  return toDisplayTime(raw);
+};
 
 // A small type-ahead input: shows filtered suggestions as the user types.
 function TypeAhead<T>({ value, onChange, onPick, items, filter, label, render, placeholder }: {
@@ -64,16 +115,24 @@ function TypeAhead<T>({ value, onChange, onPick, items, filter, label, render, p
   );
 }
 
-export function AddPrescriptionSheet({ onClose, onAdd, onAdded, initialTab = "manual", routine, onAgentAdded }: AddPrescriptionSheetProps) {
-  const [tab, setTab] = useState<"scan" | "manual">(initialTab);
+export function AddPrescriptionSheet({ onClose, onAdd, onAdded, routine, existingMeds, onUpdateMed, scriptedRefillDemo }: AddPrescriptionSheetProps) {
+  const [tab, setTab] = useState<"scan" | "manual">("scan");
   const [scannedPhoto, setScannedPhoto] = useState<string | null>(null);
-  const [scanning, setScanning] = useState(false);
-  const [proposal, setProposal] = useState<string | null>(null);
-  const [committing, setCommitting] = useState(false);
-  const [committed, setCommitted] = useState(false);
+  const [scanning, setScanning] = useState(true);
+  // Set once a label has been "read": `crumpled` decides whether the banner warns
+  // that the dose/timing were unreadable (fill by hand) or just confirms the read.
+  const [scanNote, setScanNote] = useState<{ read: string; crumpled: boolean } | null>(null);
   const [submitState, setSubmitState] = useState<"idle" | "saving" | "success">("idle");
   const [submitError, setSubmitError] = useState<string | null>(null);
+  // The already-taken med a committed scan would duplicate — set to open the
+  // "update existing?" confirmation before writing.
+  const [dupConfirm, setDupConfirm] = useState<Medication | null>(null);
   const fileRef = useRef<HTMLInputElement>(null);
+  const scanTimer = useRef<number | undefined>(undefined);
+  // Which scripted scenario this scan stages. Frozen for the sheet's lifetime so
+  // it can't shift mid-scan; the next open reads the advanced step.
+  const stepRef = useRef<number>(scriptedRefillDemo ? readScanStep() : 0);
+  const scenario = SCAN_SCENARIOS[stepRef.current];
 
   const [name, setName] = useState("");
   const [dose, setDose] = useState("");
@@ -84,31 +143,91 @@ export function AddPrescriptionSheet({ onClose, onAdd, onAdded, initialTab = "ma
 
   const isValid = name.trim() && dose.trim() && purpose.trim() && selectedTimes.length > 0;
 
-  const handleAdd = async () => {
-    if (!isValid || submitState === "saving") return;
+  // Mock scan: stage the active scenario after a short loading animation. A
+  // crumpled label fills only name + condition (dose/timing left blank to enter by
+  // hand); a clean label fills everything. Nothing is committed here — the person
+  // confirms via the "Add" button below (the real onAdd / onUpdateMed path).
+  const runMockScan = (photoUrl: string) => {
+    window.clearTimeout(scanTimer.current);
+    setScannedPhoto(photoUrl);
+    setScanNote(null);
+    setScanning(true);
+    setTab("scan");
+    scanTimer.current = window.setTimeout(() => {
+      setName(scenario.name);
+      setPurpose(scenario.purpose);
+      if (scenario.crumpled) {
+        setDose("");           // illegible on the crumpled label — enter by hand
+        setSelectedTimes([]);  // illegible — pick the times by hand
+        setRefillDays("");
+      } else {
+        setDose(scenario.dose);
+        setSelectedTimes([slotToTime(scenario.timeSlot, routine)]);
+        setRefillDays(scenario.refillDays);
+      }
+      setScanNote({ read: scenario.name, crumpled: scenario.crumpled });
+      setScanning(false);
+      setTab("manual");
+    }, 1800);
+  };
+
+  // Auto-start the mock scan the moment the sheet opens, so tapping "Add
+  // prescription" goes straight into the scanning animation.
+  useEffect(() => {
+    runMockScan(scenario.photo);
+    return () => window.clearTimeout(scanTimer.current);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  // Write the entered details — as a new medication, or (when they already take
+  // it) folded into the existing card. Advances the scripted demo on success.
+  const commit = async (dupMed?: Medication) => {
     const chosenTimes = selectedTimes;
     setSubmitState("saving");
     setSubmitError(null);
     try {
-      await onAdd({
-        name: name.trim(),
-        dose: dose.trim(),
-        purpose: purpose.trim(),
-        time: chosenTimes[0] || "8:00 AM",
-        times: chosenTimes,
-        refillDaysLeft: refillDays ? parseInt(refillDays) : undefined,
-        colour,
-      });
+      if (dupMed && onUpdateMed) {
+        await onUpdateMed(dupMed.id, {
+          dose: dose.trim(),
+          time: chosenTimes[0] || dupMed.time,
+          times: chosenTimes,
+          refillDaysLeft: refillDays ? parseInt(refillDays) : undefined,
+        });
+      } else {
+        await onAdd({
+          name: name.trim(),
+          dose: dose.trim(),
+          purpose: purpose.trim(),
+          time: chosenTimes[0] || "8:00 AM",
+          times: chosenTimes,
+          refillDaysLeft: refillDays ? parseInt(refillDays) : undefined,
+          colour,
+        });
+      }
+      if (scriptedRefillDemo) writeScanStep(stepRef.current + 1);
       setSubmitState("success");
+      setDupConfirm(null);
       window.setTimeout(() => {
         onAdded?.();
         onClose();
       }, 700);
     } catch (error) {
-      console.error("Failed to add medication", error);
+      console.error("Failed to save medication", error);
       setSubmitState("idle");
+      setDupConfirm(null);
       setSubmitError("Couldn't save the medication. Please try again.");
     }
+  };
+
+  const handleAdd = () => {
+    if (!isValid || submitState === "saving") return;
+    // Already take this one? Treat the scan as a dose change and confirm before
+    // updating the existing card, rather than adding a second Metformin.
+    const dup = onUpdateMed
+      ? existingMeds?.find(m => m.name.trim().toLowerCase() === name.trim().toLowerCase())
+      : undefined;
+    if (dup) { setDupConfirm(dup); return; }
+    void commit();
   };
 
   const pickMedication = (m: { name: string; purpose: string; dose: string }) => {
@@ -117,51 +236,17 @@ export function AddPrescriptionSheet({ onClose, onAdd, onAdded, initialTab = "ma
     if (!dose.trim()) setDose(m.dose);
   };
 
-  // Real label scan: the photo or PDF goes to Hermes, whose add_prescription tool
-  // reads the label and proposes the details (propose→confirm; nothing is saved
-  // until the person confirms below, and the write happens server-side).
-  const runScan = async (photoUrl: string | null, file: Blob, isPdf: boolean) => {
-    setScannedPhoto(photoUrl);
-    setScanning(true);
-    setProposal(null);
-    setCommitted(false);
-    const b64 = await fileToBase64(file);
-    const { reply } = await agentTurn(
-      "Here is a photo of my prescription.",
-      isPdf ? undefined : b64,
-      isPdf ? b64 : undefined
-    );
-    setProposal(reply);
-    setScanning(false);
-  };
-
-  const confirmScan = async () => {
-    setCommitting(true);
-    const { reply, actions } = await agentTurn("Yes, please add it.");
-    setProposal(reply);
-    setCommitting(false);
-    // actions only contains add_prescription once the write actually committed
-    // (never on the propose turn) — a reliable "it's really saved" signal.
-    const added = actions.find(a => a.tool === "add_prescription");
-    if (added) {
-      setCommitted(true);
-      onAgentAdded?.(added.name);
-    }
-  };
-
   const onFile = (e: ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     e.target.value = "";
     if (!file) return;
+    // Mockup: the actual bytes aren't read — show the chosen image while the
+    // canned scan runs.
     const isPdf = file.type === "application/pdf";
-    runScan(isPdf ? null : URL.createObjectURL(file), file, isPdf);
+    runMockScan(isPdf ? scenario.photo : URL.createObjectURL(file));
   };
 
-  const onSamplePhoto = async () => {
-    // The bundled sample image, routed through the same real agent path.
-    const blob = await (await fetch(MED_PHOTOS["Metformin"])).blob();
-    runScan(MED_PHOTOS["Metformin"], blob, false);
-  };
+  const onSamplePhoto = () => runMockScan(scenario.photo);
 
   const inputCls = "w-full bg-input-background border border-border rounded-xl px-3.5 py-2.5 text-sm text-foreground placeholder:text-muted-foreground outline-none focus:border-primary transition-colors";
 
@@ -214,41 +299,18 @@ export function AddPrescriptionSheet({ onClose, onAdd, onAdded, initialTab = "ma
               <input ref={fileRef} type="file" accept="image/*,application/pdf" className="hidden" onChange={onFile} />
               {scanning ? (
                 <div className="border-2 border-primary/30 bg-primary/5 rounded-2xl p-6 flex flex-col items-center text-center gap-3">
-                  {scannedPhoto && <img src={scannedPhoto} alt="scan" className="w-24 h-24 rounded-xl object-cover" />}
-                  <div className="flex items-center gap-2 text-primary">
-                    <Sparkles size={16} className="animate-pulse" />
-                    <span className="text-sm font-semibold">Reading the label…</span>
-                  </div>
-                </div>
-              ) : proposal ? (
-                <div className="space-y-3">
-                  <div className="border border-border bg-card rounded-2xl p-4 flex flex-col gap-3">
-                    {scannedPhoto && <img src={scannedPhoto} alt="scan" className="w-20 h-20 rounded-xl object-cover" />}
-                    <p className="text-[15px] text-foreground leading-relaxed whitespace-pre-line">{proposal}</p>
-                  </div>
-                  {committed ? (
-                    <button onClick={onClose} className="w-full bg-primary text-primary-foreground rounded-2xl py-3.5 text-sm font-semibold flex items-center justify-center gap-2">
-                      <Check size={16} /> Done
-                    </button>
-                  ) : (
-                    <div className="flex gap-2">
-                      <button
-                        onClick={() => { setProposal(null); setScannedPhoto(null); }}
-                        disabled={committing}
-                        className="flex-1 h-12 rounded-2xl border border-border text-muted-foreground text-sm font-semibold disabled:opacity-40"
-                      >
-                        Retake
-                      </button>
-                      <button
-                        onClick={confirmScan}
-                        disabled={committing}
-                        className="flex-1 h-12 rounded-2xl bg-primary text-primary-foreground text-sm font-semibold flex items-center justify-center gap-2 disabled:opacity-40"
-                      >
-                        {committing ? <Sparkles size={15} className="animate-pulse" /> : <Check size={15} />}
-                        {committing ? "Saving…" : "Yes, add it"}
-                      </button>
+                  {scannedPhoto && (
+                    <div className="relative w-28 h-28 rounded-xl overflow-hidden">
+                      <img src={scannedPhoto} alt="scan" className="w-full h-full object-cover" />
+                      {/* Sweeping scan line over the label */}
+                      <div className="absolute inset-x-0 h-0.5 bg-primary/80 shadow-[0_0_8px_2px] shadow-primary/50 animate-scanline" />
                     </div>
                   )}
+                  <div className="flex items-center gap-2 text-primary">
+                    <ScanLine size={16} className="animate-pulse" />
+                    <span className="text-sm font-semibold">Scanning prescription label…</span>
+                  </div>
+                  <p className="text-xs text-muted-foreground">Reading the medication, dose and instructions</p>
                 </div>
               ) : (
                 <>
@@ -259,7 +321,7 @@ export function AddPrescriptionSheet({ onClose, onAdd, onAdded, initialTab = "ma
                     <div className="w-14 h-14 rounded-full bg-primary/10 flex items-center justify-center">
                       <Camera size={26} className="text-primary" />
                     </div>
-                    <p className="text-[15px] font-semibold text-foreground">Take a photo or upload a file</p>
+                    <p className="text-[15px] font-semibold text-foreground">Scan another photo or file</p>
                     <p className="text-xs text-muted-foreground leading-relaxed">Snap the medication box or prescription label, or upload a photo/PDF of it — Mei will read it and check the details with you.</p>
                   </button>
                   <button
@@ -276,6 +338,32 @@ export function AddPrescriptionSheet({ onClose, onAdd, onAdded, initialTab = "ma
             </div>
           ) : (
             <>
+              {/* Crumpled label → warn that the dose/timing were unreadable and
+                  must be entered by hand. Clean label → just confirm the read. */}
+              {scanNote && (scanNote.crumpled ? (
+                <div className="rounded-2xl border border-amber-300 bg-amber-50 p-3.5 space-y-1.5">
+                  <div className="flex items-center gap-2 text-amber-700">
+                    <AlertTriangle size={15} className="shrink-0" />
+                    <span className="text-sm font-semibold">Label looks crumpled</span>
+                  </div>
+                  <p className="text-xs text-amber-800 leading-relaxed">
+                    I could read the name (<span className="font-semibold">{scanNote.read}</span>), but the
+                    <span className="font-semibold"> dosage</span> and <span className="font-semibold">timing</span> were
+                    too creased to make out. Please enter them yourself below.
+                  </p>
+                </div>
+              ) : (
+                <div className="rounded-2xl border border-primary/20 bg-primary/5 p-3.5 space-y-1">
+                  <div className="flex items-center gap-2 text-primary">
+                    <Sparkles size={15} className="shrink-0" />
+                    <span className="text-sm font-semibold">Read from the label</span>
+                  </div>
+                  <p className="text-xs text-muted-foreground leading-relaxed">
+                    Got <span className="font-semibold text-foreground">{scanNote.read}</span> and its details — please check them before adding.
+                  </p>
+                </div>
+              ))}
+
               {/* Medication name — type-ahead */}
               <div>
                 <label className="block text-xs font-semibold text-foreground mb-1.5">Medication name <span className="text-destructive">*</span></label>
@@ -385,6 +473,17 @@ export function AddPrescriptionSheet({ onClose, onAdd, onAdded, initialTab = "ma
           </div>
         )}
       </div>
+
+      {/* Already-taken med → confirm this is a dose change to the existing card. */}
+      {dupConfirm && (
+        <ConfirmDialog
+          title={`Update your ${dupConfirm.name}?`}
+          body={`You already take ${dupConfirm.name} (${dupConfirm.dose}). This looks like a dose change — update your existing ${dupConfirm.name} instead of adding another one?`}
+          confirmLabel="Update it"
+          onConfirm={() => void commit(dupConfirm)}
+          onCancel={() => setDupConfirm(null)}
+        />
+      )}
     </div>
   );
 }
