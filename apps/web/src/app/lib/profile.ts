@@ -19,6 +19,7 @@ export interface ProfileDetails {
   conditions?: string[];
   allergies?: string[];
   drugAllergies?: string[];
+  wakeTime?: string;
   mealTimes?: { breakfast?: string; lunch?: string; dinner?: string };
   sleepTime?: string;
   travelPlan?: { startDate: string; endDate: string; timezone: string };

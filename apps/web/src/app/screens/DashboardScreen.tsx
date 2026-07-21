@@ -13,7 +13,9 @@ function AdherenceRing({ value }: { value: number }) {
   const radius = (size - strokeWidth) / 2;
   const circumference = 2 * Math.PI * radius;
   const progress = circumference - (value / 100) * circumference;
-  const colour = value >= 80 ? "#2E7D32" : value >= 50 ? "#C05621" : "#B91C1C";
+  // Same two colours used for dose status everywhere else (taken=green,
+  // missed=orange) — no third "red" tier that doesn't map to any status.
+  const colour = value >= 80 ? "#2E7D32" : "#C05621";
   const cx = size / 2;
   const cy = size / 2;
   return (
