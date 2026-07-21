@@ -1,6 +1,6 @@
 import { useRef, useState } from "react";
 import type { ReactNode, ChangeEvent } from "react";
-import { ArrowLeft, Loader2, Plus, X, Check, Coffee, Utensils, UtensilsCrossed, Moon, PartyPopper, Users, Camera, Sparkles, Venus, Mars } from "lucide-react";
+import { ArrowLeft, Loader2, Plus, X, Check, Sunrise, Coffee, Utensils, UtensilsCrossed, Moon, PartyPopper, Users, Camera, Sparkles, Venus, Mars } from "lucide-react";
 import { supabase } from "../../lib/supabase";
 import { saveProfile } from "../../lib/profile";
 import { addMedication, archiveMedication, to24h } from "../../lib/medications";
@@ -366,6 +366,7 @@ export function GuidedSetupWizard({ mode, hasSession, elderId: initialElderId, p
   const [conditions, setConditions] = useState<string[]>(prefill?.details.conditions ?? []);
   const [allergies, setAllergies] = useState<string[]>(prefill?.details.allergies ?? []);
   const [drugAllergies, setDrugAllergies] = useState<string[]>(prefill?.details.drugAllergies ?? []);
+  const [wakeTime, setWakeTime] = useState(prefill?.details.wakeTime ?? "07:00");
   // An extraction yields one time per med; the wizard's multi-select shape wraps
   // it so the person can add more times on top of what was read.
   const [currentMeds, setCurrentMeds] = useState<DraftMed[]>(() => toDraftMeds(prefill?.currentMeds));
@@ -433,6 +434,7 @@ export function GuidedSetupWizard({ mode, hasSession, elderId: initialElderId, p
         gender: gender || undefined,
         conditions,
         allergies, drugAllergies,
+        wakeTime,
         mealTimes: { breakfast, lunch, dinner },
         sleepTime,
       });
@@ -565,10 +567,12 @@ export function GuidedSetupWizard({ mode, hasSession, elderId: initialElderId, p
         <>
           <StepHeader title={t(language, "wizard.routineTitle")} subtitle={t(language, "wizard.routineSubtitle")} />
           <div className="space-y-3 flex-1">
+            <TimeField label={t(language, "wizard.wakeUpTime")} icon={<Sunrise size={15} className="text-primary" />} value={wakeTime} onChange={setWakeTime} />
             <TimeField label={t(language, "wizard.breakfast")} icon={<Coffee size={15} className="text-primary" />} value={breakfast} onChange={setBreakfast} />
             <TimeField label={t(language, "wizard.lunch")} icon={<Utensils size={15} className="text-primary" />} value={lunch} onChange={setLunch} />
             <TimeField label={t(language, "wizard.dinner")} icon={<UtensilsCrossed size={15} className="text-primary" />} value={dinner} onChange={setDinner} />
             <TimeField label={t(language, "wizard.bedtime")} icon={<Moon size={15} className="text-primary" />} value={sleepTime} onChange={setSleepTime} />
+
           </div>
           <ContinueButton onClick={goNext}>{t(language, "wizard.continue")}</ContinueButton>
         </>

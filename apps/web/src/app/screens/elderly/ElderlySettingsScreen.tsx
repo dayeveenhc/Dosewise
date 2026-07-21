@@ -1,5 +1,7 @@
 import { useState, useEffect } from "react";
-import { Shield, ChevronDown, Eye, Phone, RefreshCw, LogOut, Check, Loader2, Coffee, Utensils, UtensilsCrossed, Moon } from "lucide-react";
+import { QRCodeSVG } from "qrcode.react";
+import { Shield, ChevronDown, Eye, Phone, RefreshCw, LogOut, Check, Loader2, Sunrise, Coffee, Utensils, UtensilsCrossed, Moon, QrCode } from "lucide-react";
+import { buildCareLinkPayload } from "../../lib/careLinks";
 import { useAccessibility } from "../../accessibility.tsx";
 import type { FontSize } from "../../accessibility.tsx";
 import type { Patient } from "../../types";
@@ -41,6 +43,7 @@ export function ElderlySettingsScreen({ patient, elderId, onUpdatePatient, onBac
   const [conditionsDraft, setConditionsDraft] = useState<string[]>([]);
   const [allergiesDraft, setAllergiesDraft] = useState<string[]>([]);
   const [drugAllergiesDraft, setDrugAllergiesDraft] = useState<string[]>([]);
+  const [wakeDraft, setWakeDraft] = useState("07:00");
   const [breakfastDraft, setBreakfastDraft] = useState("08:00");
   const [lunchDraft, setLunchDraft] = useState("12:30");
   const [dinnerDraft, setDinnerDraft] = useState("19:00");
@@ -61,6 +64,7 @@ export function ElderlySettingsScreen({ patient, elderId, onUpdatePatient, onBac
       setConditionsDraft(d.conditions ?? []);
       setAllergiesDraft(d.allergies ?? []);
       setDrugAllergiesDraft(d.drugAllergies ?? []);
+      setWakeDraft(d.wakeTime ?? "07:00");
       setBreakfastDraft(d.mealTimes?.breakfast ?? "08:00");
       setLunchDraft(d.mealTimes?.lunch ?? "12:30");
       setDinnerDraft(d.mealTimes?.dinner ?? "19:00");
@@ -80,6 +84,7 @@ export function ElderlySettingsScreen({ patient, elderId, onUpdatePatient, onBac
       conditions: conditionsDraft,
       allergies: allergiesDraft,
       drugAllergies: drugAllergiesDraft,
+      wakeTime: wakeDraft,
       mealTimes,
       sleepTime: sleepDraft,
     });
@@ -91,6 +96,7 @@ export function ElderlySettingsScreen({ patient, elderId, onUpdatePatient, onBac
       heightCm: heightDraft ? Number(heightDraft) : undefined,
       conditions: conditionsDraft,
       allergies: [...allergiesDraft, ...drugAllergiesDraft],
+      wakeTime: wakeDraft,
       mealTimes,
       sleepTime: sleepDraft,
     });
@@ -155,6 +161,7 @@ export function ElderlySettingsScreen({ patient, elderId, onUpdatePatient, onBac
           <div>
             <p className="text-sm font-semibold text-foreground mb-2">{t(language, "settings.mealsSleep")}</p>
             <div className="space-y-3">
+              <TimeField label={t(language, "wizard.wakeUpTime")} icon={<Sunrise size={15} className="text-primary" />} value={wakeDraft} onChange={setWakeDraft} />
               <TimeField label={t(language, "wizard.breakfast")} icon={<Coffee size={15} className="text-primary" />} value={breakfastDraft} onChange={setBreakfastDraft} />
               <TimeField label={t(language, "wizard.lunch")} icon={<Utensils size={15} className="text-primary" />} value={lunchDraft} onChange={setLunchDraft} />
               <TimeField label={t(language, "wizard.dinner")} icon={<UtensilsCrossed size={15} className="text-primary" />} value={dinnerDraft} onChange={setDinnerDraft} />
@@ -173,6 +180,23 @@ export function ElderlySettingsScreen({ patient, elderId, onUpdatePatient, onBac
           </div>
           )}
         </div>
+
+        {/* Caregiver linking QR — a caregiver scans this to request managing this
+            elder's medications; the request lands in the elder's Notifications. */}
+        {elderId && (
+          <div className="bg-card rounded-2xl border border-border p-4">
+            <div className="flex items-center gap-2 mb-1">
+              <QrCode size={15} className="text-primary" />
+              <p className="font-semibold text-foreground">{t(language, "link.qrTitle")}</p>
+            </div>
+            <p className="text-xs text-muted-foreground mb-3">{t(language, "link.qrDesc")}</p>
+            <div className="flex justify-center">
+              <div className="bg-white rounded-2xl p-4 border border-border">
+                <QRCodeSVG value={buildCareLinkPayload(elderId, patient.name)} size={168} level="M" />
+              </div>
+            </div>
+          </div>
+        )}
 
         {/* Accessibility */}
         <div className="bg-card rounded-2xl border border-border divide-y divide-border">

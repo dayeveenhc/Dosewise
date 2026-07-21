@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { CheckCircle2, AlertTriangle, Circle, X, ChevronDown, Plus, Droplets, Pill } from "lucide-react";
+import { CheckCircle2, AlertTriangle, Circle, X, ChevronDown, Plus, Droplets, Pill, QrCode } from "lucide-react";
 import type { MedStatus, Patient } from "../types";
 import { MED_PHOTOS, MED_COLOURS } from "../data/medications";
 import { useLanguage } from "../lib/languageContext";
@@ -93,7 +93,7 @@ export function QuickAction({ icon, label, colour, onClick }: { icon: React.Reac
   );
 }
 
-export function PatientSwitcher({ patients, selected, onSelect, onAdd }: { patients: Patient[]; selected: number; onSelect: (i: number) => void; onAdd: (name: string, relation: string) => void }) {
+export function PatientSwitcher({ patients, selected, onSelect, onAdd, onScan }: { patients: Patient[]; selected: number; onSelect: (i: number) => void; onAdd: (name: string, relation: string) => void; onScan?: () => void }) {
   const { language } = useLanguage();
   const [open, setOpen] = useState(false);
   const [adding, setAdding] = useState(false);
@@ -162,12 +162,22 @@ export function PatientSwitcher({ patients, selected, onSelect, onAdd }: { patie
               </div>
             </div>
           ) : (
-            <button onClick={() => setAdding(true)} className="flex items-center gap-3 w-full px-3 py-2.5 text-left hover:bg-muted border-t border-border">
-              <div className="w-8 h-8 rounded-full bg-muted flex items-center justify-center">
-                <Plus size={14} className="text-muted-foreground" />
-              </div>
-              <span className="text-xs text-muted-foreground font-medium">{t(language, "patientSwitcher.addCareRecipient")}</span>
-            </button>
+            <>
+              {onScan && (
+                <button onClick={() => { setOpen(false); onScan(); }} className="flex items-center gap-3 w-full px-3 py-2.5 text-left hover:bg-muted border-t border-border">
+                  <div className="w-8 h-8 rounded-full bg-primary/10 flex items-center justify-center">
+                    <QrCode size={14} className="text-primary" />
+                  </div>
+                  <span className="text-xs text-foreground font-medium">{t(language, "patientSwitcher.scanQr")}</span>
+                </button>
+              )}
+              <button onClick={() => setAdding(true)} className="flex items-center gap-3 w-full px-3 py-2.5 text-left hover:bg-muted border-t border-border">
+                <div className="w-8 h-8 rounded-full bg-muted flex items-center justify-center">
+                  <Plus size={14} className="text-muted-foreground" />
+                </div>
+                <span className="text-xs text-muted-foreground font-medium">{t(language, "patientSwitcher.addCareRecipient")}</span>
+              </button>
+            </>
           )}
         </div>
       )}

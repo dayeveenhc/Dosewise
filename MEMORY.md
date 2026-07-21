@@ -9,6 +9,43 @@ letting this grow forever — it's a memory aid, not an audit log.
 
 ---
 
+## 2026-07-21 — Caregiver↔elder QR linking (real care_links, no migration)
+
+New feature, **frontend-only** (stayed inside `apps/web`; read `supabase/` for
+contracts, edited nothing there). Elder shows a QR in Settings → caregiver scans
+it under "Add care recipient" → a **pending** `care_links` row is created → the
+elder accepts/declines from their Notifications tab.
+
+Why no schema/RLS change was needed (the non-obvious part): `care_link_status`
+already has `pending`, and 0002/0004 RLS already allow exactly this handshake —
+caregiver INSERT (`with check caregiver_id = auth.uid()`), **either party** UPDATE
+the status, select by either party, and delete is blocked (reject = status →
+`revoked`, not a delete). So the whole flow rides existing policies.
+
+Key decisions / gotchas:
+- **Elder can't read the caregiver's `profiles` row** (profiles RLS is self-or-
+  *linked* caregiver, and the link isn't active yet), so the caregiver's display
+  name + relationship are stashed in the link's `permissions` jsonb at insert
+  time — the elder is allowed to read the `care_links` row itself. Don't try to
+  join `profiles` for the pending-request name; read it from `permissions`.
+- **Demo-grade caregiver side** (user's explicit choice): after a successful
+  scan the caregiver just gets a local pending patient card (reuses
+  `handleAddPatient`); no deep fetch of the elder's real meds/profile. Revisit
+  if we want the accepted patient to load real linked data.
+- **No live push** (consistent with the rest of the app): the elder sees the
+  request when they open Notifications (`fetchPendingLinkRequests` on mount), not
+  in real time.
+- New files: `apps/web/src/app/lib/careLinks.ts` (payload encode/parse +
+  create/fetch/respond), `components/ScanLinkSheet.tsx` (html5-qrcode camera).
+  QR generated with `qrcode.react`. **Two new deps** (`qrcode.react`,
+  `html5-qrcode`) — user-approved (apps/web forbids new deps otherwise).
+- QR payload is `{app:"dosewise",kind:"care-link",v:1,elderId,name}` (JSON);
+  `parseCareLinkPayload` validates the marker + uuid so the scanner ignores
+  non-Dosewise codes. `createLinkRequest` is idempotent against the
+  `unique(elder_id, caregiver_id)` constraint (re-arms a pending/revoked link).
+- i18n: added ~28 `link.*` + `patientSwitcher.scanQr` keys to all 6 languages
+  (parity gate: **372 keys × 6**, verified).
+
 ## 2026-07-19 — ⚠️ OPEN BUG: `t` is shadowed in ElderlyAIScreen's `send()`
 
 **Found, not fixed — flagged to the user.** In
