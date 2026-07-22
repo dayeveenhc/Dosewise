@@ -4,6 +4,11 @@ import type { Patient, Screen } from "../../types";
 import type { DoctorQ } from "../elderly/types";
 import { WalkthroughApp } from "../walkthrough/WalkthroughApp";
 import { WalkthroughCaregiverApp } from "./WalkthroughCaregiverApp";
+import { WalkthroughCaregiverLogin } from "./WalkthroughCaregiverLogin";
+import { WalkthroughCaregiverSetupMethod } from "./WalkthroughCaregiverSetupMethod";
+import { WelcomeScreen } from "../setup/WelcomeScreen";
+import { OnboardingScreen } from "../OnboardingScreen";
+import { PATIENTS } from "../../data/patients";
 import { AccessibilityProvider } from "../../accessibility.tsx";
 import { LanguageProvider } from "../../lib/languageContext";
 
@@ -15,9 +20,22 @@ import { LanguageProvider } from "../../lib/languageContext";
 // the elder side reuses screens/walkthrough/WalkthroughApp as-is via its
 // initialDemoToday prop, so there's exactly one elder-interface implementation
 // to keep in sync, not two.
+//
+// The onboarding chain leading into it reuses the real WelcomeScreen and
+// OnboardingScreen as-is (pure presentational, no backend calls), but forks
+// SetupMethodScreen/ScanLovedOneSheet into walkthrough2/ versions — those two
+// touch supabase (file-extraction + signUp) internally, so they need scripted
+// stand-ins like every other walkthrough screen.
 
 const PATIENT_NAME = "Margaret";
 const CAREGIVER_NAME = "Wei Liang";
+
+// Wei Liang already manages these two (seeded in data/patients.ts, same as
+// the real app's caregiver mode) — Margaret gets added alongside them once
+// he scans her QR code, so the dashboard reads as "one more patient, still
+// pending" rather than "no patients at all."
+const AH_MA = PATIENTS[0];
+const AH_GONG = PATIENTS[1];
 
 const MARGARET: Patient = {
   id: 9101,
@@ -68,33 +86,48 @@ function ReminderToast({ text, onDismiss }: { text: string; onDismiss: () => voi
   );
 }
 
+const CAREGIVER_RELATIONSHIP = "Son";
+
 export function ScenarioWalkthroughPage2() {
-  const [patient, setPatient] = useState<Patient>(MARGARET);
+  // "welcome" (Get Started / Sign in) -> "signin" (existing-account path) or
+  // "mode" (Who is this for -> For a loved one) -> "method" (how to set up ->
+  // scan a loved one's QR code) -> "app" (the caregiver/elder switcher below).
+  const [phase, setPhase] = useState<"welcome" | "signin" | "mode" | "method" | "app">("welcome");
+  // Whether Margaret has accepted the pairing request yet — gates only her
+  // own tabs in WalkthroughCaregiverApp (see PendingCaregiverState there).
+  const [linked, setLinked] = useState(false);
+  const [patients, setPatients] = useState<Patient[]>([AH_MA, AH_GONG]);
+  const [selectedPatient, setSelectedPatient] = useState(0);
   const [view, setView] = useState<"caregiver" | "elder">("caregiver");
   const [pinnedNow, setPinnedNow] = useState(() => pinnedTime(8, 40));
   const [doctorQuestions, setDoctorQuestions] = useState<DoctorQ[]>([]);
   const [reminderPing, setReminderPing] = useState<string | null>(null);
   const [showReminderToast, setShowReminderToast] = useState(false);
 
+  const margaret = patients.find(p => p.id === MARGARET.id) ?? MARGARET;
+
   // "Home -> Medications -> back to Home" is the scripted trigger for the
   // 8:40 AM -> 2:40 PM jump, matching how the scenario is meant to be
-  // driven by hand rather than firing on a timer.
+  // driven by hand rather than firing on a timer. Only arms while Margaret
+  // herself is the selected patient — poking around Ah Ma/Ah Gong's tabs
+  // shouldn't affect her schedule.
   const visitedPatientTab = useRef(false);
   const jumped = useRef(false);
   const onTabChange = (tab: Screen) => {
+    if (!linked || patients[selectedPatient]?.id !== MARGARET.id) return;
     if (tab === "patient") visitedPatientTab.current = true;
     if (tab === "dashboard" && visitedPatientTab.current && !jumped.current) {
       jumped.current = true;
       setPinnedNow(pinnedTime(14, 40));
-      setPatient(prev => ({
-        ...prev,
-        medications: prev.medications.map(m => m.name === "Amlodipine" && m.status !== "taken" ? { ...m, status: "missed" } : m),
+      setPatients(prev => prev.map(p => p.id !== MARGARET.id ? p : {
+        ...p,
+        medications: p.medications.map(m => m.name === "Amlodipine" && m.status !== "taken" ? { ...m, status: "missed" } : m),
       }));
     }
   };
 
   const onUpdatePatient = (p: Patient | ((prev: Patient) => Patient)) => {
-    setPatient(prev => (typeof p === "function" ? (p as (prev: Patient) => Patient)(prev) : p));
+    setPatients(prev => prev.map(pt => pt.id !== MARGARET.id ? pt : (typeof p === "function" ? (p as (prev: Patient) => Patient)(pt) : p)));
   };
 
   const onReminderSent = (text: string) => setReminderPing(text);
@@ -117,8 +150,22 @@ export function ScenarioWalkthroughPage2() {
     return () => window.clearTimeout(timer);
   }, [view, reminderPing]);
 
+  const onRespondLinkRequest = (accept: boolean) => {
+    if (accept) setLinked(true);
+  };
+
+  // Scanning Margaret's QR code during onboarding adds her to the patient
+  // list alongside Ah Ma/Ah Gong, but pending — see pendingPatientId below.
+  const onScanConfirmed = () => {
+    setPatients(prev => prev.some(p => p.id === MARGARET.id) ? prev : [...prev, MARGARET]);
+    setPhase("app");
+  };
+
   const resetDemo = () => {
-    setPatient(MARGARET);
+    setPhase("welcome");
+    setLinked(false);
+    setPatients([AH_MA, AH_GONG]);
+    setSelectedPatient(0);
     setView("caregiver");
     setPinnedNow(pinnedTime(8, 40));
     setDoctorQuestions([]);
@@ -132,19 +179,35 @@ export function ScenarioWalkthroughPage2() {
   return (
     <LanguageProvider>
       <div className="min-h-screen bg-stone-300 flex flex-col items-center justify-center gap-4 p-4" style={{ fontFamily: "'DM Sans', system-ui, sans-serif" }}>
-        <button
-          onClick={() => setView(v => (v === "caregiver" ? "elder" : "caregiver"))}
-          className="flex items-center gap-2 bg-card border border-border rounded-full px-4 py-2 text-sm font-bold text-foreground shadow-sm active:scale-[0.98] transition-transform"
-        >
-          <ArrowLeftRight size={15} className="text-primary" />
-          Switch to {view === "caregiver" ? `${PATIENT_NAME}'s` : `${CAREGIVER_NAME}'s`} interface
-        </button>
+        {phase === "app" && (
+          <button
+            onClick={() => setView(v => (v === "caregiver" ? "elder" : "caregiver"))}
+            className="flex items-center gap-2 bg-card border border-border rounded-full px-4 py-2 text-sm font-bold text-foreground shadow-sm active:scale-[0.98] transition-transform"
+          >
+            <ArrowLeftRight size={15} className="text-primary" />
+            Switch to {view === "caregiver" ? `${PATIENT_NAME}'s` : `${CAREGIVER_NAME}'s`} interface
+          </button>
+        )}
 
         <div className="w-[390px] h-[844px] bg-background relative overflow-hidden rounded-[3rem] shadow-2xl border-[6px] border-stone-800 flex flex-col">
           <AccessibilityProvider>
-            {view === "caregiver" ? (
+            {phase === "welcome" ? (
+              <WelcomeScreen onSignIn={() => setPhase("signin")} onGetStarted={() => setPhase("mode")} />
+            ) : phase === "signin" ? (
+              <WalkthroughCaregiverLogin onBack={() => setPhase("welcome")} onLoggedIn={() => setPhase("mode")} />
+            ) : phase === "mode" ? (
+              <OnboardingScreen
+                onSelect={mode => { if (mode === "caregiver") setPhase("method"); }}
+                onBack={() => setPhase("welcome")}
+              />
+            ) : phase === "method" ? (
+              <WalkthroughCaregiverSetupMethod onBack={() => setPhase("mode")} onScanConfirmed={onScanConfirmed} />
+            ) : view === "caregiver" ? (
               <WalkthroughCaregiverApp
-                patient={patient}
+                patients={patients}
+                selectedPatient={selectedPatient}
+                onSelectPatient={setSelectedPatient}
+                pendingPatientId={linked ? null : MARGARET.id}
                 pinnedNow={pinnedNow}
                 doctorQuestions={doctorQuestions}
                 onAddDoctorQ={onAddDoctorQ}
@@ -155,18 +218,20 @@ export function ScenarioWalkthroughPage2() {
               />
             ) : (
               <WalkthroughApp
-                patient={patient}
+                patient={margaret}
                 elderId={undefined}
                 onUpdatePatient={onUpdatePatient}
                 onBack={() => setView("caregiver")}
                 onSignOut={resetDemo}
                 careMessages={[]}
                 initialDemoToday={pinnedNow}
+                pendingLinkRequest={!linked ? { caregiverName: CAREGIVER_NAME, relationship: CAREGIVER_RELATIONSHIP } : null}
+                onRespondLinkRequest={onRespondLinkRequest}
               />
             )}
           </AccessibilityProvider>
 
-          {view === "elder" && showReminderToast && reminderPing && (
+          {phase === "app" && view === "elder" && showReminderToast && reminderPing && (
             <ReminderToast text={reminderPing} onDismiss={() => setShowReminderToast(false)} />
           )}
         </div>

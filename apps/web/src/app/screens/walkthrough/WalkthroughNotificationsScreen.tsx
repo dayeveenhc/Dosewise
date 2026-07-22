@@ -5,7 +5,18 @@ import { useLanguage } from "../../lib/languageContext";
 import { t } from "../../lib/language";
 import { fetchPendingLinkRequests, respondToLinkRequest, type PendingLinkRequest } from "../../lib/careLinks";
 
-export function WalkthroughNotificationsScreen({ careMessages, elderId }: { careMessages: Message[]; elderId?: string }) {
+// Scripted stand-in id — never sent to Supabase (see respond() below), so a
+// scenario can hand this screen a one-off pending request (e.g. walkthrough
+// 2's "caregiver scans, elder accepts" flow) without touching the real
+// care_links fetch/respond path used elsewhere.
+const SCRIPTED_REQUEST_ID = "scripted-pending-request";
+
+export function WalkthroughNotificationsScreen({ careMessages, elderId, pendingLinkRequest, onRespondLinkRequest }: {
+  careMessages: Message[];
+  elderId?: string;
+  pendingLinkRequest?: { caregiverName: string; relationship: string } | null;
+  onRespondLinkRequest?: (accept: boolean) => void;
+}) {
   const { language } = useLanguage();
   const [requests, setRequests] = useState<PendingLinkRequest[]>([]);
   const [busy, setBusy] = useState<string | null>(null);
@@ -15,7 +26,13 @@ export function WalkthroughNotificationsScreen({ careMessages, elderId }: { care
     void fetchPendingLinkRequests(elderId).then(setRequests);
   }, [elderId]);
 
+  const scriptedRequest: PendingLinkRequest | null = pendingLinkRequest
+    ? { id: SCRIPTED_REQUEST_ID, caregiverName: pendingLinkRequest.caregiverName, relationship: pendingLinkRequest.relationship, requestedAt: "" }
+    : null;
+  const allRequests = scriptedRequest ? [scriptedRequest, ...requests] : requests;
+
   const respond = async (id: string, accept: boolean) => {
+    if (id === SCRIPTED_REQUEST_ID) { onRespondLinkRequest?.(accept); return; }
     setBusy(id);
     const ok = await respondToLinkRequest(id, accept);
     setBusy(null);
@@ -26,7 +43,7 @@ export function WalkthroughNotificationsScreen({ careMessages, elderId }: { care
     <div className="flex flex-col flex-1 overflow-hidden">
       <div className="flex-1 overflow-y-auto scrollbar-none px-4 pb-28 pt-3 space-y-3">
         {/* Incoming caregiver link requests — accept to let them help manage meds. */}
-        {requests.map(req => (
+        {allRequests.map(req => (
           <div key={req.id} className="bg-card rounded-2xl border border-primary/30 p-4">
             <div className="flex items-center gap-2 mb-2">
               <div className="w-9 h-9 rounded-full bg-primary/10 flex items-center justify-center shrink-0">
@@ -61,7 +78,7 @@ export function WalkthroughNotificationsScreen({ careMessages, elderId }: { care
         ))}
 
         <p className="text-sm text-muted-foreground">{t(language, "notifications.header")}</p>
-        {careMessages.length === 0 && requests.length === 0 ? (
+        {careMessages.length === 0 && allRequests.length === 0 ? (
           <div className="bg-card rounded-2xl border border-border p-6 text-center">
             <MessageSquare size={28} className="text-muted-foreground mx-auto mb-2" />
             <p className="text-sm text-muted-foreground">{t(language, "notifications.empty")}</p>

@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { Droplets, HelpCircle, UserRound } from "lucide-react";
+import { Droplets, HelpCircle, UserRound, Hourglass } from "lucide-react";
 import type { Patient, Screen } from "../../types";
 import type { DoctorQ } from "../elderly/types";
 import { PatientSwitcher } from "../../components/shared";
@@ -10,16 +10,40 @@ import { WalkthroughCaregiverPatientScreen } from "./WalkthroughCaregiverPatient
 import { WalkthroughCaregiverTimelineScreen } from "./WalkthroughCaregiverTimelineScreen";
 import { WalkthroughCaregiverAIScreen } from "./WalkthroughCaregiverAIScreen";
 
+// Shown on every tab while the selected patient is Margaret and she hasn't
+// yet accepted the pairing request sent during onboarding — the caregiver's
+// other patients (already linked) are unaffected, only Margaret's row in the
+// PatientSwitcher is gated like this.
+function PendingCaregiverState({ patientName }: { patientName: string }) {
+  return (
+    <div className="flex flex-col items-center justify-center h-full px-8 text-center gap-3">
+      <div className="w-14 h-14 rounded-full bg-secondary flex items-center justify-center">
+        <Hourglass size={22} className="text-primary" />
+      </div>
+      <h2 className="font-['Fraunces'] text-lg font-semibold text-foreground">Waiting for {patientName}</h2>
+      <p className="text-sm text-muted-foreground max-w-[260px]">
+        Your request is on its way to {patientName}'s Notifications — once she accepts, her medications, schedule and medical history will show up here.
+      </p>
+    </div>
+  );
+}
+
 // Caregiver-side shell for walkthrough 2 — mirrors App.tsx's caregiver-mode
 // JSX (status bar, header, PatientSwitcher, tab switch, BottomNav), but
 // pinned to this scenario's own fixed clock rather than the real one, and
 // scoped to the one screens this scenario actually visits (no
 // Notifications/Messages, and Settings is a placeholder).
 export function WalkthroughCaregiverApp({
-  patient, pinnedNow, doctorQuestions, onAddDoctorQ, onMarkAnswered, onDeleteQuestion,
+  patients, selectedPatient, onSelectPatient, pendingPatientId, pinnedNow, doctorQuestions, onAddDoctorQ, onMarkAnswered, onDeleteQuestion,
   onReminderSent, onTabChange,
 }: {
-  patient: Patient;
+  patients: Patient[];
+  selectedPatient: number;
+  onSelectPatient: (i: number) => void;
+  // Id of the one patient still awaiting acceptance (Margaret, until she
+  // accepts) — null once there's nothing pending. Only that patient's tabs
+  // show PendingCaregiverState; the others (already linked) work normally.
+  pendingPatientId: number | null;
   pinnedNow: Date;
   doctorQuestions: DoctorQ[];
   onAddDoctorQ: (q: string) => void;
@@ -30,6 +54,8 @@ export function WalkthroughCaregiverApp({
 }) {
   const [tab, setTab] = useState<Screen>("dashboard");
   const [showSendReminder, setShowSendReminder] = useState<{ medName?: string } | null>(null);
+  const patient = patients[selectedPatient];
+  const isPending = patient.id === pendingPatientId;
 
   const changeTab = (next: Screen) => {
     setTab(next);
@@ -69,45 +95,51 @@ export function WalkthroughCaregiverApp({
           </div>
         </div>
         {(tab === "dashboard" || tab === "patient" || tab === "timeline") && (
-          <PatientSwitcher patients={[patient]} selected={0} onSelect={() => {}} onAdd={() => {}} />
+          <PatientSwitcher patients={patients} selected={selectedPatient} onSelect={onSelectPatient} onAdd={() => {}} />
         )}
       </div>
 
       {/* Screen content */}
       <div className={`flex-1 ${tab === "ai" ? "overflow-hidden flex flex-col" : "overflow-y-auto scrollbar-none"}`}>
-        {tab === "dashboard" && (
-          <WalkthroughCaregiverDashboard
-            patient={patient}
-            onNavigate={changeTab}
-            onSendReminder={medName => setShowSendReminder({ medName })}
-          />
-        )}
-        {tab === "patient" && (
-          <WalkthroughCaregiverPatientScreen
-            patient={patient}
-            onEditProfile={() => {}}
-            onAddPrescription={() => {}}
-            onDeleteMedication={() => {}}
-          />
-        )}
-        {tab === "timeline" && (
-          <WalkthroughCaregiverTimelineScreen
-            patient={patient}
-            pinnedNow={pinnedNow}
-            onSendReminder={medName => setShowSendReminder({ medName })}
-          />
-        )}
-        {tab === "ai" && (
-          <WalkthroughCaregiverAIScreen
-            patient={patient}
-            doctorQuestions={doctorQuestions}
-            onAddDoctorQ={onAddDoctorQ}
-            onMarkAnswered={onMarkAnswered}
-            onDeleteQuestion={onDeleteQuestion}
-          />
-        )}
-        {tab === "settings" && (
-          <div className="px-4 py-10 text-center text-sm text-muted-foreground">Not part of this demo.</div>
+        {isPending ? (
+          <PendingCaregiverState patientName={patient.nickname} />
+        ) : (
+          <>
+            {tab === "dashboard" && (
+              <WalkthroughCaregiverDashboard
+                patient={patient}
+                onNavigate={changeTab}
+                onSendReminder={medName => setShowSendReminder({ medName })}
+              />
+            )}
+            {tab === "patient" && (
+              <WalkthroughCaregiverPatientScreen
+                patient={patient}
+                onEditProfile={() => {}}
+                onAddPrescription={() => {}}
+                onDeleteMedication={() => {}}
+              />
+            )}
+            {tab === "timeline" && (
+              <WalkthroughCaregiverTimelineScreen
+                patient={patient}
+                pinnedNow={pinnedNow}
+                onSendReminder={medName => setShowSendReminder({ medName })}
+              />
+            )}
+            {tab === "ai" && (
+              <WalkthroughCaregiverAIScreen
+                patient={patient}
+                doctorQuestions={doctorQuestions}
+                onAddDoctorQ={onAddDoctorQ}
+                onMarkAnswered={onMarkAnswered}
+                onDeleteQuestion={onDeleteQuestion}
+              />
+            )}
+            {tab === "settings" && (
+              <div className="px-4 py-10 text-center text-sm text-muted-foreground">Not part of this demo.</div>
+            )}
+          </>
         )}
       </div>
 

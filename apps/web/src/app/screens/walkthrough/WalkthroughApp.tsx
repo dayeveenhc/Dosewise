@@ -39,7 +39,7 @@ function computeTravelJump(plan: { startDate: string; endDate: string; timezone:
   return { demoToday: day4, offsetMinutes };
 }
 
-export function WalkthroughApp({ patient, elderId, onUpdatePatient, onBack, onSignOut, startTour, careMessages, initialDemoToday }: {
+export function WalkthroughApp({ patient, elderId, onUpdatePatient, onBack, onSignOut, startTour, careMessages, initialDemoToday, pendingLinkRequest, onRespondLinkRequest }: {
   patient: Patient;
   elderId?: string;
   onUpdatePatient: (p: Patient | ((prev: Patient) => Patient)) => void;
@@ -52,6 +52,11 @@ export function WalkthroughApp({ patient, elderId, onUpdatePatient, onBack, onSi
   // same mechanism as a Travel Mode jump (see travelJump), just seeded up
   // front rather than triggered by saving a trip.
   initialDemoToday?: Date;
+  // Threaded straight through to the Notifications tab — a scripted
+  // caregiver-link request (e.g. walkthrough 2's "caregiver scans, elder
+  // accepts" flow) that doesn't exist in walkthrough 1, so it's optional.
+  pendingLinkRequest?: { caregiverName: string; relationship: string } | null;
+  onRespondLinkRequest?: (accept: boolean) => void;
 }) {
   const [tab, setTab] = useState<ElderlyTab>("home");
   // Pinned to 8:30 AM (Margaret's dose time) rather than ticking with the
@@ -303,7 +308,14 @@ export function WalkthroughApp({ patient, elderId, onUpdatePatient, onBack, onSi
             autoMessage={pendingAIMessage}
           />
         )}
-        {tab === "notifications" && <WalkthroughNotificationsScreen careMessages={careMessages} elderId={elderId} />}
+        {tab === "notifications" && (
+          <WalkthroughNotificationsScreen
+            careMessages={careMessages}
+            elderId={elderId}
+            pendingLinkRequest={pendingLinkRequest}
+            onRespondLinkRequest={onRespondLinkRequest}
+          />
+        )}
         {tab === "settings"      && <WalkthroughSettingsScreen     patient={patient} elderId={elderId} onUpdatePatient={onUpdatePatient} onBack={onBack} onSignOut={onSignOut} />}
       </div>
 
