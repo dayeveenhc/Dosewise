@@ -79,7 +79,13 @@ async def test_no_tool_calls_still_ends_with_a_final_event(monkeypatch):
         resp = await c.post("/agent/turn/stream", json={"message": "hi", "elder_id": ELDER})
     events = _parse_events(resp.text)
     assert events == [
-        {"type": "final", "reply": "just chatting", "tools_used": [], "actions": [], "walkthrough": None}
+        {
+            "type": "final",
+            "reply": "just chatting",
+            "tools_used": [],
+            "actions": [],
+            "walkthrough": None,
+        }
     ]
 
 

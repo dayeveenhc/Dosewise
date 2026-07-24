@@ -16,15 +16,33 @@ _SOUL_PATH = Path(__file__).parent / "soul.md"
 # Plain-language names for the prompt block below — keep in sync with
 # _WALKTHROUGH_TASK_NAMES (services/hermes/src/hermes/tools/walkthrough.py).
 _WALKTHROUGH_LABELS = {
-    "onboarding": "the guided setup wizard (account, profile, conditions, allergies, routine, medicines)",
+    "onboarding": (
+        "the guided setup wizard (account, profile, conditions, allergies, "
+        "routine, medicines)"
+    ),
     "travel_mode_setup": "setting up Travel Mode",
     "request_refill": "requesting a medication refill",
     "link_caregiver": "linking a caregiver to their account",
-    "add_prescription_auto": "adding a prescription for them (Mei fills it in and saves it, then double-checks it saved)",
-    "add_condition_auto": "adding a medical condition to their profile for them (Mei types it in and saves it, then double-checks it saved)",
-    "travel_mode_auto": "setting up Travel Mode for them (Mei fills the dates in and saves it, then double-checks it saved)",
-    "edit_profile_auto": "updating a detail in their profile for them (Mei fills it in and saves it, then double-checks it saved)",
-    "accept_caregiver_link": "accepting a pending caregiver link request (Mei opens it, the patient taps Accept themselves, then Mei confirms it linked)",
+    "add_prescription_auto": (
+        "adding a prescription for them (Mei fills it in and saves it, "
+        "then double-checks it saved)"
+    ),
+    "add_condition_auto": (
+        "adding a medical condition to their profile for them (Mei types it in "
+        "and saves it, then double-checks it saved)"
+    ),
+    "travel_mode_auto": (
+        "setting up Travel Mode for them (Mei fills the dates in and saves it, "
+        "then double-checks it saved)"
+    ),
+    "edit_profile_auto": (
+        "updating a detail in their profile for them (Mei fills it in and saves it, "
+        "then double-checks it saved)"
+    ),
+    "accept_caregiver_link": (
+        "accepting a pending caregiver link request (Mei opens it, the patient taps "
+        "Accept themselves, then Mei confirms it linked)"
+    ),
 }
 
 _FALLBACK_PROMPT = """\
