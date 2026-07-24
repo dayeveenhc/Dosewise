@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { Plus, BookOpen, ChevronDown, Play, Eye, History, Check, Clock } from "lucide-react";
+import { Plus, BookOpen, ChevronDown, Play, Eye, History, Check, Clock, RefreshCw } from "lucide-react";
 import { useAccessibility } from "../../accessibility.tsx";
 import type { Medication, Patient } from "../../types";
 import { to24h } from "../../lib/medications";
@@ -30,7 +30,16 @@ function groupByMedication(meds: Medication[]): GroupedMed[] {
   return out;
 }
 
-export function ElderlyPrescriptionScreen({ patient, onOpenAI, onAddRx, justAddedMed }: { patient: Patient; onOpenAI: (msg?: string) => void; onAddRx: () => void; justAddedMed?: string | null }) {
+export function ElderlyPrescriptionScreen({ patient, onOpenAI, onAddRx, onRequestRefill, justAddedMed }: {
+  patient: Patient;
+  onOpenAI: (msg?: string) => void;
+  onAddRx: () => void;
+  // Opens Ask Mei with a refill message PRE-FILLED (never auto-sent — the
+  // elder still taps Send themselves), distinct from onOpenAI's send-on-open
+  // quick-help messages.
+  onRequestRefill: (medName: string) => void;
+  justAddedMed?: string | null;
+}) {
   const { colourBlind } = useAccessibility();
   const { language } = useLanguage();
   const [helpOpen, setHelpOpen] = useState<number | null>(null);
@@ -76,7 +85,7 @@ export function ElderlyPrescriptionScreen({ patient, onOpenAI, onAddRx, justAdde
           const justAdded   = !!justAddedMed && m.name === justAddedMed;
 
           return (
-            <div key={m.id} className={`bg-card rounded-2xl border overflow-hidden shadow-sm ${justAdded ? "border-2 border-emerald-400 ring-2 ring-emerald-300/50" : "border-border"}`}>
+            <div key={m.id} data-testid={m.medicationId ? `medication-${m.medicationId}` : undefined} className={`bg-card rounded-2xl border overflow-hidden shadow-sm ${justAdded ? "border-2 border-emerald-400 ring-2 ring-emerald-300/50" : "border-border"}`}>
               <div className="p-4">
                 <div className="flex items-start gap-3">
                   <MedAvatar name={m.name} size={62} className="rounded-xl shrink-0" />
@@ -160,6 +169,13 @@ export function ElderlyPrescriptionScreen({ patient, onOpenAI, onAddRx, justAdde
                       style={{ width: `${supplyPct}%` }}
                     />
                   </div>
+                  <button
+                    onClick={() => onRequestRefill(m.name)}
+                    data-walk="med-request-refill-btn"
+                    className="mt-2 w-full flex items-center justify-center gap-1.5 h-9 rounded-xl border border-border text-xs font-semibold text-foreground active:bg-muted transition-colors"
+                  >
+                    <RefreshCw size={12} className="shrink-0" />{t(language, "prescription.requestRefill")}
+                  </button>
                 </div>
               </div>
 

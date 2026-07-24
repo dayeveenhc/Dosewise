@@ -4,6 +4,7 @@ import type { Message } from "../../types";
 import { useLanguage } from "../../lib/languageContext";
 import { t } from "../../lib/language";
 import { fetchPendingLinkRequests, respondToLinkRequest, type PendingLinkRequest } from "../../lib/careLinks";
+import { emitWalkthroughEvent } from "../../lib/walkthrough/bus";
 
 export function ElderlyNotificationsScreen({ careMessages, elderId }: { careMessages: Message[]; elderId?: string }) {
   const { language } = useLanguage();
@@ -19,7 +20,16 @@ export function ElderlyNotificationsScreen({ careMessages, elderId }: { careMess
     setBusy(id);
     const ok = await respondToLinkRequest(id, accept);
     setBusy(null);
-    if (ok) setRequests(prev => prev.filter(r => r.id !== id));
+    if (ok) {
+      setRequests(prev => prev.filter(r => r.id !== id));
+      // Gated on the real, RLS-enforced write actually succeeding — never the
+      // Accept button's click, and never `busy` clearing (that happens on
+      // both the accept and the failure branch). Per supabase/migrations/
+      // 0005_care_links_consent_hardening.sql, this is the ONLY code path
+      // that can ever activate a care_links row — the walkthrough must ride
+      // its real result, not simulate or assume it.
+      if (accept) emitWalkthroughEvent("care-link-activated");
+    }
   };
 
   return (
@@ -44,6 +54,7 @@ export function ElderlyNotificationsScreen({ careMessages, elderId }: { careMess
               <button
                 onClick={() => respond(req.id, true)}
                 disabled={busy === req.id}
+                data-walk={`care-link-accept-${req.id}`}
                 className="flex-1 bg-primary text-primary-foreground rounded-xl py-2.5 text-sm font-semibold flex items-center justify-center gap-1.5 disabled:opacity-40"
               >
                 {busy === req.id ? <Loader2 size={15} className="animate-spin" /> : <Check size={15} />}

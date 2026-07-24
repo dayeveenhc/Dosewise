@@ -1,10 +1,12 @@
 import { useEffect, useRef, useState } from "react";
 import type { ChangeEvent } from "react";
-import { Send, TrendingUp, Plane, Check, Sparkles, ChevronUp, Camera, FileText, Pill, Globe, Mic, Volume2, X, Trash2 } from "lucide-react";
+import { Send, TrendingUp, Plane, Check, Sparkles, ChevronUp, Camera, FileText, Pill, Globe, Mic, Volume2, X, Trash2, AlertTriangle } from "lucide-react";
 import type { Patient, Screen } from "../types";
 import { agentTurnStream, fileToBase64 } from "../lib/hermes";
 import type { AgentTurnEvent } from "../lib/hermes";
 import { firstRoutableAction, ACTION_TARGETS } from "../lib/agentActions";
+import { fetchProfile } from "../lib/profile";
+import type { WalkthroughTaskName, WalkthroughParams } from "../lib/walkthrough/types";
 import { WeeklySummarySheet } from "./WeeklySummarySheet";
 import { TravelModeSheet } from "./TravelModeSheet";
 import { useLanguage } from "../lib/languageContext";
@@ -12,8 +14,9 @@ import { useAccessibility } from "../accessibility.tsx";
 import { t, LANGUAGE_OPTIONS, speechLangFor } from "../lib/language";
 import { speak as speakUtterance } from "../lib/speech";
 import { ConfirmDialog } from "../components/ConfirmDialog";
+import { PhotoSourceSheet } from "../components/PhotoSourceSheet";
 
-interface ChatMsg { id: number; role: "user" | "agent"; text: string; time: string; isConfirmation?: boolean; image?: string }
+interface ChatMsg { id: number; role: "user" | "agent"; text: string; time: string; isConfirmation?: boolean; isRateLimited?: boolean; image?: string }
 
 const nowLabel = () => new Date().toLocaleTimeString("en-SG", { hour: "2-digit", minute: "2-digit" });
 
@@ -47,7 +50,7 @@ function FeatureBtn({ icon: Icon, label, onClick, className = "" }: { icon: any;
   );
 }
 
-export function AskMeiScreen({ patient, elderId, onUpdatePatient, onNavigate, onMedsChanged, onMedAdded }: { patient: Patient; elderId?: string; onUpdatePatient: (p: Patient) => void; onNavigate?: (screen: Screen) => void; onMedsChanged?: () => void | Promise<void>; onMedAdded?: (name: string) => void }) {
+export function AskMeiScreen({ patient, elderId, onUpdatePatient, onNavigate, onMedsChanged, onMedAdded, onWalkthroughStart }: { patient: Patient; elderId?: string; onUpdatePatient: (p: Patient) => void; onNavigate?: (screen: Screen) => void; onMedsChanged?: () => void | Promise<void>; onMedAdded?: (name: string) => void; onWalkthroughStart?: (taskName: WalkthroughTaskName, params?: WalkthroughParams) => void }) {
   const { language, setLanguage } = useLanguage();
   const { voiceOutput, setVoiceOutput } = useAccessibility();
   const [messages, setMessages] = useState<ChatMsg[]>(() => [
@@ -59,6 +62,8 @@ export function AskMeiScreen({ patient, elderId, onUpdatePatient, onNavigate, on
     },
   ]);
   const [input, setInput] = useState("");
+  // A photo attached but not yet sent — staged so the caregiver types their intent.
+  const [pendingImage, setPendingImage] = useState<{ base64: string; url: string } | null>(null);
   const [sending, setSending] = useState(false);
   const [showSummary, setShowSummary] = useState(false);
   const [showTravel, setShowTravel] = useState(false);
@@ -70,11 +75,25 @@ export function AskMeiScreen({ patient, elderId, onUpdatePatient, onNavigate, on
   const [isSpeaking, setIsSpeaking] = useState(false);
   const scrollRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLTextAreaElement>(null);
-  const reportRef = useRef<HTMLInputElement>(null);
-  const rxPhotoRef = useRef<HTMLInputElement>(null);
+  const reportCameraRef = useRef<HTMLInputElement>(null);
+  const reportLibraryRef = useRef<HTMLInputElement>(null);
+  const rxCameraRef = useRef<HTMLInputElement>(null);
+  const rxLibraryRef = useRef<HTMLInputElement>(null);
+  const [pickerFor, setPickerFor] = useState<null | "rx" | "report">(null);
   const recognitionRef = useRef<any>(null);
 
   const uniqueMeds = [...new Set(patient.medications.map(m => m.name))];
+
+  // Fetched once so agent turns can tell Mei which walkthroughs this caregiver
+  // has already been shown — a stale read until the next remount is accepted,
+  // same as this app's other per-session profile caches.
+  const [completedWalkthroughs, setCompletedWalkthroughs] = useState<string[]>([]);
+  useEffect(() => {
+    if (!elderId) return;
+    fetchProfile(elderId).then(profile => {
+      setCompletedWalkthroughs(profile?.details.completedWalkthroughs ?? []);
+    });
+  }, [elderId]);
 
   const scrollToBottom = () => setTimeout(() => {
     if (scrollRef.current) scrollRef.current.scrollTop = scrollRef.current.scrollHeight;
@@ -161,11 +180,12 @@ export function AskMeiScreen({ patient, elderId, onUpdatePatient, onNavigate, on
       }
     };
 
-    const { reply, actions } = await agentTurnStream(trimmed, onEvent, imageBase64, pdfBase64);
-    setMessages(prev => [...prev, { id: Date.now() + 1, role: "agent", text: reply, time: nowLabel() }]);
+    const { reply, actions, walkthrough, rateLimited } = await agentTurnStream(trimmed, onEvent, imageBase64, pdfBase64, completedWalkthroughs);
+    setMessages(prev => [...prev, { id: Date.now() + 1, role: "agent", text: reply, time: nowLabel(), isRateLimited: rateLimited }]);
     setSending(false);
     scrollToBottom();
     speak(reply);
+    if (walkthrough) onWalkthroughStart?.(walkthrough.task_name as WalkthroughTaskName, walkthrough.params);
     // Refresh medication state whenever the agent committed *any* write this turn
     // (not only routable ones) — awaited + caught so a failed refetch is visible,
     // not silently swallowed while chat has already reported success.
@@ -198,9 +218,11 @@ export function AskMeiScreen({ patient, elderId, onUpdatePatient, onNavigate, on
 
   const handleSend = () => {
     const text = input.trim();
-    if (!text) return;
+    if ((!text && !pendingImage) || sending) return;
+    const img = pendingImage;
     setInput("");
-    send(text);
+    setPendingImage(null);
+    send(text || t(language, "ai.photoDefaultPrompt"), img?.base64, undefined, img?.url);
   };
 
   const clearChat = () => {
@@ -208,14 +230,15 @@ export function AskMeiScreen({ patient, elderId, onUpdatePatient, onNavigate, on
     setShowClearConfirm(false);
   };
 
-  // "Add prescription" quick-help: snap/choose a photo, then let the agent read
-  // the label and propose it in the chat (confirm with a simple "yes").
+  // Attach a photo: stage it so the caregiver can type what they want done with
+  // it, rather than assuming it's a prescription.
   const onRxPhotoFile = async (e: ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     e.target.value = "";
     if (!file) return;
     setQuickOpen(false);
-    send(t(language, "ai.rxPhotoMsg"), await fileToBase64(file), undefined, URL.createObjectURL(file));
+    setPendingImage({ base64: await fileToBase64(file), url: URL.createObjectURL(file) });
+    inputRef.current?.focus();
   };
 
   // "Update profile": the clinic report goes to the real agent — a PDF's text is
@@ -265,7 +288,14 @@ export function AskMeiScreen({ patient, elderId, onUpdatePatient, onNavigate, on
       )}
 
       <div ref={scrollRef} className="flex-1 overflow-y-auto scrollbar-none px-4 py-3 space-y-3 border-t border-border">
-        {messages.map(msg => msg.isConfirmation ? (
+        {messages.map(msg => msg.isRateLimited ? (
+          <div key={msg.id} className="flex justify-center">
+            <div className="flex items-center gap-1.5 bg-amber-50 border border-amber-200 text-amber-800 rounded-full px-3.5 py-1.5">
+              <AlertTriangle size={13} className="text-amber-600 shrink-0" />
+              <span className="text-[13px] font-semibold">{msg.text}</span>
+            </div>
+          </div>
+        ) : msg.isConfirmation ? (
           <div key={msg.id} className="flex justify-center">
             <div className="flex items-center gap-1.5 bg-emerald-50 border border-emerald-200 text-emerald-800 rounded-full px-3.5 py-1.5">
               <Check size={13} className="text-emerald-600 shrink-0" />
@@ -318,13 +348,22 @@ export function AskMeiScreen({ patient, elderId, onUpdatePatient, onNavigate, on
       </div>
 
       <div className="px-4 pb-4 pt-1 border-t border-border shrink-0">
+        {pendingImage && (
+          <div className="flex items-center gap-2.5 mb-2 bg-secondary/60 border border-primary/20 rounded-xl p-2">
+            <img src={pendingImage.url} alt={t(language, "ai.attachment")} className="w-12 h-12 rounded-lg object-cover shrink-0" />
+            <span className="flex-1 text-[13px] text-foreground font-medium">{t(language, "ai.photoAttachedHint")}</span>
+            <button onClick={() => setPendingImage(null)} aria-label={t(language, "common.cancel")} className="w-7 h-7 rounded-full bg-muted flex items-center justify-center text-muted-foreground shrink-0">
+              <X size={14} />
+            </button>
+          </div>
+        )}
         <div className="flex gap-2 items-end">
           {SpeechRecognitionImpl && (
             <button onClick={handleMic} className={`w-10 h-10 rounded-full flex items-center justify-center shrink-0 transition-colors ${isListening ? "bg-red-500 text-white" : "bg-muted text-foreground"}`}>
               <Mic size={17} />
             </button>
           )}
-          <button onClick={() => rxPhotoRef.current?.click()} className="w-10 h-10 rounded-full bg-muted text-foreground flex items-center justify-center shrink-0">
+          <button onClick={() => setPickerFor("rx")} className="w-10 h-10 rounded-full bg-muted text-foreground flex items-center justify-center shrink-0">
             <Camera size={17} />
           </button>
           <div className="flex-1 bg-input-background rounded-2xl px-3.5 py-2">
@@ -333,14 +372,14 @@ export function AskMeiScreen({ patient, elderId, onUpdatePatient, onNavigate, on
               value={input}
               onChange={e => { const v = e.target.value; setInput(v); if (v.trim() && quickOpen) setQuickOpen(false); }}
               onKeyDown={e => { if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); handleSend(); } }}
-              placeholder={t(language, "common.askMeiPlaceholder")}
+              placeholder={t(language, pendingImage ? "ai.photoNotePlaceholder" : "common.askMeiPlaceholder")}
               className="w-full bg-transparent text-foreground text-[15px] resize-none outline-none max-h-24 leading-relaxed placeholder:text-muted-foreground"
               rows={1}
             />
           </div>
           <button
             onClick={handleSend}
-            disabled={!input.trim() || sending}
+            disabled={(!input.trim() && !pendingImage) || sending}
             className="w-10 h-10 rounded-full bg-primary text-primary-foreground flex items-center justify-center shrink-0 disabled:opacity-30 active:scale-95 transition-transform"
           >
             <Send size={16} />
@@ -349,9 +388,26 @@ export function AskMeiScreen({ patient, elderId, onUpdatePatient, onNavigate, on
         <p className="text-center text-[10px] text-muted-foreground mt-2">{t(language, "ai.disclaimer")}</p>
       </div>
 
-      {/* hidden inputs used by "Update profile" and "Add prescription" */}
-      <input ref={reportRef} type="file" accept="image/*,application/pdf" className="sr-only" onChange={onReportFile} />
-      <input ref={rxPhotoRef} type="file" accept="image/*" capture="environment" className="sr-only" onChange={onRxPhotoFile} />
+      {/* Hidden inputs backing "Update profile" and "Add prescription" — each
+          flow gets a camera-capture input and a plain library/Files input, so
+          PhotoSourceSheet's two options are always both reachable. */}
+      <input ref={reportCameraRef} type="file" accept="image/*" capture="environment" className="sr-only" onChange={onReportFile} />
+      <input ref={reportLibraryRef} type="file" accept="image/*,application/pdf" className="sr-only" onChange={onReportFile} />
+      <input ref={rxCameraRef} type="file" accept="image/*" capture="environment" className="sr-only" onChange={onRxPhotoFile} />
+      <input ref={rxLibraryRef} type="file" accept="image/*" className="sr-only" onChange={onRxPhotoFile} />
+      {pickerFor && (
+        <PhotoSourceSheet
+          onTakePhoto={() => {
+            (pickerFor === "rx" ? rxCameraRef : reportCameraRef).current?.click();
+            setPickerFor(null);
+          }}
+          onChooseFile={() => {
+            (pickerFor === "rx" ? rxLibraryRef : reportLibraryRef).current?.click();
+            setPickerFor(null);
+          }}
+          onClose={() => setPickerFor(null)}
+        />
+      )}
 
       {showSummary && <WeeklySummarySheet patient={patient} onClose={() => setShowSummary(false)} />}
       {showTravel && (
@@ -413,8 +469,8 @@ export function AskMeiScreen({ patient, elderId, onUpdatePatient, onNavigate, on
             <div className="grid grid-cols-2 gap-2">
               <FeatureBtn icon={TrendingUp} label={t(language, "common.weeklySummary")} onClick={() => { setQuickOpen(false); setShowSummary(true); }} />
               <FeatureBtn icon={Plane}      label={t(language, "common.travelMode")}   onClick={() => { setQuickOpen(false); setShowTravel(true); }} />
-              <FeatureBtn icon={Camera}     label={t(language, "common.addPrescription")} onClick={() => rxPhotoRef.current?.click()} />
-              <FeatureBtn icon={FileText}   label={t(language, "ai.updateProfile")}       onClick={() => reportRef.current?.click()} />
+              <FeatureBtn icon={Camera}     label={t(language, "common.addPrescription")} onClick={() => { setQuickOpen(false); setPickerFor("rx"); }} />
+              <FeatureBtn icon={FileText}   label={t(language, "ai.updateProfile")}       onClick={() => { setQuickOpen(false); setPickerFor("report"); }} />
               <FeatureBtn icon={Pill}       label={t(language, "ai.askAboutMed")}         onClick={() => setShowMedPicker(v => !v)} />
               <FeatureBtn icon={Globe}      label={t(language, "ai.languageVoice")}       onClick={() => { setQuickOpen(false); setShowLangSheet(true); }} />
             </div>

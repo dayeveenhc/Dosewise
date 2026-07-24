@@ -4,14 +4,18 @@ import { Volume2, Mic, Send, AlertTriangle, Brain, Circle, Check, Trash2, Plus, 
 import type { Patient } from "../../types";
 import type { EMsg, ElderlyTab, DoctorQ } from "./types";
 import { agentTurnStream, extractProfile, fileToBase64 } from "../../lib/hermes";
-import type { AgentTurnEvent } from "../../lib/hermes";
+import type { AgentTurnEvent, AgentAction } from "../../lib/hermes";
+import { firstHighlightable } from "../../lib/changeHighlight";
 import { fetchProfile, saveProfile, toProfileDetails, mergeProfileDetails } from "../../lib/profile";
+import type { WalkthroughTaskName, WalkthroughParams } from "../../lib/walkthrough/types";
 import { firstRoutableAction, ACTION_TARGETS } from "../../lib/agentActions";
+import { emitWalkthroughEvent } from "../../lib/walkthrough/bus";
 import { useLanguage } from "../../lib/languageContext";
 import { useAccessibility } from "../../accessibility.tsx";
 import { t, LANGUAGE_OPTIONS, speechLangFor } from "../../lib/language";
 import { speak as speakUtterance } from "../../lib/speech";
 import { ConfirmDialog } from "../../components/ConfirmDialog";
+import { PhotoSourceSheet } from "../../components/PhotoSourceSheet";
 
 const nowLabel = () => new Date().toLocaleTimeString("en-SG", { hour: "2-digit", minute: "2-digit" });
 
@@ -54,28 +58,46 @@ function renderWithBold(text: string) {
 }
 
 // A single feature tile in the "Quick help" launcher.
-function FeatureBtn({ icon: Icon, label, onClick, className = "", "data-tour": dataTour }: { icon: any; label: string; onClick: () => void; className?: string; "data-tour"?: string }) {
+function FeatureBtn({ icon: Icon, label, onClick, className = "", "data-tour": dataTour, "data-walk": dataWalk }: { icon: any; label: string; onClick: () => void; className?: string; "data-tour"?: string; "data-walk"?: string }) {
   return (
-    <button onClick={onClick} data-tour={dataTour} className={`h-[88px] flex flex-col items-center justify-center gap-1.5 bg-card border border-border rounded-2xl px-2 text-center active:bg-muted transition-colors ${className}`}>
+    <button onClick={onClick} data-tour={dataTour} data-walk={dataWalk} className={`h-[88px] flex flex-col items-center justify-center gap-1.5 bg-card border border-border rounded-2xl px-2 text-center active:bg-muted transition-colors ${className}`}>
       <div className="w-10 h-10 rounded-xl bg-primary/10 flex items-center justify-center shrink-0"><Icon size={18} className="text-primary" /></div>
       <span className="text-[12px] font-bold text-foreground leading-tight">{label}</span>
     </button>
   );
 }
 
-export function ElderlyAIScreen({ patient, elderId, onLogDose, onNavigate, onMedsChanged, onMedAdded, onOpenTravel, doctorQuestions, onAddDoctorQ, onMarkAnswered, onDeleteQuestion, autoMessage }: {
+export function ElderlyAIScreen({ patient, elderId, onLogDose, onNavigate, onMedsChanged, onMedAdded, onHighlightChange, onOpenTravel, doctorQuestions, openDoctorSignal, onAddDoctorQ, onMarkAnswered, onDeleteQuestion, autoMessage, prefillMessage, onAutoMessageConsumed, onPrefillConsumed, onWalkthroughStart }: {
   patient: Patient;
   elderId?: string;
   onLogDose: (id: number) => void;
   onNavigate: (tab: ElderlyTab) => void;
   onMedsChanged?: () => void | Promise<void>;
   onMedAdded?: (name: string) => void;
+  // Canonical "highlight the exact record that changed" hook: handed the first
+  // committed action carrying entity_type/entity_id/changed_fields, so the host
+  // can mount ChangeHighlight. Replaces the name-string onMedAdded for Tier-A flows.
+  onHighlightChange?: (action: AgentAction) => void;
   onOpenTravel: () => void;
   doctorQuestions: DoctorQ[];
+  // Bumped by the host to force the "Ask a doctor" sub-tab open (so a
+  // doctor_message ChangeHighlight lands on the thread).
+  openDoctorSignal?: number;
   onAddDoctorQ: (q: string) => void;
-  onMarkAnswered: (id: number) => void;
-  onDeleteQuestion: (id: number) => void;
+  onMarkAnswered: (id: string) => void;
+  onDeleteQuestion: (id: string) => void;
   autoMessage?: string;
+  // Seeds the input box only — never auto-sent, unlike autoMessage — so a
+  // walkthrough step (or any other caller) can pre-fill without Mei sending on
+  // the elder's behalf; they still tap Send themselves.
+  prefillMessage?: string;
+  // Called right after autoMessage/prefillMessage is consumed, so the parent
+  // can clear its pending state. Without this, since this screen unmounts on
+  // every tab switch, a stale autoMessage silently re-sends itself as a real
+  // agent turn on every return to this tab.
+  onAutoMessageConsumed?: () => void;
+  onPrefillConsumed?: () => void;
+  onWalkthroughStart?: (taskName: WalkthroughTaskName, params?: WalkthroughParams) => void;
 }) {
   const { language, setLanguage } = useLanguage();
   const { voiceOutput, setVoiceOutput } = useAccessibility();
@@ -100,10 +122,18 @@ export function ElderlyAIScreen({ patient, elderId, onLogDose, onNavigate, onMed
   const startedAtRef = useRef<number>(restored?.startedAt ?? Date.now());
   const [messages, setMessages] = useState<EMsg[]>(() => restored?.messages ?? [buildGreeting()]);
   const [input, setInput] = useState("");
+  // A photo the user attached but hasn't sent yet — staged so they can type what
+  // they want done with it, instead of us sending a fixed "here's my prescription".
+  const [pendingImage, setPendingImage] = useState<{ base64: string; url: string } | null>(null);
   const [sending, setSending] = useState(false);
   const [isListening, setIsListening] = useState(false);
   const [isSpeaking, setIsSpeaking] = useState(false);
   const [screenTab, setScreenTab] = useState<"chat" | "doctor">("chat");
+  // Host asked to reveal the doctor thread (a doctor_message change is being
+  // highlighted). Ignore the initial 0 so it doesn't steal focus on mount.
+  useEffect(() => {
+    if (openDoctorSignal) setScreenTab("doctor");
+  }, [openDoctorSignal]);
   const [newQ, setNewQ] = useState("");
   const [showInput, setShowInput] = useState(false);
   // Quick help is a popup over the chat, so it never restores open.
@@ -112,8 +142,11 @@ export function ElderlyAIScreen({ patient, elderId, onLogDose, onNavigate, onMed
   const [showMedPicker, setShowMedPicker] = useState(false);
   const [showLangSheet, setShowLangSheet] = useState(false);
   const scrollRef = useRef<HTMLDivElement>(null);
-  const reportRef = useRef<HTMLInputElement>(null);
-  const rxPhotoRef = useRef<HTMLInputElement>(null);
+  const reportCameraRef = useRef<HTMLInputElement>(null);
+  const reportLibraryRef = useRef<HTMLInputElement>(null);
+  const rxCameraRef = useRef<HTMLInputElement>(null);
+  const rxLibraryRef = useRef<HTMLInputElement>(null);
+  const [pickerFor, setPickerFor] = useState<null | "rx" | "report">(null);
   const recognitionRef = useRef<any>(null);
   const inputRef = useRef<HTMLTextAreaElement>(null);
 
@@ -241,11 +274,15 @@ export function ElderlyAIScreen({ patient, elderId, onLogDose, onNavigate, onMed
       }
     };
 
-    const { reply, actions } = await agentTurnStream(trimmed, onEvent, imageBase64, pdfBase64);
-    setMessages(prev => [...prev, { id: Date.now() + 1, role: "agent", text: reply, time: nowLabel() }]);
+    const { reply, actions, walkthrough, rateLimited } = await agentTurnStream(trimmed, onEvent, imageBase64, pdfBase64, completedWalkthroughs);
+    setMessages(prev => [...prev, { id: Date.now() + 1, role: "agent", text: reply, time: nowLabel(), isRateLimited: rateLimited }]);
     setSending(false);
     scrollToBottom();
     speak(reply);
+    if (walkthrough) onWalkthroughStart?.(walkthrough.task_name as WalkthroughTaskName, walkthrough.params);
+    // Gated for a walkthrough's "agent-action-committed" step: the real
+    // committed_actions this turn, never tools_used (proposed but not saved).
+    if (actions.length) emitWalkthroughEvent("agent-action-committed", { tools: actions.map(a => a.tool) });
     // Refresh medication state whenever the agent committed *any* write this turn
     // (not only routable ones) — awaited + caught so a failed refetch surfaces
     // instead of silently leaving screens (e.g. the timeline) stale.
@@ -256,10 +293,17 @@ export function ElderlyAIScreen({ patient, elderId, onLogDose, onNavigate, onMed
         console.warn("[dosewise] medication refresh after agent write failed:", err);
       }
     }
-    // Flag a freshly added prescription so the destination screen can highlight it
-    // as visible proof the dose really landed on the timeline.
-    const added = actions.find(a => a.tool === "add_prescription");
-    if (added?.name) onMedAdded?.(added.name);
+    // Canonical proof-of-change: highlight the EXACT record that changed by
+    // entity_type/entity_id, with a caption built from changed_fields. Falls back
+    // to the legacy name-string card highlight only if the action lacks entity ids
+    // (a tool not yet migrated to record_action).
+    const highlight = firstHighlightable(actions);
+    if (highlight) {
+      onHighlightChange?.(highlight);
+    } else {
+      const added = actions.find(a => a.tool === "add_prescription");
+      if (added?.name) onMedAdded?.(added.name);
+    }
     // The live tool_end handler above already showed the confirmation bubble and
     // navigated for the common case. This only fires as a fallback — e.g. a
     // routable action whose event never arrived (older/non-streaming path).
@@ -276,27 +320,55 @@ export function ElderlyAIScreen({ patient, elderId, onLogDose, onNavigate, onMed
     }
   };
 
-  // "Add prescription" quick-help: snap/choose a photo, then let the agent read
-  // the label and propose it in the chat (confirm with a simple "yes").
+  // Attach a photo: stage it on the composer so the person can type what they
+  // want done with it ("what is this pill?", "add this to my list", …) rather
+  // than us assuming it's a prescription.
   const onRxPhotoFile = async (e: ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     e.target.value = "";
     if (!file) return;
     setQuickOpen(false);
-    send(t(language, "ai.rxPhotoMsgMine"), await fileToBase64(file), undefined, URL.createObjectURL(file));
+    setPendingImage({ base64: await fileToBase64(file), url: URL.createObjectURL(file) });
+    inputRef.current?.focus();
   };
 
   const handleSend = () => {
     const text = input.trim();
-    if (!text) return;
+    if ((!text && !pendingImage) || sending) return;
+    const img = pendingImage;
     setInput("");
-    send(text);
+    setPendingImage(null);
+    // If they attached a photo but typed nothing, fall back to a neutral prompt.
+    send(text || t(language, "ai.photoDefaultPrompt"), img?.base64, undefined, img?.url);
   };
 
   useEffect(() => {
-    if (autoMessage) send(autoMessage);
+    if (autoMessage) {
+      send(autoMessage);
+      onAutoMessageConsumed?.();
+    }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
+
+  useEffect(() => {
+    if (prefillMessage) {
+      setInput(prefillMessage);
+      onPrefillConsumed?.();
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  // Fetched once so agent turns can tell Mei which walkthroughs this elder has
+  // already been shown (server-side proactive-offer suppression) — a stale
+  // read until the next remount is an accepted tradeoff, same as this app's
+  // other per-session profile caches.
+  const [completedWalkthroughs, setCompletedWalkthroughs] = useState<string[]>([]);
+  useEffect(() => {
+    if (!elderId) return;
+    fetchProfile(elderId).then(profile => {
+      setCompletedWalkthroughs(profile?.details.completedWalkthroughs ?? []);
+    });
+  }, [elderId]);
 
   // Start the conversation over: fresh greeting and a fresh session window, so
   // the restored-session TTL doesn't immediately expire the new chat.
@@ -398,7 +470,7 @@ export function ElderlyAIScreen({ patient, elderId, onLogDose, onNavigate, onMed
               </div>
               <div className="space-y-2">
                 {flagged.map(q => (
-                  <div key={q.id} className="bg-amber-50 border border-amber-200 rounded-2xl px-4 py-3 flex items-start gap-3">
+                  <div key={q.id} data-testid={`doctor_message-${q.id}`} className="bg-amber-50 border border-amber-200 rounded-2xl px-4 py-3 flex items-start gap-3">
                     <div className="flex-1">
                       <div className="flex items-center gap-1.5 mb-1">
                         <Brain size={11} className="text-amber-600" />
@@ -423,7 +495,7 @@ export function ElderlyAIScreen({ patient, elderId, onLogDose, onNavigate, onMed
 
           {/* Manually added questions */}
           {manual.map(q => (
-            <div key={q.id} className="bg-card rounded-2xl border border-border p-4 flex items-start gap-3">
+            <div key={q.id} data-testid={`doctor_message-${q.id}`} className="bg-card rounded-2xl border border-border p-4 flex items-start gap-3">
               <div className="w-5 h-5 rounded-full border-2 border-primary/40 flex items-center justify-center shrink-0 mt-0.5">
                 <Circle size={7} className="text-primary fill-primary" />
               </div>
@@ -462,7 +534,7 @@ export function ElderlyAIScreen({ patient, elderId, onLogDose, onNavigate, onMed
             <div>
               <p className="text-xs text-muted-foreground font-semibold uppercase tracking-wider mb-2">{t(language, "ai.alreadyAsked")}</p>
               {answered.map(q => (
-                <div key={q.id} className="bg-muted/40 rounded-xl border border-border p-3 mb-2 flex items-start gap-3">
+                <div key={q.id} data-testid={`doctor_message-${q.id}`} className="bg-muted/40 rounded-xl border border-border p-3 mb-2 flex items-start gap-3">
                   <div className="w-4 h-4 rounded-full bg-emerald-500 flex items-center justify-center shrink-0 mt-0.5">
                     <Check size={8} className="text-white" />
                   </div>
@@ -508,7 +580,14 @@ export function ElderlyAIScreen({ patient, elderId, onLogDose, onNavigate, onMed
           )}
 
           <div ref={scrollRef} className="flex-1 overflow-y-auto scrollbar-none px-4 py-3 space-y-3 border-t border-border">
-            {messages.map(msg => msg.isConfirmation ? (
+            {messages.map(msg => msg.isRateLimited ? (
+              <div key={msg.id} className="flex justify-center">
+                <div className="flex items-center gap-1.5 bg-amber-50 border border-amber-200 text-amber-800 rounded-full px-3.5 py-1.5">
+                  <AlertTriangle size={13} className="text-amber-600 shrink-0" />
+                  <span className="text-[13px] font-semibold">{msg.text}</span>
+                </div>
+              </div>
+            ) : msg.isConfirmation ? (
               <div key={msg.id} className="flex justify-center">
                 <div className="flex items-center gap-1.5 bg-emerald-50 border border-emerald-200 text-emerald-800 rounded-full px-3.5 py-1.5">
                   <Check size={13} className="text-emerald-600 shrink-0" />
@@ -558,13 +637,23 @@ export function ElderlyAIScreen({ patient, elderId, onLogDose, onNavigate, onMed
           </div>
 
           <div className="px-4 pb-4 pt-1 border-t border-border shrink-0">
+            {/* Staged photo — attached, awaiting the person's instruction. */}
+            {pendingImage && (
+              <div className="flex items-center gap-2.5 mb-2 bg-secondary/60 border border-primary/20 rounded-xl p-2">
+                <img src={pendingImage.url} alt={t(language, "ai.attachment")} className="w-12 h-12 rounded-lg object-cover shrink-0" />
+                <span className="flex-1 text-[13px] text-foreground font-medium">{t(language, "ai.photoAttachedHint")}</span>
+                <button onClick={() => setPendingImage(null)} aria-label={t(language, "common.cancel")} className="w-7 h-7 rounded-full bg-muted flex items-center justify-center text-muted-foreground shrink-0">
+                  <X size={14} />
+                </button>
+              </div>
+            )}
             <div className="flex gap-2 items-end">
               {SpeechRecognitionImpl && (
                 <button onClick={handleMic} className={`w-10 h-10 rounded-full flex items-center justify-center shrink-0 transition-colors ${isListening ? "bg-red-500 text-white" : "bg-muted text-foreground"}`}>
                   <Mic size={17} />
                 </button>
               )}
-              <button onClick={() => rxPhotoRef.current?.click()} className="w-10 h-10 rounded-full bg-muted text-foreground flex items-center justify-center shrink-0">
+              <button onClick={() => setPickerFor("rx")} className="w-10 h-10 rounded-full bg-muted text-foreground flex items-center justify-center shrink-0">
                 <Camera size={17} />
               </button>
               <div className="flex-1 bg-input-background rounded-2xl px-3.5 py-2">
@@ -573,21 +662,38 @@ export function ElderlyAIScreen({ patient, elderId, onLogDose, onNavigate, onMed
                   value={input}
                   onChange={e => { const v = e.target.value; setInput(v); if (v.trim() && quickOpen) setQuickOpen(false); }}
                   onKeyDown={e => { if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); handleSend(); } }}
-                  placeholder={t(language, "ai.typeOrTapMic")}
+                  placeholder={t(language, pendingImage ? "ai.photoNotePlaceholder" : "ai.typeOrTapMic")}
                   className="w-full bg-transparent text-foreground text-[15px] resize-none outline-none max-h-24 leading-relaxed placeholder:text-muted-foreground"
                   rows={1}
                 />
               </div>
-              <button onClick={handleSend} disabled={!input.trim() || sending} className="w-10 h-10 rounded-full bg-primary text-primary-foreground flex items-center justify-center shrink-0 disabled:opacity-30 active:scale-95 transition-transform">
+              <button onClick={handleSend} disabled={(!input.trim() && !pendingImage) || sending} data-walk="elder-ai-send-button" className="w-10 h-10 rounded-full bg-primary text-primary-foreground flex items-center justify-center shrink-0 disabled:opacity-30 active:scale-95 transition-transform">
                 <Send size={16} />
               </button>
             </div>
             <p className="text-center text-[10px] text-muted-foreground mt-2">{t(language, "ai.disclaimer")}</p>
           </div>
 
-          {/* hidden inputs used by "Update profile" and "Add prescription" */}
-          <input ref={reportRef} type="file" accept="image/*,application/pdf" className="sr-only" onChange={onReportFile} />
-          <input ref={rxPhotoRef} type="file" accept="image/*" capture="environment" className="sr-only" onChange={onRxPhotoFile} />
+          {/* Hidden inputs backing "Update profile" and "Add prescription" — each
+              flow gets a camera-capture input and a plain library/Files input, so
+              PhotoSourceSheet's two options are always both reachable. */}
+          <input ref={reportCameraRef} type="file" accept="image/*" capture="environment" className="sr-only" onChange={onReportFile} />
+          <input ref={reportLibraryRef} type="file" accept="image/*,application/pdf" className="sr-only" onChange={onReportFile} />
+          <input ref={rxCameraRef} type="file" accept="image/*" capture="environment" className="sr-only" onChange={onRxPhotoFile} />
+          <input ref={rxLibraryRef} type="file" accept="image/*" data-walk="rx-attach-library" className="sr-only" onChange={onRxPhotoFile} />
+          {pickerFor && (
+            <PhotoSourceSheet
+              onTakePhoto={() => {
+                (pickerFor === "rx" ? rxCameraRef : reportCameraRef).current?.click();
+                setPickerFor(null);
+              }}
+              onChooseFile={() => {
+                (pickerFor === "rx" ? rxLibraryRef : reportLibraryRef).current?.click();
+                setPickerFor(null);
+              }}
+              onClose={() => setPickerFor(null)}
+            />
+          )}
 
           {/* Language & voice sheet */}
           {showLangSheet && (
@@ -643,13 +749,13 @@ export function ElderlyAIScreen({ patient, elderId, onLogDose, onNavigate, onMed
             </button>
 
             <div className="grid grid-cols-2 gap-2">
-              <FeatureBtn icon={Camera}   label={t(language, "common.addPrescription")} onClick={() => rxPhotoRef.current?.click()} />
-              <FeatureBtn icon={FileText} label={t(language, "ai.updateProfile")}       onClick={() => reportRef.current?.click()} />
+              <FeatureBtn icon={Camera}   label={t(language, "common.addPrescription")} onClick={() => { setQuickOpen(false); setPickerFor("rx"); }} />
+              <FeatureBtn icon={FileText} label={t(language, "ai.updateProfile")}       onClick={() => { setQuickOpen(false); setPickerFor("report"); }} />
               <FeatureBtn icon={Pill}     label={t(language, "ai.askAboutMed")}         onClick={() => setShowMedPicker(v => !v)} />
               {/* These two open their own sheets — close the popup first, or it
                   stays stacked on top of whatever they open. */}
               <FeatureBtn icon={Globe}    label={t(language, "ai.languageVoice")}       onClick={() => { setQuickOpen(false); setShowLangSheet(true); }} />
-              <FeatureBtn icon={Plane}    label={t(language, "common.travelMode")}      onClick={() => { setQuickOpen(false); onOpenTravel(); }} className="col-span-2" />
+              <FeatureBtn icon={Plane}    label={t(language, "common.travelMode")}      onClick={() => { setQuickOpen(false); onOpenTravel(); }} className="col-span-2" data-walk="elder-travelmode-tile" />
             </div>
 
             {showMedPicker && (

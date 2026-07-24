@@ -14,7 +14,7 @@ interface ActionTarget {
 }
 
 export const ACTION_TARGETS: Record<string, ActionTarget> = {
-  add_prescription:        { elderly: "prescriptions", caregiver: "patient",  doneKey: "ai.doneAddPrescription", labelKey: "ai.labelMedications" },
+  add_prescription:        { elderly: "home",          caregiver: "patient",  doneKey: "ai.doneAddPrescription", labelKey: "ai.labelMedications" },
   log_dose:                { elderly: "home",          caregiver: "timeline", doneKey: "ai.doneLogDose",         labelKey: "ai.labelSchedule" },
   update_medical_profile:  { elderly: "settings",      caregiver: "patient",  doneKey: "ai.doneUpdateProfile",   labelKey: "ai.labelProfile" },
   set_medication_reminder: { elderly: "prescriptions", caregiver: "patient",  doneKey: "ai.doneSetReminder",     labelKey: "ai.labelMedications" },

@@ -34,6 +34,7 @@ export function MeiSuggestButton({ fieldLabel, onAccept, className = "", formatH
   const [unknown, setUnknown] = useState(false);
 
   const ask = async () => {
+    if (loading) return;
     setOpen(true);
     setLoading(true);
     setSuggestion(null);
@@ -59,8 +60,9 @@ export function MeiSuggestButton({ fieldLabel, onAccept, className = "", formatH
       <button
         type="button"
         onClick={ask}
+        disabled={loading}
         title={t(language, "ai.suggestFor", { field: fieldLabel })}
-        className={`inline-flex items-center gap-1 text-[10px] font-semibold text-primary bg-secondary rounded-full px-2 py-0.5 active:opacity-80 transition-opacity shrink-0 ${className}`}
+        className={`inline-flex items-center gap-1 text-[10px] font-semibold text-primary bg-secondary rounded-full px-2 py-0.5 active:opacity-80 transition-opacity shrink-0 disabled:opacity-50 ${className}`}
       >
         <Sparkles size={10} className="shrink-0" />
         {t(language, "ai.suggestButton")}

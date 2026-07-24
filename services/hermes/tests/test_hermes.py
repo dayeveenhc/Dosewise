@@ -30,6 +30,8 @@ def test_all_tools_registered():
         "check_drug_interactions",
         "show_schedule",
         "update_medical_profile",
+        "start_walkthrough",
+        "verify_medication_exists",
     }
 
 

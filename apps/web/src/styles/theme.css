@@ -205,3 +205,31 @@
     line-height: 1.5;
   }
 }
+
+/* Guided Auto-Navigation Reveal: a transient emerald pulse the walkthrough adds
+   to the element where a change just landed (ElderlyApp handleWalkthroughReveal),
+   so it's unmistakable. ~2.6s = two 1.3s cycles, matching the JS cleanup timer. */
+@keyframes walk-reveal-pulse {
+  0%, 100% { box-shadow: 0 0 0 0 rgba(16, 185, 129, 0); }
+  25% { box-shadow: 0 0 0 4px rgba(16, 185, 129, 0.55); }
+  60% { box-shadow: 0 0 0 7px rgba(16, 185, 129, 0.22); }
+}
+.walk-reveal-pulse {
+  animation: walk-reveal-pulse 1.3s ease-in-out 2;
+  border-radius: 14px;
+}
+
+/* ChangeHighlight: the canonical "here's the exact record that changed" ring the
+   ChangeHighlight component adds around a target element (data-testid keyed) while
+   its caption is up (~3.5s). A steady emerald ring + soft glow, distinct from the
+   transient walk-reveal-pulse above. */
+.change-highlight {
+  animation: change-highlight-glow 1.4s ease-in-out infinite;
+  border-radius: 16px;
+  position: relative;
+  z-index: 55;
+}
+@keyframes change-highlight-glow {
+  0%, 100% { box-shadow: 0 0 0 2px rgba(16, 185, 129, 0.7), 0 0 0 5px rgba(16, 185, 129, 0.16); }
+  50% { box-shadow: 0 0 0 2px rgba(16, 185, 129, 0.5), 0 0 0 8px rgba(16, 185, 129, 0.08); }
+}

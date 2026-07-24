@@ -130,3 +130,15 @@ export async function respondToLinkRequest(linkId: string, accept: boolean): Pro
     .from("care_links").update({ status: accept ? "active" : "revoked" }).eq("id", linkId);
   return !error;
 }
+
+// Elder-side: does the elder have at least one ACTIVE caregiver link? Used by the
+// accept-caregiver-link walkthrough's Verify phase to re-query real state after
+// the elder taps Accept — never trusting the update's own return.
+export async function hasActiveCareLink(elderId: string): Promise<boolean> {
+  const { data } = await supabase
+    .from("care_links")
+    .select("id")
+    .eq("elder_id", elderId).eq("status", "active")
+    .limit(1);
+  return (data ?? []).length > 0;
+}

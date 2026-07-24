@@ -9,12 +9,24 @@ import { ElderlyNotificationsScreen } from "./ElderlyNotificationsScreen";
 import { ElderlySettingsScreen } from "./ElderlySettingsScreen";
 import { AddPrescriptionSheet } from "../AddPrescriptionSheet";
 import { TravelModeSheet } from "../TravelModeSheet";
+import { ChangeHighlight } from "../../components/ChangeHighlight";
+import { HighlightCaption } from "../../components/HighlightCaption";
+import type { AgentAction } from "../../lib/hermes";
 import { GuidedTour } from "../../components/GuidedTour";
 import type { TourStep } from "../../components/GuidedTour";
 import { ConfirmDialog } from "../../components/ConfirmDialog";
 import { logDoseTaken, addMedication, fetchElderMedications, to24h } from "../../lib/medications";
+import { defaultDoseTime } from "../../components/TimesPicker";
+import { MED_COLOURS } from "../../data/medications";
 import { useLanguage } from "../../lib/languageContext";
 import { t } from "../../lib/language";
+import { Walkthrough } from "../../components/Walkthrough";
+import { resolveWalkthroughSteps } from "../../lib/walkthrough/steps";
+import type { WalkthroughScreen, WalkthroughTaskName, VerifyDirective, RevealDirective, WalkthroughParams } from "../../lib/walkthrough/types";
+import { loadWalkthroughSession, saveWalkthroughSession, clearWalkthroughSession } from "../../lib/walkthroughState";
+import { markWalkthroughCompleted, fetchProfile } from "../../lib/profile";
+import { fetchDoctorQuestions } from "../../lib/doctor";
+import { hasActiveCareLink } from "../../lib/careLinks";
 
 export function ElderlyApp({ patient, elderId, onUpdatePatient, onBack, onSignOut, startTour, careMessages }: {
   patient: Patient;
@@ -28,6 +40,12 @@ export function ElderlyApp({ patient, elderId, onUpdatePatient, onBack, onSignOu
   const [tab, setTab] = useState<ElderlyTab>("home");
   const [currentTime, setCurrentTime] = useState(new Date());
   const [pendingAIMessage, setPendingAIMessage] = useState<string | undefined>();
+  // Pre-fills Ask Mei's input box WITHOUT sending — the elder still taps Send
+  // themselves (unlike pendingAIMessage above, which auto-sends).
+  const [pendingPrefill, setPendingPrefill] = useState<string | undefined>();
+  const [walkthroughTask, setWalkthroughTask] = useState<WalkthroughTaskName | null>(null);
+  const [walkthroughStepIndex, setWalkthroughStepIndex] = useState(0);
+  const [walkthroughParams, setWalkthroughParams] = useState<WalkthroughParams>({});
   const [addRx, setAddRx] = useState<null | "scan" | "manual">(null);
   const [showTravel, setShowTravel] = useState(false);
   const [showTour, setShowTour] = useState(!!startTour);
@@ -36,6 +54,14 @@ export function ElderlyApp({ patient, elderId, onUpdatePatient, onBack, onSignOu
   // "Just added" highlight as visible proof it landed. Auto-clears after a few seconds.
   const [justAddedMed, setJustAddedMed] = useState<string | null>(null);
   const justAddedTimer = useRef<number>();
+  // The committed change currently being pulse-highlighted by ChangeHighlight
+  // (the canonical "here's the exact record that changed" layer). One at a time.
+  const [highlightChange, setHighlightChange] = useState<AgentAction | null>(null);
+  // A transient walkthrough-Reveal caption (client-driven writes: travel, profile,
+  // condition/allergy) — glued to the pulsed element via the same shared bubble
+  // ChangeHighlight uses, so both prove WHAT changed identically.
+  const [revealCaption, setRevealCaption] = useState<{ rect: DOMRect; verb: string; text: string } | null>(null);
+  const revealCaptionRaf = useRef<number>();
   const { language } = useLanguage();
 
   const flagJustAdded = (name?: string) => {
@@ -125,10 +151,228 @@ export function ElderlyApp({ patient, elderId, onUpdatePatient, onBack, onSignOu
     setPendingAIMessage(msg);
     setTab("ai");
   };
+
+  const openAIPrefill = (msg: string) => {
+    setPendingPrefill(msg);
+    setTab("ai");
+  };
+
+  // Resume a same-tab, in-progress walkthrough (e.g. the elder switched to
+  // chat mid-way and came back) — never across a hard refresh, matching the
+  // onboarding wizard's own existing (accepted) behaviour of not surviving one.
+  useEffect(() => {
+    const session = loadWalkthroughSession(elderId);
+    if (session) {
+      setWalkthroughTask(session.taskName);
+      setWalkthroughStepIndex(session.stepIndex);
+      setWalkthroughParams(session.params ?? {});
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  const walkthroughSteps = walkthroughTask ? resolveWalkthroughSteps(walkthroughTask, "elder", walkthroughParams) : [];
+
+  const handleWalkthroughStart = (taskName: WalkthroughTaskName, params: WalkthroughParams = {}) => {
+    setWalkthroughTask(taskName);
+    setWalkthroughStepIndex(0);
+    setWalkthroughParams(params);
+    saveWalkthroughSession(elderId, { taskName, stepIndex: 0, startedAt: Date.now(), params });
+  };
+
+  // Guided Auto-Navigation Verify phase: re-query REAL state (never trust the
+  // write's own "Saved"). Polls briefly since the sheet's write is async and the
+  // Verify fires right after Mei taps Save.
+  const handleWalkthroughVerify = async (verify: VerifyDirective): Promise<boolean> => {
+    if (!elderId) return false;
+    if (verify.kind === "medication-exists") {
+      const wanted = verify.name.trim().toLowerCase();
+      for (let attempt = 0; attempt < 12; attempt++) {
+        const meds = await fetchElderMedications(elderId);
+        if (meds.some(m => m.name.trim().toLowerCase() === wanted)) return true;
+        await new Promise(r => setTimeout(r, 400));
+      }
+      return false;
+    }
+    if (verify.kind === "travel-plan-saved") {
+      for (let attempt = 0; attempt < 12; attempt++) {
+        const profile = await fetchProfile(elderId);
+        if (profile?.details.travelPlan?.startDate) return true;
+        await new Promise(r => setTimeout(r, 400));
+      }
+      return false;
+    }
+    if (verify.kind === "profile-field") {
+      const want = verify.value.trim();
+      for (let attempt = 0; attempt < 12; attempt++) {
+        const profile = await fetchProfile(elderId);
+        const actual = profile?.details[verify.field as keyof typeof profile.details];
+        if (actual !== undefined && actual !== null && String(actual) === want) return true;
+        await new Promise(r => setTimeout(r, 400));
+      }
+      return false;
+    }
+    if (verify.kind === "profile-list-includes") {
+      const want = verify.value.trim().toLowerCase();
+      for (let attempt = 0; attempt < 12; attempt++) {
+        const profile = await fetchProfile(elderId);
+        const list = profile?.details[verify.field as keyof typeof profile.details];
+        if (Array.isArray(list) && list.some(v => String(v).trim().toLowerCase() === want)) return true;
+        await new Promise(r => setTimeout(r, 400));
+      }
+      return false;
+    }
+    if (verify.kind === "care-link-active") {
+      for (let attempt = 0; attempt < 12; attempt++) {
+        if (await hasActiveCareLink(elderId)) return true;
+        await new Promise(r => setTimeout(r, 400));
+      }
+      return false;
+    }
+    return true;
+  };
+
+  // Guided Auto-Navigation Reveal phase: navigate to where the result lives and
+  // pulse-highlight it so the change is unmistakable. Meds already get their own
+  // name-keyed "Just added" card highlight (flagJustAdded); this generic pulse
+  // covers the rest (a condition chip's field, a saved travel plan, etc.).
+  const handleWalkthroughReveal = (reveal: RevealDirective) => {
+    if (reveal.screen.mode === "elderly") setTab(reveal.screen.tab);
+    if (reveal.pulse === false) return;
+    // Defer so the destination screen has mounted before we find + pulse the target.
+    setTimeout(() => {
+      const el = document.querySelector<HTMLElement>(reveal.selector);
+      if (!el) return;
+      el.scrollIntoView({ block: "center", behavior: "smooth" });
+      el.classList.add("walk-reveal-pulse");
+      setTimeout(() => el.classList.remove("walk-reveal-pulse"), 2600);
+      // Show the same changed-fields-style caption ChangeHighlight uses, tracked
+      // to the element while the pulse is up (~2.6s).
+      if (reveal.caption) {
+        const track = () => {
+          setRevealCaption({ rect: el.getBoundingClientRect(), ...reveal.caption! });
+          revealCaptionRaf.current = requestAnimationFrame(track);
+        };
+        track();
+        setTimeout(() => {
+          window.cancelAnimationFrame(revealCaptionRaf.current!);
+          setRevealCaption(null);
+        }, 2600);
+      }
+    }, 350);
+  };
+
+  // Fallback when the add-prescription walkthrough can't prove the save (Verify
+  // failed): re-query once — if the med IS there the Verify simply raced, so just
+  // highlight it (never double-insert); if it's genuinely absent, save it directly
+  // from Mei's params and land on Home. A real write failure (addMedication throws)
+  // leaves the honest walk.verifyFailed message up rather than faking success.
+  const handleWalkthroughVerifyFailed = async (verify: VerifyDirective) => {
+    if (verify.kind !== "medication-exists" || !elderId) return;
+    const wanted = verify.name.trim().toLowerCase();
+    const p = walkthroughParams;
+    try {
+      const meds = await fetchElderMedications(elderId);
+      if (meds.some(m => m.name.trim().toLowerCase() === wanted)) {
+        flagJustAdded(verify.name);
+      } else {
+        await handleAddPrescription({
+          name: p.name || verify.name,
+          dose: p.dose || "",
+          purpose: p.purpose || "",
+          colour: MED_COLOURS[0].hex,
+          time: defaultDoseTime({ ...patient.mealTimes, sleepTime: patient.sleepTime }),
+          times: [],
+        });
+      }
+      setTab("home");
+      handleWalkthroughExit();
+    } catch {
+      // Genuine write failure — keep the walkthrough's honest error visible.
+    }
+  };
+
+  // Dev-only deterministic trigger so an e2e drive can start an autonomous
+  // walkthrough without depending on the LLM choosing start_walkthrough.
+  useEffect(() => {
+    if (!import.meta.env.DEV) return;
+    type Hook = (t: string, p?: WalkthroughParams) => void;
+    (window as unknown as { __dwStartWalkthrough?: Hook }).__dwStartWalkthrough = (task, params) =>
+      handleWalkthroughStart(task as WalkthroughTaskName, params ?? {});
+    // Companion hook: fire ChangeHighlight with a committed action (real
+    // entity_id) so an e2e can prove the highlight lands on a real record
+    // without depending on the LLM choosing a write tool.
+    type HlHook = (action: AgentAction) => void;
+    (window as unknown as { __dwHighlightChange?: HlHook }).__dwHighlightChange = action =>
+      setHighlightChange(action);
+    return () => {
+      delete (window as unknown as { __dwStartWalkthrough?: Hook }).__dwStartWalkthrough;
+      delete (window as unknown as { __dwHighlightChange?: HlHook }).__dwHighlightChange;
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  const handleWalkthroughNavigate = (screen: WalkthroughScreen) => {
+    if (screen.mode === "elderly") setTab(screen.tab);
+  };
+
+  const handleWalkthroughAdvance = () => {
+    if (!walkthroughTask) return;
+    const isLast = walkthroughStepIndex >= walkthroughSteps.length - 1;
+    if (isLast) {
+      if (elderId) void markWalkthroughCompleted(elderId, "elder", walkthroughTask);
+      clearWalkthroughSession(elderId);
+      setWalkthroughTask(null);
+      setWalkthroughStepIndex(0);
+      return;
+    }
+    const next = walkthroughStepIndex + 1;
+    setWalkthroughStepIndex(next);
+    saveWalkthroughSession(elderId, { taskName: walkthroughTask, stepIndex: next, startedAt: Date.now() });
+  };
+
+  // Exiting/skipping clears client state only — nothing is ever written back
+  // for an abandoned walkthrough, only genuine completion (above).
+  const handleWalkthroughExit = () => {
+    clearWalkthroughSession(elderId);
+    setWalkthroughTask(null);
+    setWalkthroughStepIndex(0);
+  };
   const [doctorQuestions, setDoctorQuestions] = useState<DoctorQ[]>([
-    { id: 1, question: "Can I take Celecoxib and Metformin at the same time?",           addedAt: "Added by Mei · Today",     answered: false },
-    { id: 2, question: "Is it normal to feel a little dizzy after taking Amlodipine?",  addedAt: "Added by Mei · Yesterday", answered: false },
+    { id: "seed-1", question: "Can I take Celecoxib and Metformin at the same time?",           addedAt: "Added by Mei · Today",     answered: false },
+    { id: "seed-2", question: "Is it normal to feel a little dizzy after taking Amlodipine?",  addedAt: "Added by Mei · Yesterday", answered: false },
   ]);
+  // Signals ElderlyAIScreen to switch to its "Ask a doctor" sub-tab (bumped when a
+  // doctor_message change is highlighted, so ChangeHighlight lands on the thread).
+  const [openDoctorSignal, setOpenDoctorSignal] = useState(0);
+
+  // Pull the elder's REAL doctor_questions and merge them in (dedupe by id, keep
+  // the seed + any local manual adds). Without this, a question Mei queued via
+  // chat writes to the DB but never appears in the elder's thread.
+  const refreshDoctorQuestions = async () => {
+    if (!elderId) return;
+    const real = await fetchDoctorQuestions(elderId);
+    if (!real.length) return;
+    setDoctorQuestions(prev => {
+      const seen = new Set(prev.map(q => q.id));
+      const additions = real.filter(q => !seen.has(q.id));
+      const updated = prev.map(q => {
+        const match = real.find(r => r.id === q.id);
+        return match ? { ...q, answered: match.answered } : q;
+      });
+      return [...additions, ...updated];
+    });
+  };
+
+  useEffect(() => {
+    void refreshDoctorQuestions();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [elderId]);
+
+  // Refresh when the elder opens the AI screen (where the doctor thread lives).
+  useEffect(() => {
+    if (tab === "ai") void refreshDoctorQuestions();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [tab, elderId]);
 
   const handleLogDose = (medId: number, takenAt?: string) => {
     const t = takenAt ?? new Date().toLocaleTimeString("en-SG", { hour: "2-digit", minute: "2-digit" });
@@ -173,7 +417,7 @@ export function ElderlyApp({ patient, elderId, onUpdatePatient, onBack, onSignOu
   }, [tab, elderId]);
 
   const handleAddDoctorQ = (q: string) => {
-    setDoctorQuestions(prev => [{ id: Date.now(), question: q, addedAt: `Added by Mei · ${new Date().toLocaleTimeString("en-SG", { hour: "2-digit", minute: "2-digit" })}`, answered: false }, ...prev]);
+    setDoctorQuestions(prev => [{ id: `local-${Date.now()}`, question: q, addedAt: `Added by Mei · ${new Date().toLocaleTimeString("en-SG", { hour: "2-digit", minute: "2-digit" })}`, answered: false }, ...prev]);
   };
 
   const unasked = doctorQuestions.filter(q => !q.answered).length;
@@ -221,7 +465,7 @@ export function ElderlyApp({ patient, elderId, onUpdatePatient, onBack, onSignOu
       {/* Screen content */}
       <div className="flex-1 min-h-0 overflow-hidden flex flex-col">
         {tab === "home"          && <ElderlyHomeScreen         patient={patient} onLogDose={handleLogDose} onOpenTravel={() => setShowTravel(true)} justAddedMed={justAddedMed} />}
-        {tab === "prescriptions" && <ElderlyPrescriptionScreen patient={patient} onOpenAI={openAI} onAddRx={() => setAddRx("manual")} justAddedMed={justAddedMed} />}
+        {tab === "prescriptions" && <ElderlyPrescriptionScreen patient={patient} onOpenAI={openAI} onAddRx={() => setAddRx("manual")} onRequestRefill={name => openAIPrefill(t(language, "ai.refillRequestMsg", { name }))} justAddedMed={justAddedMed} />}
         {tab === "ai"            && (
           <ElderlyAIScreen
             patient={patient}
@@ -230,12 +474,18 @@ export function ElderlyApp({ patient, elderId, onUpdatePatient, onBack, onSignOu
             onNavigate={setTab}
             onMedsChanged={refreshMeds}
             onMedAdded={flagJustAdded}
+            onHighlightChange={setHighlightChange}
             onOpenTravel={() => setShowTravel(true)}
             doctorQuestions={doctorQuestions}
+            openDoctorSignal={openDoctorSignal}
             onAddDoctorQ={handleAddDoctorQ}
-            onMarkAnswered={(id: number) => setDoctorQuestions(p => p.map(q => q.id === id ? { ...q, answered: true } : q))}
-            onDeleteQuestion={(id: number) => setDoctorQuestions(p => p.filter(q => q.id !== id))}
+            onMarkAnswered={(id: string) => setDoctorQuestions(p => p.map(q => q.id === id ? { ...q, answered: true } : q))}
+            onDeleteQuestion={(id: string) => setDoctorQuestions(p => p.filter(q => q.id !== id))}
             autoMessage={pendingAIMessage}
+            prefillMessage={pendingPrefill}
+            onAutoMessageConsumed={() => setPendingAIMessage(undefined)}
+            onPrefillConsumed={() => setPendingPrefill(undefined)}
+            onWalkthroughStart={handleWalkthroughStart}
           />
         )}
         {tab === "notifications" && <ElderlyNotificationsScreen careMessages={careMessages} elderId={elderId} />}
@@ -272,7 +522,7 @@ export function ElderlyApp({ patient, elderId, onUpdatePatient, onBack, onSignOu
         </div>
       </div>
 
-      {addRx && <AddPrescriptionSheet initialTab={addRx} routine={{ ...patient.mealTimes, sleepTime: patient.sleepTime }} onClose={() => setAddRx(null)} onAdd={handleAddPrescription} onAdded={() => setTab("prescriptions")} onAgentAdded={(name?: string) => { void refreshMeds(); flagJustAdded(name); setTab("prescriptions"); }} />}
+      {addRx && <AddPrescriptionSheet initialTab={addRx} routine={{ ...patient.mealTimes, sleepTime: patient.sleepTime }} onClose={() => setAddRx(null)} onAdd={handleAddPrescription} onAdded={() => { if (!walkthroughTask) setTab("prescriptions"); }} onAgentAdded={(name?: string) => { void refreshMeds(); flagJustAdded(name); setTab("prescriptions"); }} />}
       {showTravel && (
         <TravelModeSheet
           patient={patient}
@@ -281,7 +531,35 @@ export function ElderlyApp({ patient, elderId, onUpdatePatient, onBack, onSignOu
           onSaved={plan => onUpdatePatient({ ...patient, travelPlan: plan })}
         />
       )}
+      <ChangeHighlight
+        change={highlightChange}
+        mode="elderly"
+        onNavigate={target => {
+          setTab(target as ElderlyTab);
+          // A doctor-question change lives in the AI screen's "Ask a doctor"
+          // sub-tab: open it and pull the fresh row so the highlight can land.
+          if (highlightChange?.entity_type === "doctor_message") {
+            setOpenDoctorSignal(s => s + 1);
+            void refreshDoctorQuestions();
+          }
+        }}
+        onDone={() => setHighlightChange(null)}
+      />
+      {revealCaption && <HighlightCaption rect={revealCaption.rect} verb={revealCaption.verb} text={revealCaption.text} />}
       {showTour && <GuidedTour steps={tourSteps} onFinish={() => setShowTour(false)} />}
+      {walkthroughTask && walkthroughSteps.length > 0 && (
+        <Walkthrough
+          steps={walkthroughSteps}
+          stepIndex={Math.min(walkthroughStepIndex, walkthroughSteps.length - 1)}
+          currentScreen={{ mode: "elderly", tab }}
+          onNavigate={handleWalkthroughNavigate}
+          onAdvance={handleWalkthroughAdvance}
+          onExit={handleWalkthroughExit}
+          onVerify={handleWalkthroughVerify}
+          onReveal={handleWalkthroughReveal}
+          onVerifyFailed={handleWalkthroughVerifyFailed}
+        />
+      )}
       {showTourConfirm && (
         <ConfirmDialog
           title={t(language, "confirm.replayTourTitle")}

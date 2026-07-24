@@ -107,6 +107,41 @@ async def test_reply_language_forwarded_and_committed_actions_returned(monkeypat
     ]
 
 
+async def test_completed_walkthroughs_forwarded_and_walkthrough_returned(monkeypatch):
+    seen: dict = {}
+
+    async def fake_turn(
+        client, ctx, message, *, image_bytes=None, history=None,
+        completed_walkthroughs=None, **_,
+    ):
+        seen["completed_walkthroughs"] = completed_walkthroughs
+        ctx.walkthrough = {"task_name": "travel_mode_setup"}
+        return "sure, let me show you", ["start_walkthrough"], history or []
+
+    app = _make_app(monkeypatch, fake_turn)
+    body = {
+        "message": "how do I set up travel mode?",
+        "elder_id": ELDER,
+        "completed_walkthroughs": ["onboarding"],
+    }
+    async with _client(app) as c:
+        resp = await c.post("/agent/turn", json=body)
+    assert resp.status_code == 200
+    assert seen["completed_walkthroughs"] == ["onboarding"]
+    assert resp.json()["walkthrough"] == {"task_name": "travel_mode_setup"}
+
+
+async def test_walkthrough_defaults_none_when_not_queued(monkeypatch):
+    async def fake_turn(client, ctx, message, *, image_bytes=None, history=None, **_):
+        return "just chatting", [], history or []
+
+    app = _make_app(monkeypatch, fake_turn)
+    async with _client(app) as c:
+        resp = await c.post("/agent/turn", json={"message": "hi", "elder_id": ELDER})
+    assert resp.status_code == 200
+    assert resp.json()["walkthrough"] is None
+
+
 async def test_actions_defaults_empty_when_nothing_committed(monkeypatch):
     async def fake_turn(client, ctx, message, *, image_bytes=None, history=None, **_):
         return "just chatting", [], history or []

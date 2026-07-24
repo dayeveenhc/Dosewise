@@ -26,6 +26,13 @@ module.exports = {
         REPO_DIR,
         HERMES_ENV_FILE: `${REPO_DIR}/services/hermes/deploy/pm2/.env.demo`,
         HERMES_RELOAD: "0",
+        // Rate limits: process env overrides the .env.demo file (pydantic-settings
+        // precedence), raising the demo caps to fit a real propose→confirm +
+        // scan + suggest rhythm. The old .env.demo values (3/min, 20/hour) tripped
+        // the "sending too fast" 429 within minutes of demoing. See MEMORY.md.
+        RATE_LIMIT_TURNS_PER_MINUTE: "20",
+        RATE_LIMIT_TURNS_PER_HOUR: "240",
+        RATE_LIMIT_HTTP_PER_MINUTE: "80",
       },
     },
   ],

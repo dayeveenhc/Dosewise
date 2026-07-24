@@ -31,6 +31,11 @@ class ToolContext:
     # confirms and redirects to the page that shows the change. Fresh per turn:
     # ToolContext is rebuilt per request (HTTP) / per message (Telegram).
     committed_actions: list[dict] = field(default_factory=list)
+    # Set by start_walkthrough when queued this turn — {"task_name": str}. NOT a
+    # write, so deliberately separate from committed_actions: nothing was saved,
+    # only a client-side UI script was requested. A single value (not a list):
+    # only one walkthrough can be queued per turn.
+    walkthrough: dict | None = None
 
     def db(self):
         """RLS-scoped PostgREST client acting as this elder."""
@@ -41,6 +46,43 @@ ToolHandler = Callable[..., Awaitable[str]]
 
 # name -> (anthropic tool schema, handler)
 _REGISTRY: dict[str, tuple[dict, ToolHandler]] = {}
+
+
+def record_action(
+    ctx: ToolContext,
+    *,
+    tool: str,
+    summary: str,
+    entity_type: str,
+    entity_id: Any,
+    changed_fields: dict[str, dict] | None = None,
+    **extra: Any,
+) -> None:
+    """Append a committed write to ``ctx.committed_actions`` in the standard shape.
+
+    Called ONLY from a write tool's commit branch (never a propose). Carries WHAT
+    changed, not just THAT something changed, so the web app can navigate to the
+    exact record and highlight it:
+
+    * ``entity_type`` — e.g. "medication", "schedule_entry", "refill_request",
+      "profile_field", "caregiver_invite".
+    * ``entity_id`` — the real DB id (or a stable field key for a jsonb field),
+      stringified. This is what the UI targets as ``data-testid="{type}-{id}"``.
+    * ``changed_fields`` — ``{fieldName: {"before": any, "after": any}}``; ``before``
+      is ``None`` for a newly-created record. The UI builds its caption from this.
+
+    ``extra`` keeps back-compat keys (e.g. ``name`` for the legacy med highlight).
+    """
+    ctx.committed_actions.append(
+        {
+            "tool": tool,
+            "summary": summary,
+            "entity_type": entity_type,
+            "entity_id": str(entity_id),
+            "changed_fields": changed_fields or {},
+            **extra,
+        }
+    )
 
 
 def register(schema: dict, handler: ToolHandler) -> None:

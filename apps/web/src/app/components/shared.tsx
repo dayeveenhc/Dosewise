@@ -165,7 +165,7 @@ export function PatientSwitcher({ patients, selected, onSelect, onAdd, onScan }:
           ) : (
             <>
               {onScan && (
-                <button onClick={() => { setOpen(false); onScan(); }} className="flex items-center gap-3 w-full px-3 py-2.5 text-left hover:bg-muted border-t border-border">
+                <button onClick={() => { setOpen(false); onScan(); }} data-walk="patientswitcher-scan-qr" className="flex items-center gap-3 w-full px-3 py-2.5 text-left hover:bg-muted border-t border-border">
                   <div className="w-8 h-8 rounded-full bg-primary/10 flex items-center justify-center">
                     <QrCode size={14} className="text-primary" />
                   </div>

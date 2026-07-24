@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from .base import ToolContext, register
+from .base import ToolContext, record_action, register
 
 _SCHEMA = {
     "name": "add_doctor_question",
@@ -29,7 +29,7 @@ _SCHEMA = {
 async def add_doctor_question(
     ctx: ToolContext, question: str, context: str | None = None
 ) -> str:
-    await ctx.db().insert(
+    inserted = await ctx.db().insert(
         "doctor_questions",
         {
             "elder_id": ctx.elder_id,
@@ -38,7 +38,15 @@ async def add_doctor_question(
             "source": "agent",
             "status": "open",
         },
-        returning=False,
+        returning=True,
+    )
+    record_action(
+        ctx,
+        tool="add_doctor_question",
+        summary=question,
+        entity_type="doctor_message",
+        entity_id=inserted[0]["id"] if inserted else "",
+        changed_fields={"question": {"before": None, "after": question}},
     )
     return "Saved that question for the doctor. They'll see it on the next review."
 

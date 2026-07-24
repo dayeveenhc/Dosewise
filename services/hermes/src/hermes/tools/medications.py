@@ -8,7 +8,7 @@ from datetime import UTC, datetime
 from uuid import uuid4
 
 from ..dosing import WEEKDAYS
-from .base import ToolContext, register
+from .base import ToolContext, record_action, register
 from .drug_info import interaction_text, label_mentions
 
 log = logging.getLogger("hermes.tools.medications")
@@ -183,7 +183,7 @@ async def add_prescription(
         except Exception:
             log.warning("failed to upload prescription photo", exc_info=True)
 
-    await ctx.db().insert("medications", row, returning=False)
+    inserted = await ctx.db().insert("medications", row, returning=True)
     if ctx.session is not None:
         ctx.session.pending_proposal = None
         ctx.session.pending_image = None
@@ -193,8 +193,21 @@ async def add_prescription(
         summary += f" — {', '.join(times)}"
     if frequency:
         summary += f" ({frequency})"
-    ctx.committed_actions.append(
-        {"tool": "add_prescription", "summary": summary, "name": name}
+    new_id = inserted[0]["id"] if inserted else ""
+    record_action(
+        ctx,
+        tool="add_prescription",
+        summary=summary,
+        entity_type="medication",
+        entity_id=new_id,
+        changed_fields={
+            "name": {"before": None, "after": name},
+            "dosage": {"before": None, "after": dosage},
+            "purpose": {"before": None, "after": purpose},
+            "times": {"before": None, "after": times or []},
+            "frequency": {"before": None, "after": frequency},
+        },
+        name=name,
     )
     return f"Saved {name} to the medication list and marked it confirmed."
 
@@ -389,7 +402,8 @@ async def set_medication_reminder(
         )
 
     med = meds[0]
-    schedule = dict(med.get("schedule") or {})
+    old_schedule = dict(med.get("schedule") or {})
+    schedule = dict(old_schedule)
     schedule["times"] = valid
     if valid_days:
         schedule["days"] = valid_days
@@ -407,12 +421,21 @@ async def set_medication_reminder(
     if ctx.session is not None:
         ctx.session.pending_reminder = None
         ctx.session.awaiting_confirmation = False
-    ctx.committed_actions.append(
-        {
-            "tool": "set_medication_reminder",
-            "summary": f"{name} at {', '.join(valid)}",
-            "name": name,
+    changed_fields: dict[str, dict] = {
+        "times": {"before": old_schedule.get("times") or [], "after": valid}
+    }
+    if valid_days:
+        changed_fields["days"] = {
+            "before": old_schedule.get("days") or [], "after": valid_days
         }
+    record_action(
+        ctx,
+        tool="set_medication_reminder",
+        summary=f"{name} at {', '.join(valid)}",
+        entity_type="schedule_entry",
+        entity_id=med["id"],
+        changed_fields=changed_fields,
+        name=name,
     )
     return (
         f"Saved. I'll remind you to take {name} at "

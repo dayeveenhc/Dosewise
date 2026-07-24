@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from datetime import UTC, datetime
 
-from .base import ToolContext, register
+from .base import ToolContext, record_action, register
 
 _SCHEMA = {
     "name": "log_dose",
@@ -56,10 +56,18 @@ async def log_dose(ctx: ToolContext, medication_name: str) -> str:
             filters={"id": f"eq.{pending[0]['id']}"},
             returning=False,
         )
-        ctx.committed_actions.append({"tool": "log_dose", "summary": med["name"]})
+        record_action(
+            ctx,
+            tool="log_dose",
+            summary=med["name"],
+            entity_type="dose",
+            entity_id=pending[0]["id"],
+            changed_fields={"status": {"before": "pending", "after": "taken"}},
+            name=med["name"],
+        )
         return f"Logged {med['name']} as taken."
 
-    await db.insert(
+    inserted = await db.insert(
         "doses",
         {
             "medication_id": med["id"],
@@ -69,9 +77,17 @@ async def log_dose(ctx: ToolContext, medication_name: str) -> str:
             "logged_at": now,
             "logged_by": ctx.elder_id,
         },
-        returning=False,
+        returning=True,
     )
-    ctx.committed_actions.append({"tool": "log_dose", "summary": med["name"]})
+    record_action(
+        ctx,
+        tool="log_dose",
+        summary=med["name"],
+        entity_type="dose",
+        entity_id=inserted[0]["id"] if inserted else "",
+        changed_fields={"status": {"before": None, "after": "taken"}},
+        name=med["name"],
+    )
     return f"Logged {med['name']} as taken just now."
 
 

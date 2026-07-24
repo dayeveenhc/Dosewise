@@ -63,6 +63,7 @@ async def test_tool_events_stream_before_the_final_event(monkeypatch):
             "reply": "Added it.",
             "tools_used": ["add_prescription"],
             "actions": [{"tool": "add_prescription", "summary": "Metformin 500mg"}],
+            "walkthrough": None,
         },
     ]
 
@@ -77,7 +78,9 @@ async def test_no_tool_calls_still_ends_with_a_final_event(monkeypatch):
     async with _client(app) as c:
         resp = await c.post("/agent/turn/stream", json={"message": "hi", "elder_id": ELDER})
     events = _parse_events(resp.text)
-    assert events == [{"type": "final", "reply": "just chatting", "tools_used": [], "actions": []}]
+    assert events == [
+        {"type": "final", "reply": "just chatting", "tools_used": [], "actions": [], "walkthrough": None}
+    ]
 
 
 async def test_unreadable_pdf_short_circuits_to_a_single_final_event(monkeypatch):
