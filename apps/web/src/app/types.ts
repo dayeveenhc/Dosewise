@@ -2,6 +2,10 @@ export type MedStatus = "taken" | "missed" | "upcoming" | "skipped";
 export type Screen = "dashboard" | "patient" | "timeline" | "notifications" | "ai" | "messages" | "settings";
 export type AppMode = "onboarding" | "caregiver" | "elderly";
 
+// The elder's usual meal clock times, used to anchor "after breakfast"-style
+// doses. Shared by Patient (below) and ProfileDetails (lib/profile.ts).
+export interface MealTimes { breakfast?: string; lunch?: string; dinner?: string }
+
 export interface Medication {
   id: number;
   medicationId?: string; // real Supabase medications.id (uuid), when backed by real data
@@ -44,7 +48,7 @@ export interface Patient {
   weightKg?: number;
   heightCm?: number;
   wakeTime?: string;
-  mealTimes?: { breakfast?: string; lunch?: string; dinner?: string };
+  mealTimes?: MealTimes;
   sleepTime?: string;
   pastMedications?: { id: string; name: string; dose: string; purpose: string }[];
   travelPlan?: { startDate: string; endDate: string; timezone: string };

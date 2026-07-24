@@ -8,23 +8,6 @@ export const MED_PLAIN: Record<string, { why: string; instructions: string; hasV
   "Latanoprost Eye Drops": { why: "Reduces eye pressure to protect your vision",            instructions: "One drop in each eye at bedtime. Tilt head back, look up, squeeze gently.",   hasVideo: true  },
 };
 
-export const ESTATUS = {
-  taken:    { bg: "bg-emerald-50", text: "text-emerald-700", border: "border-emerald-200", label: "✓ Taken",  dot: "bg-emerald-500" },
-  missed:   { bg: "bg-red-50",     text: "text-red-700",     border: "border-red-200",     label: "⚠ Missed", dot: "bg-red-400"     },
-  upcoming: { bg: "bg-sky-50",     text: "text-sky-700",     border: "border-sky-200",     label: "Due soon", dot: "bg-sky-400"     },
-  skipped:  { bg: "bg-stone-50",   text: "text-stone-500",   border: "border-stone-200",   label: "Skipped",  dot: "bg-stone-300"   },
-} as const;
-
-export const MED_REASONS: Record<string, string> = {
-  "Diabetes":       "It helps your body control blood sugar levels. Best taken with food.",
-  "Blood Pressure": "It lowers your blood pressure to protect your heart and kidneys.",
-  "Cholesterol":    "It reduces bad cholesterol in your blood to lower heart disease risk.",
-  "Joint Pain":     "It eases pain and stiffness in your joints so you move more comfortably.",
-  "Blood Thinning": "It prevents dangerous blood clots from forming in your blood vessels.",
-  "Heart Rate":     "It keeps your heart beating at a steady, gentle pace.",
-  "Glaucoma":       "These drops reduce pressure in your eye to protect your eyesight.",
-};
-
 export const MED_SIMPLE: Record<string, string> = {
   "Metformin":             "Take 1 tablet after meal",
   "Amlodipine":            "Take 1 tablet after meal",
@@ -78,7 +61,6 @@ export const MED_COLOURS = [
   { hex: "#0E7490", label: "Teal" },
 ];
 
-export const PRESET_TIMES = ["6:00 AM", "7:00 AM", "8:00 AM", "12:00 PM", "2:00 PM", "6:00 PM", "8:00 PM", "9:00 PM", "10:00 PM"];
 
 // Fallback clock times for vague / meal-relative doses (e.g. "after breakfast").
 // In a real deployment these come from the caregiver's saved routine for the
@@ -104,14 +86,6 @@ export const MEAL_TIMES: Record<string, string> = {
   "night":            "10:00 PM",
   "noon":             "12:00 PM",
 };
-
-export const VOICE_DEMOS = [
-  "I took my morning medication",
-  "What medications do I have today?",
-  "Am I running low on anything?",
-  "What is metformin for?",
-  "Show me my prescription list",
-];
 
 // Common conditions offered as type-ahead suggestions for the "Purpose" field.
 // `value` is the canonical English string that actually gets stored (never

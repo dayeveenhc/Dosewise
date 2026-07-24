@@ -1,7 +1,6 @@
 const APP_MODE_KEY = "dosewise:app-mode";
-const CHAT_MESSAGES_KEY_PREFIX = "dosewise:chat";
 
-export function getAppModeStorageKey(userId?: string | null): string {
+function getAppModeStorageKey(userId?: string | null): string {
   return userId ? `${APP_MODE_KEY}:${userId}` : APP_MODE_KEY;
 }
 
@@ -16,25 +15,4 @@ export function persistAppMode(userId: string | undefined | null, mode: "onboard
   if (typeof window === "undefined") return;
   if (!userId) return;
   window.localStorage.setItem(getAppModeStorageKey(userId), mode);
-}
-
-export function getChatStorageKey(userId?: string | null): string {
-  return `${CHAT_MESSAGES_KEY_PREFIX}:${userId ?? "guest"}`;
-}
-
-export function readStoredChatMessages<T>(userId?: string | null): T[] | null {
-  if (typeof window === "undefined") return null;
-  const raw = window.localStorage.getItem(getChatStorageKey(userId));
-  if (!raw) return null;
-  try {
-    const parsed = JSON.parse(raw);
-    return Array.isArray(parsed) ? parsed : null;
-  } catch {
-    return null;
-  }
-}
-
-export function persistChatMessages<T>(userId: string | undefined | null, messages: T[]) {
-  if (typeof window === "undefined") return;
-  window.localStorage.setItem(getChatStorageKey(userId), JSON.stringify(messages));
 }

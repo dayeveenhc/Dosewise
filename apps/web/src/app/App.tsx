@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import type { Session } from "@supabase/supabase-js";
-import { Droplets, ArrowLeft, Bell, MessageSquare, HelpCircle, UserRound } from "lucide-react";
+import { ArrowLeft, Bell, MessageSquare, HelpCircle, UserRound } from "lucide-react";
 import type { AppMode, Screen, Patient, Medication, Notification, Message } from "./types";
 import { PATIENTS, NOTIFICATIONS } from "./data/patients";
 import { BottomNav } from "./components/BottomNav";
@@ -122,8 +122,8 @@ export default function App() {
   useEffect(() => {
     if (!justOnboarded) return;
     if (appMode === "caregiver") setShowCaregiverTour(true);
-    const t = setTimeout(() => setJustOnboarded(false), 1000);
-    return () => clearTimeout(t);
+    const timer = setTimeout(() => setJustOnboarded(false), 1000);
+    return () => clearTimeout(timer);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [justOnboarded, appMode]);
 

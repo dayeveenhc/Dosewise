@@ -1,5 +1,6 @@
 import { supabase } from "./supabase";
 import type { ExtractedProfile } from "./hermes";
+import type { MealTimes } from "../types";
 
 export type Role = "elder" | "caregiver";
 
@@ -20,7 +21,7 @@ export interface ProfileDetails {
   allergies?: string[];
   drugAllergies?: string[];
   wakeTime?: string;
-  mealTimes?: { breakfast?: string; lunch?: string; dinner?: string };
+  mealTimes?: MealTimes;
   sleepTime?: string;
   travelPlan?: { startDate: string; endDate: string; timezone: string };
   // Walkthrough task_names this user has completed (lib/walkthrough/types.ts's

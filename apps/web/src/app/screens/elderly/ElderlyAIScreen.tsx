@@ -67,10 +67,9 @@ function FeatureBtn({ icon: Icon, label, onClick, className = "", "data-tour": d
   );
 }
 
-export function ElderlyAIScreen({ patient, elderId, onLogDose, onNavigate, onMedsChanged, onMedAdded, onHighlightChange, onOpenTravel, doctorQuestions, openDoctorSignal, onAddDoctorQ, onMarkAnswered, onDeleteQuestion, autoMessage, prefillMessage, onAutoMessageConsumed, onPrefillConsumed, onWalkthroughStart }: {
+export function ElderlyAIScreen({ patient, elderId, onNavigate, onMedsChanged, onMedAdded, onHighlightChange, onOpenTravel, doctorQuestions, openDoctorSignal, onAddDoctorQ, onMarkAnswered, onDeleteQuestion, autoMessage, prefillMessage, onAutoMessageConsumed, onPrefillConsumed, onWalkthroughStart }: {
   patient: Patient;
   elderId?: string;
-  onLogDose: (id: number) => void;
   onNavigate: (tab: ElderlyTab) => void;
   onMedsChanged?: () => void | Promise<void>;
   onMedAdded?: (name: string) => void;

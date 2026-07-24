@@ -375,11 +375,11 @@ export function ElderlyApp({ patient, elderId, onUpdatePatient, onBack, onSignOu
   }, [tab, elderId]);
 
   const handleLogDose = (medId: number, takenAt?: string) => {
-    const t = takenAt ?? new Date().toLocaleTimeString("en-SG", { hour: "2-digit", minute: "2-digit" });
+    const takenLabel = takenAt ?? new Date().toLocaleTimeString("en-SG", { hour: "2-digit", minute: "2-digit" });
     onUpdatePatient({
       ...patient,
       medications: patient.medications.map(m => m.id === medId ? {
-        ...m, status: "taken" as MedStatus, takenAt: t,
+        ...m, status: "taken" as MedStatus, takenAt: takenLabel,
         refillDaysLeft: m.refillDaysLeft !== undefined ? Math.max(0, m.refillDaysLeft - 1) : undefined,
       } : m),
     });
@@ -470,7 +470,6 @@ export function ElderlyApp({ patient, elderId, onUpdatePatient, onBack, onSignOu
           <ElderlyAIScreen
             patient={patient}
             elderId={elderId}
-            onLogDose={handleLogDose}
             onNavigate={setTab}
             onMedsChanged={refreshMeds}
             onMedAdded={flagJustAdded}
