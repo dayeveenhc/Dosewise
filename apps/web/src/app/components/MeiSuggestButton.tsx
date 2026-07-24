@@ -14,7 +14,7 @@ const UNKNOWN_SENTINEL = "UNKNOWN";
 // asking for a single-value suggestion based on what Mei already knows about
 // this user's profile; the reply is shown in a popup with a confirm button
 // that autofills the field, matching the elder chat's propose->confirm pattern.
-export function MeiSuggestButton({ fieldLabel, onAccept, className = "", formatHint }: {
+export function MeiSuggestButton({ fieldLabel, onAccept, className = "", formatHint, validate }: {
   fieldLabel: string;
   onAccept: (value: string) => void;
   className?: string;

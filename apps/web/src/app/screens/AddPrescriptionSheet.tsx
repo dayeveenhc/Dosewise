@@ -118,7 +118,7 @@ export function AddPrescriptionSheet({ onClose, onAdd, onAdded, initialTab = "ma
     }
   };
 
-  const pickMedication = (m: { name: string; purpose: string; dose: string }) => {
+  const pickMedication = (m: { name: string; purpose: string; purposeKey: string; dose: string }) => {
     setName(m.name);
     if (!purpose.trim()) setPurpose(m.purpose);
     if (!dose.trim()) setDose(m.dose);
