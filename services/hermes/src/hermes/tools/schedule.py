@@ -13,7 +13,14 @@ from datetime import UTC, date, datetime, timedelta
 from zoneinfo import ZoneInfo
 
 from ..config import get_settings
-from ..dosing import WEEKDAYS, _parse_hhmm, scheduled_today, start_of_day_utc, start_of_week_utc
+from ..dosing import (
+    WEEKDAY_NAMES,
+    WEEKDAYS,
+    _parse_hhmm,
+    scheduled_today,
+    start_of_day_utc,
+    start_of_week_utc,
+)
 from .base import ToolContext, register
 
 _SCHEMA = {
@@ -37,10 +44,6 @@ _SCHEMA = {
     },
 }
 
-_DAY_TITLE = {
-    "mon": "Monday", "tue": "Tuesday", "wed": "Wednesday", "thu": "Thursday",
-    "fri": "Friday", "sat": "Saturday", "sun": "Sunday",
-}
 
 
 def render_today(meds: list[dict], taken_by_med: dict[str, int], now: datetime, tz: str) -> str:
@@ -48,7 +51,7 @@ def render_today(meds: list[dict], taken_by_med: dict[str, int], now: datetime, 
     zone = ZoneInfo(tz)
     local_now = now.astimezone(zone)
     local_today = local_now.date()
-    day_name = _DAY_TITLE[WEEKDAYS[local_today.weekday()]]
+    day_name = WEEKDAY_NAMES[WEEKDAYS[local_today.weekday()]]
     title = f"Today — {day_name}, {local_today.strftime('%d %b')}"
 
     rows: list[tuple[str, str]] = []  # (HH:MM, line) for sorting
@@ -98,7 +101,7 @@ def render_week(
     lines = ["This week:"]
     for offset in range(7):
         day = monday + timedelta(days=offset)
-        heading = f"{_DAY_TITLE[WEEKDAYS[day.weekday()]]} {day.strftime('%d %b')}"
+        heading = f"{WEEKDAY_NAMES[WEEKDAYS[day.weekday()]]} {day.strftime('%d %b')}"
         if day == local_today:
             heading += " (today)"
         lines.append(f"\n{heading}:")

@@ -85,6 +85,54 @@ def record_action(
     )
 
 
+async def find_medications(
+    ctx: ToolContext, name: str, *, columns: str, limit: int | None = 1
+) -> list[dict]:
+    """Non-archived medications matching ``name`` (case-insensitive ``ilike``).
+
+    Centralizes the ``{"name": ilike, "archived": eq.false}`` lookup that every
+    med-scoped tool runs. Callers keep their own ``columns``, their own
+    "no medication named…" guard wording, and any post-processing — this only
+    shares the filter + table. ``limit=None`` returns all matches (e.g. the
+    verify tool, which counts/exact-matches every row); the default ``limit=1``
+    suits the "act on one med" tools.
+    """
+    return await ctx.db().select(
+        "medications",
+        columns=columns,
+        filters={"name": f"ilike.{name}", "archived": "eq.false"},
+        limit=limit,
+    )
+
+
+def match_pending(ctx: ToolContext, slot: str, key: str, value: Any) -> dict | None:
+    """The pending proposal on the session under ``slot``, if it matches ``value``.
+
+    Every propose→confirm write tool guards its commit the same way: a confirm is
+    only honored when a matching proposal was stashed this session (so a
+    ``confirmed=true`` call can never save something that was never read back and
+    agreed to). Returns the pending dict when ``getattr(session, slot).get(key) ==
+    value``, else ``None`` — the caller refuses to save on ``None`` with its own
+    tool-specific wording. The slot name is passed in verbatim (``pending_proposal``
+    / ``pending_reminder`` / ``pending_profile``), so the session-attribute contract
+    the Telegram deterministic-confirm path relies on is unchanged.
+    """
+    pending = getattr(ctx.session, slot, None) if ctx.session else None
+    if pending is None or pending.get(key) != value:
+        return None
+    return pending
+
+
+def first_id(inserted: list[dict]) -> str:
+    """The new row's id from a ``return=representation`` insert, or ``""``.
+
+    PostgREST returns the inserted rows; a write tool records the new id in its
+    ``committed_action``. Empty string when the insert returned nothing (mirrors
+    the fallback every insert site used inline before).
+    """
+    return str(inserted[0]["id"]) if inserted else ""
+
+
 def register(schema: dict, handler: ToolHandler) -> None:
     _REGISTRY[schema["name"]] = (schema, handler)
 

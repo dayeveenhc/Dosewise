@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from datetime import UTC, datetime
 
-from .base import ToolContext, record_action, register
+from .base import ToolContext, find_medications, first_id, record_action, register
 
 _SCHEMA = {
     "name": "log_dose",
@@ -28,12 +28,7 @@ _SCHEMA = {
 
 async def log_dose(ctx: ToolContext, medication_name: str) -> str:
     db = ctx.db()
-    meds = await db.select(
-        "medications",
-        columns="id,name",
-        filters={"name": f"ilike.{medication_name}", "archived": "eq.false"},
-        limit=1,
-    )
+    meds = await find_medications(ctx, medication_name, columns="id,name")
     if not meds:
         return (
             f"No medication named '{medication_name}' is on file. Ask the user to "
@@ -84,7 +79,7 @@ async def log_dose(ctx: ToolContext, medication_name: str) -> str:
         tool="log_dose",
         summary=med["name"],
         entity_type="dose",
-        entity_id=inserted[0]["id"] if inserted else "",
+        entity_id=first_id(inserted),
         changed_fields={"status": {"before": None, "after": "taken"}},
         name=med["name"],
     )

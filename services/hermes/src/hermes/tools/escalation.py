@@ -6,7 +6,7 @@ architecture doc which designates it the escalation log.
 
 from __future__ import annotations
 
-from .base import ToolContext, record_action, register
+from .base import ToolContext, first_id, record_action, register
 
 _SCHEMA = {
     "name": "request_human_help",
@@ -53,7 +53,7 @@ async def request_human_help(
         tool="request_human_help",
         summary=reason,
         entity_type="escalation",
-        entity_id=inserted[0]["id"] if inserted else "",
+        entity_id=first_id(inserted),
         changed_fields={"reason": {"before": None, "after": reason}},
     )
     return (

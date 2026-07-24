@@ -9,7 +9,7 @@ it records what the patient/caregiver states or what a document lists.
 
 from __future__ import annotations
 
-from .base import ToolContext, record_action, register
+from .base import ToolContext, match_pending, record_action, register
 
 _SCHEMA = {
     "name": "update_medical_profile",
@@ -68,8 +68,8 @@ async def update_medical_profile(
             f"confirm before saving — {verb}: {content}"
         )
 
-    pending = getattr(ctx.session, "pending_profile", None) if ctx.session else None
-    if pending is None or pending.get("content") != content:
+    pending = match_pending(ctx, "pending_profile", "content", content)
+    if pending is None:
         return (
             "Refused to save: no matching pending profile update was confirmed. "
             "Propose it first (confirmed=false) and get the patient's explicit yes."

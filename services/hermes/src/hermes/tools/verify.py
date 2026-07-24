@@ -17,7 +17,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 
-from .base import ToolContext, register
+from .base import ToolContext, find_medications, register
 
 
 @dataclass
@@ -47,11 +47,7 @@ async def check_medication_exists(ctx: ToolContext, name: str) -> VerifyResult:
     wanted = (name or "").strip()
     if not wanted:
         return VerifyResult(passed=False, detail="No medication name was given to verify.")
-    rows = await ctx.db().select(
-        "medications",
-        columns="name,dosage,schedule",
-        filters={"name": f"ilike.{wanted}", "archived": "eq.false"},
-    )
+    rows = await find_medications(ctx, wanted, columns="name,dosage,schedule", limit=None)
     exact = [r for r in rows if (r.get("name") or "").strip().lower() == wanted.lower()]
     if exact:
         n = len(exact)

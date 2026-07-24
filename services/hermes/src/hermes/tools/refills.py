@@ -11,7 +11,7 @@ from __future__ import annotations
 
 from datetime import UTC, date, datetime, timedelta
 
-from .base import ToolContext, record_action, register
+from .base import ToolContext, find_medications, first_id, record_action, register
 
 _CHECK_SCHEMA = {
     "name": "check_refills",
@@ -99,12 +99,7 @@ async def log_refill(
     threshold: int | None = None,
 ) -> str:
     db = ctx.db()
-    meds = await db.select(
-        "medications",
-        columns="id,name,schedule",
-        filters={"name": f"ilike.{medication_name}", "archived": "eq.false"},
-        limit=1,
-    )
+    meds = await find_medications(ctx, medication_name, columns="id,name,schedule")
     if not meds:
         return (
             f"No medication named '{medication_name}' is on file. Confirm the name "
@@ -147,7 +142,7 @@ async def log_refill(
             {"medication_id": med["id"], "elder_id": ctx.elder_id, **patch},
             returning=True,
         )
-        refill_id = inserted[0]["id"] if inserted else ""
+        refill_id = first_id(inserted)
     tail = f" (about enough until {forecast})" if pills_remaining else ""
     # entity_id is the MEDICATION id (not the refills row id): the refill count is
     # shown on the medication card, so that's the element the UI highlights. The
