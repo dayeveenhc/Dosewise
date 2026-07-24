@@ -73,6 +73,7 @@ async def run_agent_turn(
     image_media_type: str = "image/jpeg",
     history: list | None = None,
     reply_language: str | None = None,
+    completed_walkthroughs: list[str] | None = None,
     on_event: OnEvent | None = None,
 ) -> tuple[str, list[str], list]:
     """Run one turn. Returns (reply_text, tools_used, updated_messages)."""
@@ -94,6 +95,7 @@ async def run_agent_turn(
         recent_memory=recent_memory,
         medical_profile=medical_profile,
         onboarding=onboarding,
+        completed_walkthroughs=completed_walkthroughs,
     )
 
     eff = llm.effective_provider()

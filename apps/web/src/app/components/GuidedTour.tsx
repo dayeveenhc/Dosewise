@@ -1,6 +1,8 @@
 import { useEffect, useRef, useState } from "react";
 import { useLanguage } from "../lib/languageContext";
 import { t } from "../lib/language";
+import { calloutTop } from "../lib/walkthrough/placement";
+import { SpotlightCallout } from "./SpotlightCallout";
 
 export interface TourStep {
   target: string; // CSS selector for the element to spotlight
@@ -24,6 +26,7 @@ export function GuidedTour({ steps, onFinish }: { steps: TourStep[]; onFinish: (
   const [rect, setRect] = useState<Rect | null>(null);
   const [navRect, setNavRect] = useState<Rect | null>(null);
   const [containerHeight, setContainerHeight] = useState(0);
+  const [calloutHeight, setCalloutHeight] = useState(165);
   const rootRef = useRef<HTMLDivElement>(null);
   const step = steps[index];
 
@@ -63,23 +66,9 @@ export function GuidedTour({ steps, onFinish }: { steps: TourStep[]; onFinish: (
   const next = () => isLast ? onFinish() : setIndex(i => i + 1);
   const back = () => setIndex(i => Math.max(0, i - 1));
 
-  // Hug the callout right next to the target — below it if there's room clear
-  // of the bottom nav, otherwise above it clear of the header — instead of
-  // snapping to a fixed top/bottom position that can end up far from (or
-  // overlapping) the thing it's describing.
-  const GAP = 12;
-  const CALLOUT_HEIGHT = 165;
-  const NAV_RESERVE = 110;
-  const HEADER_RESERVE = 84;
-  let calloutTop = containerHeight - NAV_RESERVE - CALLOUT_HEIGHT;
-  if (rect) {
-    const spaceBelow = containerHeight - NAV_RESERVE - (rect.top + rect.height);
-    if (spaceBelow >= CALLOUT_HEIGHT) {
-      calloutTop = rect.top + rect.height + GAP;
-    } else {
-      calloutTop = Math.max(HEADER_RESERVE, rect.top - CALLOUT_HEIGHT - GAP);
-    }
-  }
+  // Hug the callout right next to the target (shared placement helper), using
+  // the callout's measured height so it never overlaps the target or nav.
+  const top = calloutTop(rect, containerHeight, calloutHeight);
 
   return (
     <div ref={rootRef} className="absolute inset-0 z-[200]">
@@ -108,28 +97,31 @@ export function GuidedTour({ steps, onFinish }: { steps: TourStep[]; onFinish: (
         </svg>
       )}
 
-      <div className="absolute left-4 right-4 bg-card rounded-2xl p-3.5 shadow-2xl transition-all duration-300" style={{ top: calloutTop }}>
-        <div className="flex gap-1 mb-2.5">
-          {steps.map((_, i) => (
-            <div key={i} className={`h-1 flex-1 rounded-full transition-colors ${i <= index ? "bg-primary" : "bg-muted"}`} />
-          ))}
-        </div>
-        <h3 className="font-['Fraunces'] text-base font-semibold text-foreground mb-1">{step.title}</h3>
-        <p className="text-sm text-muted-foreground leading-relaxed mb-3">{step.body}</p>
-        <div className="flex items-center gap-1.5">
-          <button onClick={onFinish} className="text-xs text-muted-foreground font-medium px-2 py-2 shrink-0">
-            {t(language, "tour.skip")}
+      {/* Always shown (unlike the autonomous walkthrough): this tour is
+          user-advanced, so Next/Skip must stay reachable even if a target is
+          briefly unmeasured. */}
+      <SpotlightCallout
+        stepIndex={index}
+        stepCount={steps.length}
+        title={step.title}
+        body={step.body}
+        top={top}
+        counterKey="tour.stepCounter"
+        labelKey="tour.meiLabel"
+        onHeight={setCalloutHeight}
+      >
+        <button onClick={onFinish} className="text-xs text-muted-foreground font-medium px-2 py-2 shrink-0">
+          {t(language, "tour.skip")}
+        </button>
+        {index > 0 && (
+          <button onClick={back} className="h-9 px-3 rounded-xl border border-border text-foreground text-xs font-semibold shrink-0">
+            {t(language, "tour.back")}
           </button>
-          {index > 0 && (
-            <button onClick={back} className="h-9 px-3 rounded-xl border border-border text-foreground text-xs font-semibold shrink-0">
-              {t(language, "tour.back")}
-            </button>
-          )}
-          <button onClick={next} className="flex-1 h-9 rounded-xl bg-primary text-primary-foreground text-xs font-semibold">
-            {isLast ? t(language, "tour.done") : t(language, "tour.next")}
-          </button>
-        </div>
-      </div>
+        )}
+        <button onClick={next} className="flex-1 h-9 rounded-xl bg-primary text-primary-foreground text-xs font-semibold">
+          {isLast ? t(language, "tour.done") : t(language, "tour.next")}
+        </button>
+      </SpotlightCallout>
     </div>
   );
 }

@@ -58,6 +58,9 @@ through Supabase Postgres **RLS as the user** (Hermes mints/verifies JWTs — se
 
 Vite/React app with two top-level modes selected at onboarding: **elderly**
 (large-text, simplified, voice-first) and **caregiver** (fuller control view).
+Gates: `npm run build` (transpile-only), `npm run typecheck` (`tsc --noEmit` —
+a pragmatic non-strict `tsconfig.json`, added as a refactor safety net since the
+build doesn't type-check), `npm test` (vitest), `npm run e2e` (Playwright).
 Both have an AI assistant chat screen wired to Hermes:
 
 - `screens/AskMeiScreen.tsx` — caregiver chat ("Ask Mei").
@@ -71,6 +74,67 @@ agent flows. `apps/web/CLAUDE.md` has this app's own ownership rules — **it
 normally forbids touching `services/hermes/` or `supabase/`**; cross-cutting
 work across that boundary needs explicit user sign-off (as happened for the
 Hermes wiring — see MEMORY.md).
+
+Mei can also run a **Guided Walkthrough**: a scripted, spotlight-and-narrate
+overlay (`components/Walkthrough.tsx`) that highlights one screen element at a
+time, but never fills/taps/submits on the user's behalf — every step ends
+only when the real user performs the real action (native DOM listener, or an
+app-emitted event via `lib/walkthrough/steps/` + `lib/walkthrough/bus.ts` for
+actions no generic listener can tell apart, e.g. an async write's real
+success). Started by Hermes's `start_walkthrough` tool (task name only — step
+content stays client-side); see MEMORY.md's 2026-07-22 entry for the full
+architecture and known gaps.
+
+A **Guided Auto-Navigation** mode is layered on top (2026-07-23): a step can
+instead carry an `act` (Mei performs the fill/tap/upload/submit herself, visibly
+animated — `lib/walkthrough/actor.ts`) plus `verify`/`reveal` phases (orchestrated
+by `lib/walkthrough/orchestrate.ts::runActStep` — a failed Verify STOPS and never
+implies success), so `waitFor` is now optional on a step. **Four autonomous scenarios** are built and live-validated end-to-end
+(Playwright, real Supabase, incl. write-fail paths): `add_prescription_auto`,
+`travel_mode_auto`, `edit_profile_auto`, and `accept_caregiver_link` (the
+consent flow — Mei navigates but the elder taps Accept themselves, then Verify
+confirms the link is active). Verify is a real re-query: client `onVerify` (host,
+e.g. `ElderlyApp`) mirrors the Hermes read-only `verify_medication_exists` tool
+(`tools/verify.py`); `onReveal` pulse-highlights where the change landed. The
+overlay is `pointer-events-none` so a real user tap reaches the spotlighted
+element (the consent flows depend on this). **In real chat Mei fulfills a
+request by triggering the matching `*_auto` walkthrough with the patient's real
+values** — `start_walkthrough` takes an optional `params` object (VALUES only;
+step content/selectors stay client-side), the autonomous step files are param
+builders, and soul.md prefers this over a silent direct write (prescriptions
+still propose first for the interaction check). Adds land where the UI reads
+them (e.g. `add_condition_auto` writes structured `conditions[]`, not the
+free-text `medical_profile` blob). Full detail + scope/safety decisions:
+MEMORY.md's 2026-07-23 entries.
+
+**Add-prescription is a hybrid (2026-07-24):** `add_prescription_auto` runs the
+animated walkthrough in the **elder** shell and now reveals on **Home**
+(`tab:"home"`, `[data-tour="elder-schedule"]` — the Home timeline self-highlights
+the new dose via `justAddedMed`); `ACTION_TARGETS.add_prescription.elderly` is
+`"home"` too. The **caregiver** shell can't run the elder-mode steps, so its
+`handleWalkthroughStart` intercepts `add_prescription_auto` and does a **direct
+save** from params → Patient med-list. A verify-failure in the elder walkthrough
+now calls the new `Walkthrough` prop `onVerifyFailed`, and `ElderlyApp` falls
+back to a direct save **only if the med is genuinely absent** (re-query guards
+against a double-save when Verify merely raced); a real write failure keeps the
+honest `walk.verifyFailed`. The elder sheet's `onAdded` tab-switch is gated on
+`!walkthroughTask` so it doesn't fight the Home reveal. MEMORY.md's 2026-07-24
+entry has the why.
+
+**Proof-of-change is now the `ChangeHighlight` layer (2026-07-23 rebuild)**, which
+supersedes the old selector-pulse / name-string highlight for the flows it covers.
+Its keystone: every write tool's `committed_actions` entry carries **what** changed
+—`{tool, summary, entity_type, entity_id, changed_fields}` (built via
+`services/hermes/tools/base.py::record_action`; `changed_fields` is
+`{field:{before,after}}`). The web `components/ChangeHighlight.tsx` (logic in
+`lib/changeHighlight.ts`) navigates to that entity's screen, finds the exact record
+by `data-testid="{entity_type}-{entity_id}"` (with a suffix `-{id}` fallback so a
+`schedule_entry`/`refill_request` change to a med resolves the `medication-<uuid>`
+card), pulses `.change-highlight` around it, and shows a caption **derived from
+changed_fields** (e.g. "Updated: dose time 18:00 → 20:00") — never a generic toast;
+it `console.error`s loudly if the element is genuinely absent. Only ~10 of the 20
+target flows persist a re-queryable entity; the rest (localStorage/mock/view-only,
+or non-existent tables) get navigation only and must not fabricate an entity_id.
 
 All clock-time entry goes through one component, `components/TimesPicker.tsx`:
 `TimesPicker` (a medication's one-or-more dose times) and `TimeField` (a single
@@ -112,8 +176,15 @@ FastAPI service, `uv`-managed. Key files:
   Kept **channel-neutral** (describes app screens generically, not
   Telegram-specific button taps) so both channels get accurate answers.
 - `tools/` — one file per tool (medications, profile, drug_info, interactions,
-  schedule, doses, refills, caregiver, doctor, escalation, videos), registered
-  via `tools/base.py`.
+  schedule, doses, refills, caregiver, doctor, escalation, videos, walkthrough,
+  verify), registered via `tools/base.py`. `verify.py` is the read-only
+  "re-query real state → pass/fail" pattern for Guided Auto-Navigation.
+  `base.py` also holds the shared tool helpers: `find_medications` (the
+  `name ilike` + `archived=false` lookup), `first_id` (new-row id from an insert),
+  `match_pending` (the propose→confirm commit guard — reads the session's
+  `pending_*` slot by name, so the Telegram deterministic-confirm contract is
+  preserved), and `record_action`. Weekday constants (`WEEKDAYS`,
+  `WEEKDAY_NAMES`) live in `dosing.py`.
 - `db/auth.py` — mints Hermes-internal JWTs (HS256) for Telegram/CLI, and
   verifies client-supplied Supabase JWTs. Supabase user tokens are **ES256**
   (asymmetric, verified via the project's JWKS) — HS256 is only for
@@ -146,3 +217,13 @@ propose→confirm before writing · human-in-the-loop · RLS + audit trail ·
 bridge-to-people escalation path. Encoded in `agent/soul.md` **and** enforced
 server-side (e.g. the `add_prescription` confirm guard) — don't rely on the
 prompt alone.
+
+**One sanctioned exception to propose→confirm** (2026-07-23): an *autonomous*
+Guided Auto-Navigation walkthrough may fill+submit a write on the patient's
+behalf — but only after their explicit yes to the offer (the yes IS the
+confirm), and it must re-query real state to **Verify** the write landed before
+confirming, stopping honestly if it can't. Consent-bearing actions
+(caregiver-link, emergency contact) are excluded and always need the patient's
+own tap. The server-side `add_prescription` confirm guard still holds: an
+autonomous walkthrough drives the app's own client write path (which the elder
+authored by agreeing), not a `confirmed=true` chat call without a proposal.

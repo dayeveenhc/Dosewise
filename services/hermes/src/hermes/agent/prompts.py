@@ -9,7 +9,23 @@ restarting the uvicorn worker; there is no in-process re-read).
 
 from pathlib import Path
 
+from ..tools.walkthrough import TASK_NAMES as _WALKTHROUGH_TASK_NAMES
+
 _SOUL_PATH = Path(__file__).parent / "soul.md"
+
+# Plain-language names for the prompt block below — keep in sync with
+# _WALKTHROUGH_TASK_NAMES (services/hermes/src/hermes/tools/walkthrough.py).
+_WALKTHROUGH_LABELS = {
+    "onboarding": "the guided setup wizard (account, profile, conditions, allergies, routine, medicines)",
+    "travel_mode_setup": "setting up Travel Mode",
+    "request_refill": "requesting a medication refill",
+    "link_caregiver": "linking a caregiver to their account",
+    "add_prescription_auto": "adding a prescription for them (Mei fills it in and saves it, then double-checks it saved)",
+    "add_condition_auto": "adding a medical condition to their profile for them (Mei types it in and saves it, then double-checks it saved)",
+    "travel_mode_auto": "setting up Travel Mode for them (Mei fills the dates in and saves it, then double-checks it saved)",
+    "edit_profile_auto": "updating a detail in their profile for them (Mei fills it in and saves it, then double-checks it saved)",
+    "accept_caregiver_link": "accepting a pending caregiver link request (Mei opens it, the patient taps Accept themselves, then Mei confirms it linked)",
+}
 
 _FALLBACK_PROMPT = """\
 You are Dosewise, a warm, patient medication helper for elderly patients and their \
@@ -53,6 +69,7 @@ def system_prompt_for(
     recent_memory: str | None = None,
     medical_profile: str | None = None,
     onboarding: bool = False,
+    completed_walkthroughs: list[str] | None = None,
 ) -> str:
     """The system prompt, tailored to the elder's dialect, slang, and input language.
 
@@ -68,6 +85,8 @@ def system_prompt_for(
       Context to tailor caveats — never a source of drug facts, never a diagnosis.
     - ``onboarding``: True when the patient has no medical profile yet (or ran
       /setup) — appends the guided first-time intake instructions.
+    - ``completed_walkthroughs``: task_names the patient has already been walked
+      through (client-supplied) — so Mei doesn't re-offer one they've done.
     """
     prompt = SYSTEM_PROMPT
     if onboarding:
@@ -105,5 +124,16 @@ def system_prompt_for(
             "Use it to tailor caveats and questions — but it is NOT a source of drug "
             "facts and you must never use it to diagnose. Grounded OpenFDA facts still "
             f"come only from the tools:\n{medical_profile}\n"
+        )
+    done = set(completed_walkthroughs or [])
+    undone = [t for t in _WALKTHROUGH_TASK_NAMES if t not in done]
+    if undone:
+        listed = "; ".join(f"{t} ({_WALKTHROUGH_LABELS[t]})" for t in undone)
+        prompt += (
+            f"\nWalkthroughs this patient has NOT been shown yet: {listed}. If their "
+            "message clearly matches one of these (e.g. they ask how to do it, seem "
+            "lost, or hint at the underlying need), offer in one short line to show "
+            "them — do not call start_walkthrough until they clearly say yes. Never "
+            "offer a walkthrough not in this list; it means they've already done it.\n"
         )
     return prompt

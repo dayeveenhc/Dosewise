@@ -6,6 +6,7 @@ import { fieldCls } from "./setup/GuidedSetupWizard";
 import { Toggle } from "./elderly/ElderlySettingsScreen";
 import { useLanguage } from "../lib/languageContext";
 import { t } from "../lib/language";
+import { emitWalkthroughEvent } from "../lib/walkthrough/bus";
 
 const TIMEZONES = [
   "Singapore (UTC+8)", "Malaysia (UTC+8)", "Thailand (UTC+7)", "Indonesia — Jakarta (UTC+7)",
@@ -69,6 +70,9 @@ export function TravelModeSheet({ patient, elderId, onClose, onSaved }: {
     setSaved(true);
     setHadSavedPlan(enabled);
     onSaved?.(travelPlan);
+    // Gate the travel_mode_setup walkthrough's save step on this real, resolved
+    // write — never on the button's click, which fires before the await settles.
+    emitWalkthroughEvent("travel-plan-saved");
     setTimeout(() => setSaved(false), 1500);
   };
 
@@ -93,7 +97,7 @@ export function TravelModeSheet({ patient, elderId, onClose, onSaved }: {
         </div>
 
         <div className="overflow-y-auto scrollbar-none px-5 py-4 space-y-4">
-          <div className="flex items-center justify-between bg-muted/40 rounded-xl px-3.5 py-3">
+          <div className="flex items-center justify-between bg-muted/40 rounded-xl px-3.5 py-3" data-walk="travel-enable-toggle">
             <div>
               <p className="text-sm font-semibold text-foreground">{t(language, "common.travelMode")}</p>
               <p className="text-xs text-muted-foreground">{enabled ? t(language, "travel.onLabel") : t(language, "travel.offLabel")}</p>
@@ -106,11 +110,11 @@ export function TravelModeSheet({ patient, elderId, onClose, onSaved }: {
               <div className="space-y-3">
                 <div>
                   <label className="block text-xs font-semibold text-foreground mb-1.5">{t(language, "travel.from")}</label>
-                  <input type="date" value={startDate} onChange={e => setStartDate(e.target.value)} className={fieldCls} />
+                  <input type="date" data-walk="travel-start-date" value={startDate} onChange={e => setStartDate(e.target.value)} className={fieldCls} />
                 </div>
                 <div>
                   <label className="block text-xs font-semibold text-foreground mb-1.5">{t(language, "travel.to")}</label>
-                  <input type="date" value={endDate} min={startDate || undefined} onChange={e => setEndDate(e.target.value)} className={fieldCls} />
+                  <input type="date" data-walk="travel-end-date" value={endDate} min={startDate || undefined} onChange={e => setEndDate(e.target.value)} className={fieldCls} />
                 </div>
               </div>
 
@@ -118,7 +122,7 @@ export function TravelModeSheet({ patient, elderId, onClose, onSaved }: {
                 <label className="block text-xs font-semibold text-foreground mb-1.5 flex items-center gap-1.5">
                   <Globe size={13} />{t(language, "travel.destinationTimezone")}
                 </label>
-                <select value={timezone} onChange={e => setTimezone(e.target.value)} className={fieldCls}>
+                <select data-walk="travel-timezone-select" value={timezone} onChange={e => setTimezone(e.target.value)} className={fieldCls}>
                   {TIMEZONES.map(tz => <option key={tz}>{tz}</option>)}
                 </select>
                 <p className="text-[11px] text-muted-foreground mt-1.5">{t(language, "travel.timezoneNote")}</p>
@@ -153,6 +157,7 @@ export function TravelModeSheet({ patient, elderId, onClose, onSaved }: {
 
         <div className="px-5 py-4 border-t border-border shrink-0">
           <button
+            data-walk="travel-save-button"
             onClick={!enabled && !hadSavedPlan ? onClose : handleSave}
             disabled={saving || (enabled && (!startDate || !endDate))}
             className="w-full h-12 rounded-2xl bg-primary text-primary-foreground text-sm font-semibold flex items-center justify-center gap-2 disabled:opacity-40 active:scale-[0.98] transition-transform"

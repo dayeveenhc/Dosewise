@@ -7,6 +7,7 @@ import { TimesPicker, defaultDoseTime } from "../components/TimesPicker";
 import type { RoutineTimes } from "../components/TimesPicker";
 import { agentTurn, fileToBase64 } from "../lib/hermes";
 import { withCatalogLabels } from "./setup/GuidedSetupWizard";
+import { PhotoSourceSheet } from "../components/PhotoSourceSheet";
 import { useLanguage } from "../lib/languageContext";
 import { t } from "../lib/language";
 
@@ -77,7 +78,9 @@ export function AddPrescriptionSheet({ onClose, onAdd, onAdded, initialTab = "ma
   const [committed, setCommitted] = useState(false);
   const [submitState, setSubmitState] = useState<"idle" | "saving" | "success">("idle");
   const [submitError, setSubmitError] = useState<string | null>(null);
-  const fileRef = useRef<HTMLInputElement>(null);
+  const cameraRef = useRef<HTMLInputElement>(null);
+  const libraryRef = useRef<HTMLInputElement>(null);
+  const [showPhotoSource, setShowPhotoSource] = useState(false);
 
   const [name, setName] = useState("");
   const [dose, setDose] = useState("");
@@ -115,7 +118,7 @@ export function AddPrescriptionSheet({ onClose, onAdd, onAdded, initialTab = "ma
     }
   };
 
-  const pickMedication = (m: { name: string; purpose: string; dose: string }) => {
+  const pickMedication = (m: { name: string; purpose: string; purposeKey: string; dose: string }) => {
     setName(m.name);
     if (!purpose.trim()) setPurpose(m.purpose);
     if (!dose.trim()) setDose(m.dose);
@@ -211,11 +214,12 @@ export function AddPrescriptionSheet({ onClose, onAdd, onAdded, initialTab = "ma
         <div className="overflow-y-auto scrollbar-none px-5 py-4 space-y-4">
           {tab === "scan" ? (
             <div className="space-y-3">
-              {/* No `capture` here — mobile browsers bias straight into the camera
-                  when it's present, which blocks picking an existing PDF from
-                  Files. Omitting it still offers "Take Photo" as one of the
-                  native picker's options, so scanning still works. */}
-              <input ref={fileRef} type="file" accept="image/*,application/pdf" className="sr-only" onChange={onFile} />
+              {/* Two inputs — one camera-only, one library/Files-only — backing the
+                  explicit PhotoSourceSheet chooser below, so both are always
+                  reachable regardless of what a given mobile browser's native
+                  file picker defaults to. */}
+              <input ref={cameraRef} type="file" accept="image/*" capture="environment" className="sr-only" onChange={onFile} />
+              <input ref={libraryRef} type="file" accept="image/*,application/pdf" className="sr-only" onChange={onFile} />
               {scanning ? (
                 <div className="border-2 border-primary/30 bg-primary/5 rounded-2xl p-6 flex flex-col items-center text-center gap-3">
                   {scannedPhoto && <img src={scannedPhoto} alt="scan" className="w-24 h-24 rounded-xl object-cover" />}
@@ -257,7 +261,7 @@ export function AddPrescriptionSheet({ onClose, onAdd, onAdded, initialTab = "ma
               ) : (
                 <>
                   <button
-                    onClick={() => fileRef.current?.click()}
+                    onClick={() => setShowPhotoSource(true)}
                     className="w-full border-2 border-dashed border-border rounded-2xl p-6 flex flex-col items-center text-center gap-2 active:bg-muted/50 transition-colors"
                   >
                     <div className="w-14 h-14 rounded-full bg-primary/10 flex items-center justify-center">
@@ -281,7 +285,7 @@ export function AddPrescriptionSheet({ onClose, onAdd, onAdded, initialTab = "ma
           ) : (
             <>
               {/* Medication name — type-ahead */}
-              <div>
+              <div data-walk="rx-name">
                 <label className="block text-xs font-semibold text-foreground mb-1.5">{t(language, "wizard.medicationName")} <span className="text-destructive">*</span></label>
                 <TypeAhead
                   value={name}
@@ -303,11 +307,11 @@ export function AddPrescriptionSheet({ onClose, onAdd, onAdded, initialTab = "ma
               {/* Dose */}
               <div>
                 <label className="block text-xs font-semibold text-foreground mb-1.5">{t(language, "prescription.dose")} <span className="text-destructive">*</span></label>
-                <input value={dose} onChange={e => setDose(e.target.value)} placeholder={t(language, "prescription.dosePlaceholder")} className={inputCls} />
+                <input data-walk="rx-dose" value={dose} onChange={e => setDose(e.target.value)} placeholder={t(language, "prescription.dosePlaceholder")} className={inputCls} />
               </div>
 
               {/* Purpose / condition — type-ahead */}
-              <div>
+              <div data-walk="rx-purpose">
                 <label className="block text-xs font-semibold text-foreground mb-1.5">{t(language, "prescription.purposeCondition")} <span className="text-destructive">*</span></label>
                 <TypeAhead
                   value={purpose}
@@ -379,6 +383,7 @@ export function AddPrescriptionSheet({ onClose, onAdd, onAdded, initialTab = "ma
               </div>
             )}
             <button
+              data-walk="rx-submit"
               onClick={handleAdd}
               disabled={!isValid || submitState === "saving" || submitState === "success"}
               className="w-full bg-primary text-primary-foreground rounded-2xl py-3.5 text-sm font-semibold flex items-center justify-center gap-2 disabled:opacity-40 transition-opacity"
@@ -389,6 +394,13 @@ export function AddPrescriptionSheet({ onClose, onAdd, onAdded, initialTab = "ma
           </div>
         )}
       </div>
+      {showPhotoSource && (
+        <PhotoSourceSheet
+          onTakePhoto={() => { setShowPhotoSource(false); cameraRef.current?.click(); }}
+          onChooseFile={() => { setShowPhotoSource(false); libraryRef.current?.click(); }}
+          onClose={() => setShowPhotoSource(false)}
+        />
+      )}
     </div>
   );
 }

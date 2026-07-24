@@ -1,5 +1,6 @@
 import { supabase } from "./supabase";
 import type { ExtractedProfile } from "./hermes";
+import type { MealTimes } from "../types";
 
 export type Role = "elder" | "caregiver";
 
@@ -20,9 +21,16 @@ export interface ProfileDetails {
   allergies?: string[];
   drugAllergies?: string[];
   wakeTime?: string;
-  mealTimes?: { breakfast?: string; lunch?: string; dinner?: string };
+  mealTimes?: MealTimes;
   sleepTime?: string;
   travelPlan?: { startDate: string; endDate: string; timezone: string };
+  // Walkthrough task_names this user has completed (lib/walkthrough/types.ts's
+  // WalkthroughTaskName) — needs to survive across devices/sessions since it
+  // drives Mei's own proactive-offer behaviour server-side (threaded into
+  // /agent/turn as completed_walkthroughs), which a client-only localStorage
+  // flag could never do. Written via markWalkthroughCompleted's read-merge-write,
+  // never a bare saveProfile() overwrite (see that function's own note).
+  completedWalkthroughs?: string[];
 }
 
 // A medication draft the guided wizard's MedList edits (name/dose/time). Mirrors
@@ -117,6 +125,21 @@ export async function saveProfile(
     accessibility: details,
   });
   if (error) throw error;
+}
+
+// Read-merge-write a single completed walkthrough into profiles.accessibility
+// (a jsonb catch-all shared with the medical profile, travel plan, etc. —
+// saveProfile() itself does a blind overwrite, so every write into this column
+// must fetch-merge-write like this, never call saveProfile with a partial
+// details object built from scratch).
+export async function markWalkthroughCompleted(userId: string, role: Role, taskName: string): Promise<void> {
+  const existing = await fetchProfile(userId);
+  const completed = existing?.details.completedWalkthroughs ?? [];
+  if (completed.includes(taskName)) return;
+  await saveProfile(userId, role, existing?.fullName ?? "", {
+    ...(existing?.details ?? {}),
+    completedWalkthroughs: [...completed, taskName],
+  });
 }
 
 export async function fetchProfileRole(userId: string): Promise<Role | null> {

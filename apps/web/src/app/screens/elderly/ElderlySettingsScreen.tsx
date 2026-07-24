@@ -17,7 +17,7 @@ import { LANGUAGE_OPTIONS, t } from "../../lib/language";
 
 export function Toggle({ on, onToggle }: { on: boolean; onToggle: () => void }) {
   return (
-    <button onClick={onToggle} className={`w-12 h-6 rounded-full transition-colors relative shrink-0 ${on ? "bg-primary" : "bg-muted"}`}>
+    <button onClick={onToggle} aria-pressed={on} className={`w-12 h-6 rounded-full transition-colors relative shrink-0 ${on ? "bg-primary" : "bg-muted"}`}>
       <div className={`absolute top-0.5 w-5 h-5 bg-white rounded-full shadow transition-transform ${on ? "translate-x-6" : "translate-x-0.5"}`} />
     </button>
   );
@@ -125,6 +125,7 @@ export function ElderlySettingsScreen({ patient, elderId, onUpdatePatient, onBac
         {/* Your Profile — everything the guided setup wizard asked, editable here */}
         <div className="bg-card rounded-2xl border border-border overflow-hidden" data-tour="elder-profile-section">
           <button
+            data-walk="elder-profile-toggle"
             onClick={() => setProfileOpen(v => !v)}
             className="w-full flex items-center justify-between px-4 py-3.5 font-semibold text-foreground"
           >
@@ -168,7 +169,7 @@ export function ElderlySettingsScreen({ patient, elderId, onUpdatePatient, onBac
                 <label className="text-xs font-semibold text-foreground">{t(language, "settings.weightKg")}</label>
                 {!weightDraft.trim() && <MeiSuggestButton fieldLabel={t(language, "settings.weightKg")} onAccept={v => setWeightDraft(v.match(/\d+(\.\d+)?/)?.[0] ?? v)} />}
               </div>
-              <input type="number" value={weightDraft} onChange={e => setWeightDraft(e.target.value)} placeholder="e.g. 60" className={fieldCls} />
+              <input type="number" data-walk="elder-profile-weight" value={weightDraft} onChange={e => setWeightDraft(e.target.value)} placeholder="e.g. 60" className={fieldCls} />
             </div>
             <div className="flex-1">
               <div className="flex items-center justify-between mb-1.5">
@@ -179,7 +180,7 @@ export function ElderlySettingsScreen({ patient, elderId, onUpdatePatient, onBac
             </div>
           </div>
 
-          <TagList label={t(language, "settings.medicalConditions")} placeholder={t(language, "wizard.conditionsPlaceholder")} items={conditionsDraft} suggestions={withCatalogLabels(COMMON_CONDITIONS, language)} onAdd={v => setConditionsDraft(p => [...p, v])} onRemove={i => setConditionsDraft(p => p.filter((_, j) => j !== i))} />
+          <TagList data-walk="elder-conditions" label={t(language, "settings.medicalConditions")} placeholder={t(language, "wizard.conditionsPlaceholder")} items={conditionsDraft} suggestions={withCatalogLabels(COMMON_CONDITIONS, language)} onAdd={v => setConditionsDraft(p => [...p, v])} onRemove={i => setConditionsDraft(p => p.filter((_, j) => j !== i))} />
           <TagList label={t(language, "settings.generalAllergies")} placeholder={t(language, "wizard.allergiesPlaceholder")} items={allergiesDraft} suggestions={withCatalogLabels(COMMON_ALLERGIES, language)} onAdd={v => setAllergiesDraft(p => [...p, v])} onRemove={i => setAllergiesDraft(p => p.filter((_, j) => j !== i))} />
           <TagList label={t(language, "settings.medicationAllergies")} placeholder={t(language, "wizard.drugAllergiesPlaceholder")} items={drugAllergiesDraft} suggestions={withCatalogLabels(COMMON_DRUG_ALLERGIES, language)} onAdd={v => setDrugAllergiesDraft(p => [...p, v])} onRemove={i => setDrugAllergiesDraft(p => p.filter((_, j) => j !== i))} />
 
@@ -195,6 +196,7 @@ export function ElderlySettingsScreen({ patient, elderId, onUpdatePatient, onBac
           </div>
 
           <button
+            data-walk="elder-profile-save"
             onClick={saveProfileDraft}
             disabled={profileSaving || !elderId}
             className="w-full h-12 rounded-2xl bg-primary text-primary-foreground text-sm font-semibold flex items-center justify-center gap-2 disabled:opacity-40 active:scale-[0.98] transition-transform"
@@ -216,9 +218,19 @@ export function ElderlySettingsScreen({ patient, elderId, onUpdatePatient, onBac
             </div>
             <p className="text-xs text-muted-foreground mb-3">{t(language, "link.qrDesc")}</p>
             <div className="flex justify-center">
-              <div className="bg-white rounded-2xl p-4 border border-border">
+              {/* No app-observable signal exists for "showed this to someone" (it's
+                  a physical action outside the DOM) — a tap on the code itself,
+                  once shown, is the least-arbitrary real action available, and is
+                  what the link_caregiver walkthrough's QR-display step waits on
+                  ("acknowledge", used sparingly for pure-display steps). */}
+              <button
+                type="button"
+                data-walk="elder-qr-gotit"
+                className="bg-white rounded-2xl p-4 border border-border active:scale-[0.98] transition-transform"
+                aria-label={t(language, "walk.link.gotIt")}
+              >
                 <QRCodeSVG value={buildCareLinkPayload(elderId, patient.name)} size={168} level="M" />
-              </div>
+              </button>
             </div>
           </div>
         )}

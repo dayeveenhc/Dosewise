@@ -17,6 +17,12 @@ from zoneinfo import ZoneInfo
 # Weekday tokens (Monday=0, matching date.weekday()) used by weekly schedules.
 WEEKDAYS = ("mon", "tue", "wed", "thu", "fri", "sat", "sun")
 
+# Token -> full display name, for read-backs and schedule headings.
+WEEKDAY_NAMES = {
+    "mon": "Monday", "tue": "Tuesday", "wed": "Wednesday", "thu": "Thursday",
+    "fri": "Friday", "sat": "Saturday", "sun": "Sunday",
+}
+
 
 def _parse_hhmm(value: str | None) -> time | None:
     try:

@@ -249,7 +249,7 @@ export function ElderlyHomeScreen({ patient, onLogDose, onOpenTravel, justAddedM
                   : "border border-border bg-card";
 
     return (
-      <div key={m.id} className={`rounded-2xl overflow-hidden ${cardCls}`}>
+      <div key={m.id} data-testid={m.medicationId ? `medication-${m.medicationId}` : undefined} className={`rounded-2xl overflow-hidden ${cardCls}`}>
         <div className="p-4">
           <div className="flex items-start gap-3">
             <div className="w-[62px] h-[62px] rounded-xl overflow-hidden shrink-0 bg-muted">

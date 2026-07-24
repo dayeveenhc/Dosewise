@@ -5,15 +5,16 @@ import { supabase } from "../../lib/supabase";
 import { saveProfile } from "../../lib/profile";
 import { addMedication, archiveMedication, to24h } from "../../lib/medications";
 import { extractProfile, fileToBase64 } from "../../lib/hermes";
-import type { ExtractedProfile } from "../../lib/hermes";
-import { MEDICATION_CATALOG, MEAL_TIMES, COMMON_CONDITIONS, COMMON_ALLERGIES, COMMON_DRUG_ALLERGIES } from "../../data/medications";
+import { MEDICATION_CATALOG, COMMON_CONDITIONS, COMMON_ALLERGIES, COMMON_DRUG_ALLERGIES } from "../../data/medications";
 import { TimeField, TimesPicker, defaultDoseTime } from "../../components/TimesPicker";
 import type { RoutineTimes } from "../../components/TimesPicker";
 import type { PrefillMed, Role, WizardPrefill } from "../../lib/profile";
 import { MeiSuggestButton } from "../../components/MeiSuggestButton";
+import { PhotoSourceSheet } from "../../components/PhotoSourceSheet";
 import { useLanguage } from "../../lib/languageContext";
 import { t } from "../../lib/language";
 import type { AppLanguage } from "../../lib/language";
+import { emitWalkthroughEvent } from "../../lib/walkthrough/bus";
 
 // Maps a {value, labelKey} catalog entry list into the {value, label} pairs
 // TagList/type-aheads render — display localizes, the stored `value` doesn't.
@@ -31,6 +32,7 @@ export function GenderPicker({ value, onChange, size = "base" }: { value: string
           key={g}
           type="button"
           onClick={() => onChange(g)}
+          aria-pressed={value === g}
           className={`flex-1 flex flex-col items-center gap-1 rounded-xl border transition-colors ${size === "sm" ? "py-2.5" : "py-3"} ${value === g ? "bg-primary text-primary-foreground border-primary" : "bg-input-background text-foreground border-border"}`}
         >
           <Icon size={size === "sm" ? 16 : 20} />
@@ -101,6 +103,10 @@ function ContinueButton({ onClick, disabled, loading, children = "Continue" }: {
     <button
       onClick={onClick}
       disabled={disabled || loading}
+      // A single shared selector: only one ContinueButton is ever mounted at a
+      // time (one wizard step renders at once), so "whichever Continue/Create
+      // button is currently shown" is unambiguous.
+      data-walk="wizard-continue-button"
       className="w-full h-13 py-3.5 mt-auto rounded-2xl bg-primary text-primary-foreground text-[15px] font-semibold flex items-center justify-center gap-2 disabled:opacity-40 active:scale-[0.98] transition-transform"
     >
       {loading && <Loader2 size={16} className="animate-spin" />}
@@ -109,15 +115,18 @@ function ContinueButton({ onClick, disabled, loading, children = "Continue" }: {
   );
 }
 
-export function TagList({ label, placeholder, items, suggestions, extractField, onAdd, onRemove }: {
+export function TagList({ label, placeholder, items, suggestions, extractField, onAdd, onRemove, "data-walk": dataWalk }: {
   label: string; placeholder: string; items: string[]; suggestions?: { value: string; label: string }[];
   extractField?: "conditions" | "allergies" | "drug_allergies";
   onAdd: (v: string) => void; onRemove: (i: number) => void;
+  "data-walk"?: string;
 }) {
   const [value, setValue] = useState("");
   const [open, setOpen] = useState(false);
   const [scanning, setScanning] = useState(false);
-  const scanRef = useRef<HTMLInputElement>(null);
+  const scanCameraRef = useRef<HTMLInputElement>(null);
+  const scanLibraryRef = useRef<HTMLInputElement>(null);
+  const [showPhotoSource, setShowPhotoSource] = useState(false);
   const submit = (pick?: string) => {
     const val = (pick ?? value).trim();
     if (val) { onAdd(val); setValue(""); setOpen(false); }
@@ -148,7 +157,7 @@ export function TagList({ label, placeholder, items, suggestions, extractField, 
     ? suggestions.filter(s => s.label.toLowerCase().includes(q) && !items.includes(s.value)).slice(0, 6)
     : [];
   return (
-    <div className="mb-5">
+    <div className="mb-5" data-walk={dataWalk}>
       <label className="block text-sm font-semibold text-foreground mb-2">{label}</label>
       {items.length > 0 && (
         <div className="flex flex-wrap gap-2 mb-2.5">
@@ -173,15 +182,23 @@ export function TagList({ label, placeholder, items, suggestions, extractField, 
             placeholder={placeholder}
             className={`${fieldCls} flex-1`}
           />
-          <button onClick={() => submit()} disabled={!value.trim()} className="w-11 h-11 bg-primary rounded-xl flex items-center justify-center disabled:opacity-40 shrink-0">
+          <button onClick={() => submit()} disabled={!value.trim()} data-walk={dataWalk && `${dataWalk}-add-btn`} className="w-11 h-11 bg-primary rounded-xl flex items-center justify-center disabled:opacity-40 shrink-0">
             <Plus size={18} className="text-white" />
           </button>
           {extractField && (
-            <button onClick={() => scanRef.current?.click()} disabled={scanning} title={t(language, "wizard.scanReportOrLabel")} className="w-11 h-11 bg-muted rounded-xl flex items-center justify-center disabled:opacity-60 shrink-0">
+            <button onClick={() => setShowPhotoSource(true)} disabled={scanning} title={t(language, "wizard.scanReportOrLabel")} className="w-11 h-11 bg-muted rounded-xl flex items-center justify-center disabled:opacity-60 shrink-0">
               {scanning ? <Sparkles size={16} className="text-primary animate-pulse" /> : <Camera size={18} className="text-foreground" />}
             </button>
           )}
-          <input ref={scanRef} type="file" accept="image/*,application/pdf" className="sr-only" onChange={onScanFile} />
+          <input ref={scanCameraRef} type="file" accept="image/*" capture="environment" className="sr-only" onChange={onScanFile} />
+          <input ref={scanLibraryRef} type="file" accept="image/*,application/pdf" className="sr-only" onChange={onScanFile} />
+          {showPhotoSource && (
+            <PhotoSourceSheet
+              onTakePhoto={() => { setShowPhotoSource(false); scanCameraRef.current?.click(); }}
+              onChooseFile={() => { setShowPhotoSource(false); scanLibraryRef.current?.click(); }}
+              onClose={() => setShowPhotoSource(false)}
+            />
+          )}
         </div>
         {open && matches.length > 0 && (
           <div className="absolute z-20 left-0 right-0 mt-1 bg-card border border-border rounded-xl shadow-lg overflow-hidden max-h-48 overflow-y-auto">
@@ -202,7 +219,7 @@ interface DraftMed { name: string; dose: string; times: string[] }
 const toDraftMeds = (meds?: PrefillMed[]): DraftMed[] =>
   (meds ?? []).map(m => ({ name: m.name, dose: m.dose, times: [m.time] }));
 
-function MedList({ meds, extractKind, routine, onAdd, onRemove }: { meds: DraftMed[]; extractKind: "current" | "past"; routine: RoutineTimes; onAdd: (m: DraftMed) => void; onRemove: (i: number) => void }) {
+function MedList({ meds, extractKind, routine, onAdd, onRemove, "data-walk": dataWalk }: { meds: DraftMed[]; extractKind: "current" | "past"; routine: RoutineTimes; onAdd: (m: DraftMed) => void; onRemove: (i: number) => void; "data-walk"?: string }) {
   const { language } = useLanguage();
   const [open, setOpen] = useState(false);
   const [name, setName] = useState("");
@@ -212,7 +229,9 @@ function MedList({ meds, extractKind, routine, onAdd, onRemove }: { meds: DraftM
   const [showSuggestions, setShowSuggestions] = useState(false);
   const [scanning, setScanning] = useState(false);
   const [proposal, setProposal] = useState<string | null>(null);
-  const fileRef = useRef<HTMLInputElement>(null);
+  const cameraRef = useRef<HTMLInputElement>(null);
+  const libraryRef = useRef<HTMLInputElement>(null);
+  const [showPhotoSource, setShowPhotoSource] = useState(false);
 
   const submit = () => {
     if (!name.trim() || !times.length) return;
@@ -258,11 +277,18 @@ function MedList({ meds, extractKind, routine, onAdd, onRemove }: { meds: DraftM
 
   return (
     <div>
-      {/* No `capture` here (unlike a camera-only capture input) — mobile browsers
-          bias straight into the camera when it's present, which blocks picking
-          an existing PDF from Files. Omitting it still offers "Take Photo" as
-          one of the native picker's options, so scanning still works. */}
-      <input ref={fileRef} type="file" accept="image/*,application/pdf" className="sr-only" onChange={onFile} />
+      {/* Two inputs — one camera-only, one library/Files-only — backing the
+          explicit PhotoSourceSheet chooser below, so both are always reachable
+          regardless of what a given mobile browser's native picker defaults to. */}
+      <input ref={cameraRef} type="file" accept="image/*" capture="environment" className="sr-only" onChange={onFile} />
+      <input ref={libraryRef} type="file" accept="image/*,application/pdf" className="sr-only" onChange={onFile} />
+      {showPhotoSource && (
+        <PhotoSourceSheet
+          onTakePhoto={() => { setShowPhotoSource(false); cameraRef.current?.click(); }}
+          onChooseFile={() => { setShowPhotoSource(false); libraryRef.current?.click(); }}
+          onClose={() => setShowPhotoSource(false)}
+        />
+      )}
       {meds.length > 0 && (
         <div className="space-y-2 mb-3">
           {meds.map((m, i) => (
@@ -322,18 +348,25 @@ function MedList({ meds, extractKind, routine, onAdd, onRemove }: { meds: DraftM
             <label className="block text-xs font-semibold text-foreground mb-1.5">{t(language, "wizard.dose")}</label>
             <input value={dose} onChange={e => setDose(e.target.value)} placeholder={t(language, "wizard.dosePlaceholder")} className={fieldCls} />
           </div>
-          <TimesPicker times={times} onChange={setTimes} label={t(language, "wizard.usualTimes")} routine={routine} />
+          <TimesPicker
+            times={times}
+            onChange={setTimes}
+            label={t(language, "wizard.usualTimes")}
+            routine={routine}
+            data-walk={dataWalk && `${dataWalk}-timespicker`}
+            walkEvent={dataWalk && `${dataWalk}-times-changed`}
+          />
           <div className="flex gap-2 pt-1">
             <button onClick={cancel} className="flex-1 h-10 rounded-xl border border-border text-muted-foreground text-sm font-semibold">{t(language, "wizard.cancel")}</button>
-            <button onClick={submit} disabled={!name.trim() || !times.length} className="flex-1 h-10 rounded-xl bg-primary text-primary-foreground text-sm font-bold disabled:opacity-40">{t(language, "wizard.add")}</button>
+            <button onClick={submit} disabled={!name.trim() || !times.length} data-walk={dataWalk && `${dataWalk}-add-btn`} className="flex-1 h-10 rounded-xl bg-primary text-primary-foreground text-sm font-bold disabled:opacity-40">{t(language, "wizard.add")}</button>
           </div>
         </div>
       ) : (
         <div className="flex gap-2">
-          <button onClick={() => setOpen(true)} className="flex-1 h-12 rounded-2xl border-2 border-dashed border-border text-muted-foreground text-sm font-medium flex items-center justify-center gap-2 active:scale-[0.98] transition-transform">
+          <button onClick={() => setOpen(true)} data-walk={dataWalk && `${dataWalk}-open`} className="flex-1 h-12 rounded-2xl border-2 border-dashed border-border text-muted-foreground text-sm font-medium flex items-center justify-center gap-2 active:scale-[0.98] transition-transform">
             <Plus size={15} />{t(language, "wizard.addMedication")}
           </button>
-          <button onClick={() => fileRef.current?.click()} disabled={scanning} className="flex-1 h-12 rounded-2xl border-2 border-dashed border-primary/40 text-primary text-sm font-medium flex items-center justify-center gap-2 active:scale-[0.98] transition-transform disabled:opacity-60">
+          <button onClick={() => setShowPhotoSource(true)} disabled={scanning} className="flex-1 h-12 rounded-2xl border-2 border-dashed border-primary/40 text-primary text-sm font-medium flex items-center justify-center gap-2 active:scale-[0.98] transition-transform disabled:opacity-60">
             {scanning ? <Sparkles size={15} className="animate-pulse" /> : <Camera size={15} />}
             {scanning ? t(language, "wizard.reading") : t(language, "wizard.scanOrUpload")}
           </button>
@@ -415,7 +448,15 @@ export function GuidedSetupWizard({ mode, hasSession, elderId: initialElderId, p
   const total = steps.length;
   const showBackButton = step !== "done";
 
-  const goNext = () => setStepIndex(i => Math.min(i + 1, steps.length - 1));
+  const goNext = () => setStepIndex(i => {
+    const next = Math.min(i + 1, steps.length - 1);
+    // The onboarding walkthrough's step-transition steps ride this signal
+    // rather than the Continue button's raw click, since createAccount (the
+    // one async case) only ever calls goNext() after a successful signup —
+    // this stays correct for both the sync and async Continue buttons alike.
+    if (next !== i) emitWalkthroughEvent("wizard-step-changed", { toStep: steps[next] });
+    return next;
+  });
   const goBack = () => setStepIndex(i => Math.max(i - 1, 0));
 
   const createAccount = async () => {
@@ -460,6 +501,9 @@ export function GuidedSetupWizard({ mode, hasSession, elderId: initialElderId, p
       await saveProfile(elderId, role, fullName, {});
     }
     setFinishing(false);
+    // Gated on the real, resolved profile/medication writes above — never the
+    // Finish button's click alone.
+    emitWalkthroughEvent("wizard-finished");
     onComplete();
   };
 
@@ -474,18 +518,19 @@ export function GuidedSetupWizard({ mode, hasSession, elderId: initialElderId, p
           <div className="space-y-3 flex-1">
             <div>
               <label className="block text-xs font-semibold text-foreground mb-1.5">{t(language, "wizard.preferredName")}</label>
-              <input value={fullName} onChange={e => setFullName(e.target.value)} placeholder={t(language, "wizard.preferredNamePlaceholder")} className={cls(fullName.trim().length > 0)} />
+              <input data-walk="wizard-fullname" value={fullName} onChange={e => setFullName(e.target.value)} placeholder={t(language, "wizard.preferredNamePlaceholder")} className={cls(fullName.trim().length > 0)} />
             </div>
             {!hasSessionAtStart && (
               <>
                 <div>
                   <label className="block text-xs font-semibold text-foreground mb-1.5">{t(language, "wizard.email")}</label>
-                  <input type="email" value={email} onChange={e => setEmail(e.target.value)} placeholder={t(language, "wizard.emailPlaceholder")} className={cls(isEmail(email))} autoComplete="email" />
+                  <input data-walk="wizard-email" type="email" value={email} onChange={e => setEmail(e.target.value)} placeholder={t(language, "wizard.emailPlaceholder")} className={cls(isEmail(email))} autoComplete="email" />
                 </div>
                 <div>
                   <label className="block text-xs font-semibold text-foreground mb-1.5">{t(language, "wizard.password")}</label>
                   <div className="relative">
                     <input
+                      data-walk="wizard-password"
                       type={showPassword ? "text" : "password"}
                       value={password}
                       onChange={e => setPassword(e.target.value)}
@@ -536,14 +581,14 @@ export function GuidedSetupWizard({ mode, hasSession, elderId: initialElderId, p
                     />
                   )}
                 </div>
-                <input type="date" value={dob} onChange={e => setDob(e.target.value)} max={to24hDate(new Date())} className={cls(dob.trim().length > 0)} />
+                <input data-walk="wizard-dob" type="date" value={dob} onChange={e => setDob(e.target.value)} max={to24hDate(new Date())} className={cls(dob.trim().length > 0)} />
               </div>
               <div className="flex-1">
                 <div className="flex items-center justify-between mb-1.5">
                   <label className="text-xs font-semibold text-foreground">{t(language, "settings.gender")}</label>
                   {!gender.trim() && <MeiSuggestButton fieldLabel={t(language, "settings.gender")} onAccept={v => setGender(/^f/i.test(v) ? "Female" : /^m/i.test(v) ? "Male" : v)} />}
                 </div>
-                <GenderPicker value={gender} onChange={setGender} />
+                <div data-walk="wizard-gender-picker"><GenderPicker value={gender} onChange={setGender} /></div>
               </div>
             </div>
             <div className="flex gap-3">
@@ -552,14 +597,14 @@ export function GuidedSetupWizard({ mode, hasSession, elderId: initialElderId, p
                   <label className="text-xs font-semibold text-foreground">{t(language, "settings.weightKg")}</label>
                   {!weightKg.trim() && <MeiSuggestButton fieldLabel={t(language, "settings.weightKg")} onAccept={v => setWeightKg(extractNumber(v))} />}
                 </div>
-                <input type="number" value={weightKg} onChange={e => setWeightKg(e.target.value)} placeholder={t(language, "wizard.weightPlaceholder")} className={cls(isPositiveNumber(weightKg))} />
+                <input data-walk="wizard-weight" type="number" value={weightKg} onChange={e => setWeightKg(e.target.value)} placeholder={t(language, "wizard.weightPlaceholder")} className={cls(isPositiveNumber(weightKg))} />
               </div>
               <div className="flex-1">
                 <div className="flex items-center justify-between mb-1.5">
                   <label className="text-xs font-semibold text-foreground">{t(language, "settings.heightCm")}</label>
                   {!heightCm.trim() && <MeiSuggestButton fieldLabel={t(language, "settings.heightCm")} onAccept={v => setHeightCm(extractNumber(v))} />}
                 </div>
-                <input type="number" value={heightCm} onChange={e => setHeightCm(e.target.value)} placeholder={t(language, "wizard.heightPlaceholder")} className={cls(isPositiveNumber(heightCm))} />
+                <input data-walk="wizard-height" type="number" value={heightCm} onChange={e => setHeightCm(e.target.value)} placeholder={t(language, "wizard.heightPlaceholder")} className={cls(isPositiveNumber(heightCm))} />
               </div>
             </div>
           </div>
@@ -572,7 +617,7 @@ export function GuidedSetupWizard({ mode, hasSession, elderId: initialElderId, p
           <StepHeader title={t(language, "wizard.conditionsTitle")} subtitle={t(language, "wizard.conditionsSubtitle")} />
           {prefilled && <ReviewBadge />}
           <div className="flex-1">
-            <TagList label={t(language, "common.medicalConditions")} placeholder={t(language, "wizard.conditionsPlaceholder")} items={conditions} suggestions={withCatalogLabels(COMMON_CONDITIONS, language)} extractField="conditions" onAdd={v => setConditions(p => [...p, v])} onRemove={i => setConditions(p => p.filter((_, j) => j !== i))} />
+            <TagList data-walk="wizard-conditions-taglist" label={t(language, "common.medicalConditions")} placeholder={t(language, "wizard.conditionsPlaceholder")} items={conditions} suggestions={withCatalogLabels(COMMON_CONDITIONS, language)} extractField="conditions" onAdd={v => setConditions(p => [...p, v])} onRemove={i => setConditions(p => p.filter((_, j) => j !== i))} />
           </div>
           <ContinueButton onClick={goNext}>{conditions.length ? t(language, "wizard.continue") : t(language, "wizard.skipForNow")}</ContinueButton>
         </>
@@ -583,8 +628,8 @@ export function GuidedSetupWizard({ mode, hasSession, elderId: initialElderId, p
           <StepHeader title={t(language, "wizard.allergiesTitle")} subtitle={t(language, "wizard.allergiesSubtitle")} />
           {prefilled && <ReviewBadge />}
           <div className="flex-1">
-            <TagList label={t(language, "settings.generalAllergies")} placeholder={t(language, "wizard.allergiesPlaceholder")} items={allergies} suggestions={withCatalogLabels(COMMON_ALLERGIES, language)} extractField="allergies" onAdd={v => setAllergies(p => [...p, v])} onRemove={i => setAllergies(p => p.filter((_, j) => j !== i))} />
-            <TagList label={t(language, "settings.medicationAllergies")} placeholder={t(language, "wizard.drugAllergiesPlaceholder")} items={drugAllergies} suggestions={withCatalogLabels(COMMON_DRUG_ALLERGIES, language)} extractField="drug_allergies" onAdd={v => setDrugAllergies(p => [...p, v])} onRemove={i => setDrugAllergies(p => p.filter((_, j) => j !== i))} />
+            <TagList data-walk="wizard-allergies-taglist" label={t(language, "settings.generalAllergies")} placeholder={t(language, "wizard.allergiesPlaceholder")} items={allergies} suggestions={withCatalogLabels(COMMON_ALLERGIES, language)} extractField="allergies" onAdd={v => setAllergies(p => [...p, v])} onRemove={i => setAllergies(p => p.filter((_, j) => j !== i))} />
+            <TagList data-walk="wizard-drug-allergies-taglist" label={t(language, "settings.medicationAllergies")} placeholder={t(language, "wizard.drugAllergiesPlaceholder")} items={drugAllergies} suggestions={withCatalogLabels(COMMON_DRUG_ALLERGIES, language)} extractField="drug_allergies" onAdd={v => setDrugAllergies(p => [...p, v])} onRemove={i => setDrugAllergies(p => p.filter((_, j) => j !== i))} />
           </div>
           <ContinueButton onClick={goNext}>{t(language, "wizard.continue")}</ContinueButton>
         </>
@@ -595,7 +640,7 @@ export function GuidedSetupWizard({ mode, hasSession, elderId: initialElderId, p
           <StepHeader title={t(language, "wizard.currentMedsTitle")} subtitle={t(language, "wizard.currentMedsSubtitle")} />
           {prefilled && <ReviewBadge />}
           <div className="flex-1">
-            <MedList meds={currentMeds} extractKind="current" routine={routine} onAdd={m => setCurrentMeds(p => [...p, m])} onRemove={i => setCurrentMeds(p => p.filter((_, j) => j !== i))} />
+            <MedList data-walk="wizard-medlist" meds={currentMeds} extractKind="current" routine={routine} onAdd={m => setCurrentMeds(p => [...p, m])} onRemove={i => setCurrentMeds(p => p.filter((_, j) => j !== i))} />
           </div>
           <ContinueButton onClick={goNext}>{currentMeds.length ? t(language, "wizard.continue") : t(language, "wizard.skipForNow")}</ContinueButton>
         </>
@@ -606,7 +651,7 @@ export function GuidedSetupWizard({ mode, hasSession, elderId: initialElderId, p
           <StepHeader title={t(language, "wizard.medHistoryTitle")} subtitle={t(language, "wizard.medHistorySubtitle")} />
           {prefilled && <ReviewBadge />}
           <div className="flex-1">
-            <MedList meds={pastMeds} extractKind="past" routine={routine} onAdd={m => setPastMeds(p => [...p, m])} onRemove={i => setPastMeds(p => p.filter((_, j) => j !== i))} />
+            <MedList data-walk="wizard-medlist" meds={pastMeds} extractKind="past" routine={routine} onAdd={m => setPastMeds(p => [...p, m])} onRemove={i => setPastMeds(p => p.filter((_, j) => j !== i))} />
           </div>
           <ContinueButton onClick={goNext}>{pastMeds.length ? t(language, "wizard.continue") : t(language, "wizard.skipForNow")}</ContinueButton>
         </>
@@ -616,11 +661,11 @@ export function GuidedSetupWizard({ mode, hasSession, elderId: initialElderId, p
         <>
           <StepHeader title={t(language, "wizard.routineTitle")} subtitle={t(language, "wizard.routineSubtitle")} />
           <div className="space-y-3 flex-1">
-            <TimeField label={t(language, "wizard.wakeUpTime")} icon={<Sunrise size={15} className="text-primary" />} value={wakeTime} onChange={setWakeTime} />
-            <TimeField label={t(language, "wizard.breakfast")} icon={<Coffee size={15} className="text-primary" />} value={breakfast} onChange={setBreakfast} />
-            <TimeField label={t(language, "wizard.lunch")} icon={<Utensils size={15} className="text-primary" />} value={lunch} onChange={setLunch} />
-            <TimeField label={t(language, "wizard.dinner")} icon={<UtensilsCrossed size={15} className="text-primary" />} value={dinner} onChange={setDinner} />
-            <TimeField label={t(language, "wizard.bedtime")} icon={<Moon size={15} className="text-primary" />} value={sleepTime} onChange={setSleepTime} />
+            <TimeField data-walk="wizard-routine-wakeTime" walkEvent="wizard-routine-wakeTime-changed" label={t(language, "wizard.wakeUpTime")} icon={<Sunrise size={15} className="text-primary" />} value={wakeTime} onChange={setWakeTime} />
+            <TimeField data-walk="wizard-routine-breakfast" walkEvent="wizard-routine-breakfast-changed" label={t(language, "wizard.breakfast")} icon={<Coffee size={15} className="text-primary" />} value={breakfast} onChange={setBreakfast} />
+            <TimeField data-walk="wizard-routine-lunch" walkEvent="wizard-routine-lunch-changed" label={t(language, "wizard.lunch")} icon={<Utensils size={15} className="text-primary" />} value={lunch} onChange={setLunch} />
+            <TimeField data-walk="wizard-routine-dinner" walkEvent="wizard-routine-dinner-changed" label={t(language, "wizard.dinner")} icon={<UtensilsCrossed size={15} className="text-primary" />} value={dinner} onChange={setDinner} />
+            <TimeField data-walk="wizard-routine-sleepTime" walkEvent="wizard-routine-sleepTime-changed" label={t(language, "wizard.bedtime")} icon={<Moon size={15} className="text-primary" />} value={sleepTime} onChange={setSleepTime} />
 
           </div>
           <ContinueButton onClick={goNext}>{t(language, "wizard.continue")}</ContinueButton>

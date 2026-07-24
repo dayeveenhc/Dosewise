@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import type { Session } from "@supabase/supabase-js";
-import { Droplets, ArrowLeft, Bell, MessageSquare, HelpCircle, UserRound } from "lucide-react";
+import { ArrowLeft, Bell, MessageSquare, HelpCircle, UserRound } from "lucide-react";
 import type { AppMode, Screen, Patient, Medication, Notification, Message } from "./types";
 import { PATIENTS, NOTIFICATIONS } from "./data/patients";
 import { BottomNav } from "./components/BottomNav";
@@ -35,6 +35,13 @@ import { SendReminderSheet } from "./screens/SendReminderSheet";
 import { ScanLinkSheet } from "./components/ScanLinkSheet";
 import { LanguageProvider, readStoredLanguage } from "./lib/languageContext";
 import { t } from "./lib/language";
+import { Walkthrough } from "./components/Walkthrough";
+import { resolveWalkthroughSteps } from "./lib/walkthrough/steps";
+import type { WalkthroughScreen, WalkthroughTaskName, WalkthroughParams } from "./lib/walkthrough/types";
+import { defaultDoseTime } from "./components/TimesPicker";
+import { MED_COLOURS } from "./data/medications";
+import { loadWalkthroughSession, saveWalkthroughSession, clearWalkthroughSession } from "./lib/walkthroughState";
+import { markWalkthroughCompleted } from "./lib/profile";
 
 export default function App() {
   const [session, setSession] = useState<Session | null>(null);
@@ -83,6 +90,8 @@ export default function App() {
   ]);
   const [showSendReminder, setShowSendReminder] = useState<{ medName?: string } | null>(null);
   const [showScanLink, setShowScanLink] = useState(false);
+  const [walkthroughTask, setWalkthroughTask] = useState<WalkthroughTaskName | null>(null);
+  const [walkthroughStepIndex, setWalkthroughStepIndex] = useState(0);
 
   // Demo pop-up notifications — fires a couple of sample alerts a little
   // after landing in the caregiver app, so the top-of-screen toast UI has
@@ -113,8 +122,8 @@ export default function App() {
   useEffect(() => {
     if (!justOnboarded) return;
     if (appMode === "caregiver") setShowCaregiverTour(true);
-    const t = setTimeout(() => setJustOnboarded(false), 1000);
-    return () => clearTimeout(t);
+    const timer = setTimeout(() => setJustOnboarded(false), 1000);
+    return () => clearTimeout(timer);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [justOnboarded, appMode]);
 
@@ -283,6 +292,68 @@ export default function App() {
       adherenceToday: 0, adherenceWeek: 0, lastChecked: "Just added",
     }]);
     setSelectedPatient(patients.length);
+  };
+
+  // Resume a same-tab, in-progress walkthrough (e.g. switched to another
+  // screen mid-way and came back) — never across a hard refresh.
+  useEffect(() => {
+    const restored = loadWalkthroughSession(elderId);
+    if (restored) {
+      setWalkthroughTask(restored.taskName);
+      setWalkthroughStepIndex(restored.stepIndex);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  const walkthroughSteps = walkthroughTask ? resolveWalkthroughSteps(walkthroughTask, "caregiver") : [];
+
+  const handleWalkthroughStart = (taskName: WalkthroughTaskName, params: WalkthroughParams = {}) => {
+    // The add-prescription walkthrough is elder-shell only (its steps drive the
+    // elderly screens); the caregiver shell can't run it. So here Mei's "add it"
+    // is fulfilled by a direct save from the same params, then we land on the
+    // patient's med list (the caregiver view that shows the "Just added" highlight).
+    if (taskName === "add_prescription_auto") {
+      void handleAddPrescription({
+        name: params.name || "",
+        dose: params.dose || "",
+        purpose: params.purpose || "",
+        colour: MED_COLOURS[0].hex,
+        time: defaultDoseTime({ ...patient.mealTimes, sleepTime: patient.sleepTime }),
+        times: [],
+      });
+      setScreen("patient");
+      flagJustAdded(params.name);
+      return;
+    }
+    setWalkthroughTask(taskName);
+    setWalkthroughStepIndex(0);
+    saveWalkthroughSession(elderId, { taskName, stepIndex: 0, startedAt: Date.now() });
+  };
+
+  const handleWalkthroughNavigate = (target: WalkthroughScreen) => {
+    if (target.mode === "caregiver") setScreen(target.screen);
+  };
+
+  const handleWalkthroughAdvance = () => {
+    if (!walkthroughTask) return;
+    if (walkthroughStepIndex >= walkthroughSteps.length - 1) {
+      if (elderId) void markWalkthroughCompleted(elderId, "caregiver", walkthroughTask);
+      clearWalkthroughSession(elderId);
+      setWalkthroughTask(null);
+      setWalkthroughStepIndex(0);
+      return;
+    }
+    const next = walkthroughStepIndex + 1;
+    setWalkthroughStepIndex(next);
+    saveWalkthroughSession(elderId, { taskName: walkthroughTask, stepIndex: next, startedAt: Date.now() });
+  };
+
+  // Exiting/skipping clears client state only — never written back for an
+  // abandoned walkthrough, only genuine completion (above).
+  const handleWalkthroughExit = () => {
+    clearWalkthroughSession(elderId);
+    setWalkthroughTask(null);
+    setWalkthroughStepIndex(0);
   };
 
   const handleAddPrescription = async (med: Omit<Medication, "id" | "status"> & { times?: string[] }) => {
@@ -532,7 +603,7 @@ export default function App() {
                 onDismiss={id => setNotifications(prev => prev.filter(n => n.id !== id))}
               />
             )}
-            {screen === "ai" && <AskMeiScreen patient={patient} elderId={elderId} onUpdatePatient={handleUpdatePatient} onNavigate={setScreen} onMedsChanged={refreshMedications} onMedAdded={flagJustAdded} />}
+            {screen === "ai" && <AskMeiScreen patient={patient} elderId={elderId} onUpdatePatient={handleUpdatePatient} onNavigate={setScreen} onMedsChanged={refreshMedications} onMedAdded={flagJustAdded} onWalkthroughStart={handleWalkthroughStart} />}
             {screen === "messages" && <MessagesScreen />}
             {screen === "settings" && <SettingsScreen patient={patient} caregiverAccount={caregiverAccount} onSwitchMode={openModeSwitch} onSignOut={() => supabase.auth.signOut()} onEditProfile={() => setShowEditProfile(true)} />}
           </div>
@@ -575,6 +646,16 @@ export default function App() {
           />
 
           {showCaregiverTour && <GuidedTour steps={caregiverTourSteps} onFinish={() => setShowCaregiverTour(false)} />}
+          {walkthroughTask && walkthroughSteps.length > 0 && (
+            <Walkthrough
+              steps={walkthroughSteps}
+              stepIndex={Math.min(walkthroughStepIndex, walkthroughSteps.length - 1)}
+              currentScreen={{ mode: "caregiver", screen }}
+              onNavigate={handleWalkthroughNavigate}
+              onAdvance={handleWalkthroughAdvance}
+              onExit={handleWalkthroughExit}
+            />
+          )}
           {showCaregiverTourConfirm && (
             <ConfirmDialog
               title={t(uiLang, "confirm.replayTourTitle")}

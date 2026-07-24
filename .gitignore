@@ -42,6 +42,13 @@ env/
 .mypy_cache/
 .ruff_cache/
 
+# --- Test artifacts (Playwright / pytest output, screenshots) ---
+apps/web/e2e/artifacts/
+apps/web/e2e/design-shots/
+apps/web/test-results/
+apps/web/playwright-report/
+services/hermes/test-results/
+
 # --- Supabase (local) ---
 supabase/.branches/
 supabase/.temp/

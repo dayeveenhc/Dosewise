@@ -8,7 +8,7 @@ the system of record here — grounded in the existing schema.
 
 from __future__ import annotations
 
-from .base import ToolContext, register
+from .base import ToolContext, first_id, record_action, register
 
 _SCHEMA = {
     "name": "message_caregiver",
@@ -31,7 +31,7 @@ _SCHEMA = {
 async def message_caregiver(ctx: ToolContext, message: str) -> str:
     db = ctx.db()
     # Durable record of the outbound message.
-    await db.insert(
+    inserted = await db.insert(
         "conversation_turns",
         {
             "elder_id": ctx.elder_id,
@@ -40,7 +40,15 @@ async def message_caregiver(ctx: ToolContext, message: str) -> str:
             "tool": "message_caregiver",
             "outcome": {"delivered_to": "caregiver"},
         },
-        returning=False,
+        returning=True,
+    )
+    record_action(
+        ctx,
+        tool="message_caregiver",
+        summary=message,
+        entity_type="caregiver_message",
+        entity_id=first_id(inserted),
+        changed_fields={"message": {"before": None, "after": message}},
     )
 
     # Best-effort live delivery over Telegram if a linked caregiver is mapped.

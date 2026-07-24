@@ -5,6 +5,7 @@ import { useLanguage } from "../../lib/languageContext";
 import { t } from "../../lib/language";
 import { extractProfile, fileToBase64 } from "../../lib/hermes";
 import { buildWizardPrefill, type WizardPrefill } from "../../lib/profile";
+import { PhotoSourceSheet } from "../../components/PhotoSourceSheet";
 
 export function SetupMethodScreen({
   onBack,
@@ -16,7 +17,9 @@ export function SetupMethodScreen({
   onExtracted: (prefill: WizardPrefill) => void;
 }) {
   const { language } = useLanguage();
-  const fileRef = useRef<HTMLInputElement>(null);
+  const cameraRef = useRef<HTMLInputElement>(null);
+  const libraryRef = useRef<HTMLInputElement>(null);
+  const [showPhotoSource, setShowPhotoSource] = useState(false);
   const [loading, setLoading] = useState(false);
   const [note, setNote] = useState<string | null>(null);
 
@@ -83,7 +86,7 @@ export function SetupMethodScreen({
 
         {/* Upload records — auto-fill the guided questions from a PDF/image */}
         <button
-          onClick={() => !loading && fileRef.current?.click()}
+          onClick={() => !loading && setShowPhotoSource(true)}
           disabled={loading}
           className="w-full text-left rounded-2xl bg-card shadow-sm p-5 flex items-start gap-4 active:scale-[0.98] transition-transform disabled:opacity-70"
         >
@@ -101,12 +104,21 @@ export function SetupMethodScreen({
             <p className="text-sm text-muted-foreground leading-relaxed">{t(language, "setup.uploadRecordsDesc")}</p>
           </div>
         </button>
-        <input ref={fileRef} type="file" accept="image/*,application/pdf" className="sr-only" onChange={onFile} />
+        <input ref={cameraRef} type="file" accept="image/*" capture="environment" className="sr-only" onChange={onFile} />
+        <input ref={libraryRef} type="file" accept="image/*,application/pdf" className="sr-only" onChange={onFile} />
+        {showPhotoSource && (
+          <PhotoSourceSheet
+            onTakePhoto={() => { setShowPhotoSource(false); cameraRef.current?.click(); }}
+            onChooseFile={() => { setShowPhotoSource(false); libraryRef.current?.click(); }}
+            onClose={() => setShowPhotoSource(false)}
+          />
+        )}
         {note && <p className="text-xs text-muted-foreground px-1 -mt-2">{note}</p>}
 
         {/* Guided questions */}
         <button
           onClick={onGuided}
+          data-walk="setup-method-guided"
           className="w-full text-left rounded-2xl bg-card shadow-sm p-5 flex items-start gap-4 active:scale-[0.98] transition-transform"
         >
           <div className="w-11 h-11 rounded-xl bg-primary flex items-center justify-center shrink-0 mt-0.5">

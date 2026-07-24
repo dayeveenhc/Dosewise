@@ -44,6 +44,11 @@ class AgentTurnRequest(BaseModel):
     # The language the client wants Mei to reply in (from the app's "Voice &
     # Language" setting). Optional; None keeps the agent's default behaviour.
     reply_language: str | None = None
+    # Walkthrough task_names the client has already recorded as completed for this
+    # user (from profiles.accessibility.completedWalkthroughs) — so Mei doesn't
+    # re-offer a walkthrough already done. Client-supplied, stateless on Hermes,
+    # same trust model as reply_language.
+    completed_walkthroughs: list[str] = []
 
 
 class AgentTurnResponse(BaseModel):
@@ -53,6 +58,9 @@ class AgentTurnResponse(BaseModel):
     # client can confirm and navigate to the page that shows the change. Empty on
     # a propose turn (nothing saved yet).
     actions: list[dict] = []
+    # Set when start_walkthrough was called this turn — {"task_name": str} — so the
+    # client can mount the spotlight overlay. None on every other turn.
+    walkthrough: dict | None = None
 
 
 def _authenticate_and_check_rate_limit(
@@ -167,6 +175,7 @@ async def agent_turn(body: AgentTurnRequest, request: Request) -> AgentTurnRespo
             image_bytes=image_bytes,
             history=state.messages,
             reply_language=body.reply_language,
+            completed_walkthroughs=body.completed_walkthroughs,
         )
     except Exception:
         # A provider/DB error mid-turn used to surface as a bare HTTP 500, which
@@ -178,10 +187,13 @@ async def agent_turn(body: AgentTurnRequest, request: Request) -> AgentTurnRespo
             reply="Sorry, I'm having trouble right now. Please try again in a moment.",
             tools_used=[],
         )
-    # ctx.committed_actions is populated by write tools that actually saved this
-    # turn (a fresh ctx per request means it never carries over).
+    # ctx.committed_actions/ctx.walkthrough are populated by tools that actually
+    # acted this turn (a fresh ctx per request means neither ever carries over).
     return AgentTurnResponse(
-        reply=reply, tools_used=tools_used, actions=ctx.committed_actions
+        reply=reply,
+        tools_used=tools_used,
+        actions=ctx.committed_actions,
+        walkthrough=ctx.walkthrough,
     )
 
 
@@ -220,6 +232,7 @@ async def agent_turn_stream(body: AgentTurnRequest, request: Request) -> Streami
                 image_bytes=image_bytes,
                 history=state.messages,
                 reply_language=body.reply_language,
+                completed_walkthroughs=body.completed_walkthroughs,
                 on_event=on_event,
             )
             await queue.put(
@@ -228,6 +241,7 @@ async def agent_turn_stream(body: AgentTurnRequest, request: Request) -> Streami
                     "reply": reply,
                     "tools_used": tools_used,
                     "actions": ctx.committed_actions,
+                    "walkthrough": ctx.walkthrough,
                 }
             )
         except Exception:
@@ -238,6 +252,7 @@ async def agent_turn_stream(body: AgentTurnRequest, request: Request) -> Streami
                     "reply": "Sorry, I'm having trouble right now. Please try again in a moment.",
                     "tools_used": [],
                     "actions": [],
+                    "walkthrough": None,
                 }
             )
         finally:

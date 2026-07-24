@@ -11,7 +11,7 @@ from __future__ import annotations
 
 from datetime import UTC, date, datetime, timedelta
 
-from .base import ToolContext, register
+from .base import ToolContext, find_medications, first_id, record_action, register
 
 _CHECK_SCHEMA = {
     "name": "check_refills",
@@ -99,12 +99,7 @@ async def log_refill(
     threshold: int | None = None,
 ) -> str:
     db = ctx.db()
-    meds = await db.select(
-        "medications",
-        columns="id,name,schedule",
-        filters={"name": f"ilike.{medication_name}", "archived": "eq.false"},
-        limit=1,
-    )
+    meds = await find_medications(ctx, medication_name, columns="id,name,schedule")
     if not meds:
         return (
             f"No medication named '{medication_name}' is on file. Confirm the name "
@@ -127,26 +122,42 @@ async def log_refill(
 
     existing = await db.select(
         "refills",
-        columns="id",
+        columns="id,pills_remaining,threshold",
         filters={"medication_id": f"eq.{med['id']}"},
         limit=1,
     )
     if existing:
+        before_remaining = existing[0].get("pills_remaining")
+        refill_id = existing[0]["id"]
         await db.update(
             "refills",
             patch,
-            filters={"id": f"eq.{existing[0]['id']}"},
+            filters={"id": f"eq.{refill_id}"},
             returning=False,
         )
     else:
-        await db.insert(
+        before_remaining = None
+        inserted = await db.insert(
             "refills",
             {"medication_id": med["id"], "elder_id": ctx.elder_id, **patch},
-            returning=False,
+            returning=True,
         )
+        refill_id = first_id(inserted)
     tail = f" (about enough until {forecast})" if pills_remaining else ""
-    ctx.committed_actions.append(
-        {"tool": "log_refill", "summary": f"{med['name']}: {pills_remaining} pills"}
+    # entity_id is the MEDICATION id (not the refills row id): the refill count is
+    # shown on the medication card, so that's the element the UI highlights. The
+    # refills row id is carried as `refill_id` for independent verification.
+    record_action(
+        ctx,
+        tool="log_refill",
+        summary=f"{med['name']}: {pills_remaining} pills",
+        entity_type="refill_request",
+        entity_id=med["id"],
+        changed_fields={
+            "pills_remaining": {"before": before_remaining, "after": pills_remaining}
+        },
+        name=med["name"],
+        refill_id=str(refill_id),
     )
     return f"Updated {med['name']}: {pills_remaining} pills on hand{tail}."
 

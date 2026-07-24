@@ -31,6 +31,11 @@ class ToolContext:
     # confirms and redirects to the page that shows the change. Fresh per turn:
     # ToolContext is rebuilt per request (HTTP) / per message (Telegram).
     committed_actions: list[dict] = field(default_factory=list)
+    # Set by start_walkthrough when queued this turn — {"task_name": str}. NOT a
+    # write, so deliberately separate from committed_actions: nothing was saved,
+    # only a client-side UI script was requested. A single value (not a list):
+    # only one walkthrough can be queued per turn.
+    walkthrough: dict | None = None
 
     def db(self):
         """RLS-scoped PostgREST client acting as this elder."""
@@ -41,6 +46,91 @@ ToolHandler = Callable[..., Awaitable[str]]
 
 # name -> (anthropic tool schema, handler)
 _REGISTRY: dict[str, tuple[dict, ToolHandler]] = {}
+
+
+def record_action(
+    ctx: ToolContext,
+    *,
+    tool: str,
+    summary: str,
+    entity_type: str,
+    entity_id: Any,
+    changed_fields: dict[str, dict] | None = None,
+    **extra: Any,
+) -> None:
+    """Append a committed write to ``ctx.committed_actions`` in the standard shape.
+
+    Called ONLY from a write tool's commit branch (never a propose). Carries WHAT
+    changed, not just THAT something changed, so the web app can navigate to the
+    exact record and highlight it:
+
+    * ``entity_type`` — e.g. "medication", "schedule_entry", "refill_request",
+      "profile_field", "caregiver_invite".
+    * ``entity_id`` — the real DB id (or a stable field key for a jsonb field),
+      stringified. This is what the UI targets as ``data-testid="{type}-{id}"``.
+    * ``changed_fields`` — ``{fieldName: {"before": any, "after": any}}``; ``before``
+      is ``None`` for a newly-created record. The UI builds its caption from this.
+
+    ``extra`` keeps back-compat keys (e.g. ``name`` for the legacy med highlight).
+    """
+    ctx.committed_actions.append(
+        {
+            "tool": tool,
+            "summary": summary,
+            "entity_type": entity_type,
+            "entity_id": str(entity_id),
+            "changed_fields": changed_fields or {},
+            **extra,
+        }
+    )
+
+
+async def find_medications(
+    ctx: ToolContext, name: str, *, columns: str, limit: int | None = 1
+) -> list[dict]:
+    """Non-archived medications matching ``name`` (case-insensitive ``ilike``).
+
+    Centralizes the ``{"name": ilike, "archived": eq.false}`` lookup that every
+    med-scoped tool runs. Callers keep their own ``columns``, their own
+    "no medication named…" guard wording, and any post-processing — this only
+    shares the filter + table. ``limit=None`` returns all matches (e.g. the
+    verify tool, which counts/exact-matches every row); the default ``limit=1``
+    suits the "act on one med" tools.
+    """
+    return await ctx.db().select(
+        "medications",
+        columns=columns,
+        filters={"name": f"ilike.{name}", "archived": "eq.false"},
+        limit=limit,
+    )
+
+
+def match_pending(ctx: ToolContext, slot: str, key: str, value: Any) -> dict | None:
+    """The pending proposal on the session under ``slot``, if it matches ``value``.
+
+    Every propose→confirm write tool guards its commit the same way: a confirm is
+    only honored when a matching proposal was stashed this session (so a
+    ``confirmed=true`` call can never save something that was never read back and
+    agreed to). Returns the pending dict when ``getattr(session, slot).get(key) ==
+    value``, else ``None`` — the caller refuses to save on ``None`` with its own
+    tool-specific wording. The slot name is passed in verbatim (``pending_proposal``
+    / ``pending_reminder`` / ``pending_profile``), so the session-attribute contract
+    the Telegram deterministic-confirm path relies on is unchanged.
+    """
+    pending = getattr(ctx.session, slot, None) if ctx.session else None
+    if pending is None or pending.get(key) != value:
+        return None
+    return pending
+
+
+def first_id(inserted: list[dict]) -> str:
+    """The new row's id from a ``return=representation`` insert, or ``""``.
+
+    PostgREST returns the inserted rows; a write tool records the new id in its
+    ``committed_action``. Empty string when the insert returned nothing (mirrors
+    the fallback every insert site used inline before).
+    """
+    return str(inserted[0]["id"]) if inserted else ""
 
 
 def register(schema: dict, handler: ToolHandler) -> None:

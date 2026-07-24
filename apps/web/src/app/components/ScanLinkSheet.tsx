@@ -4,6 +4,7 @@ import { X, Check, QrCode, UserPlus, Loader2, AlertCircle, Send } from "lucide-r
 import { useLanguage } from "../lib/languageContext";
 import { t } from "../lib/language";
 import { parseCareLinkPayload, createLinkRequest } from "../lib/careLinks";
+import { emitWalkthroughEvent } from "../lib/walkthrough/bus";
 
 const SCANNER_ID = "care-link-scanner";
 
@@ -45,6 +46,10 @@ export function ScanLinkSheet({ onClose, onLinked }: {
           handledRef.current = true;
           setScanned(parsed);
           setPhase("confirm");
+          // The walkthrough's completion signal here is a successful decode, not
+          // the camera merely starting — this only fires once a real Dosewise
+          // QR code was found.
+          emitWalkthroughEvent("qr-code-decoded");
         },
         () => {}, // per-frame decode misses — ignore
       )
@@ -75,6 +80,10 @@ export function ScanLinkSheet({ onClose, onLinked }: {
         onLinked(name, relationship.trim());
         setMessage(t(language, "link.sentBody", { name }));
         setPhase("sent");
+        // Gated on the real, resolved write — never the Send button's click,
+        // which fires before createLinkRequest settles (and the "already_active"/
+        // "self"/"error" branches below must NOT satisfy this).
+        emitWalkthroughEvent("care-link-request-sent");
         break;
       case "already_active":
         setMessage(t(language, "link.alreadyLinked", { name }));
@@ -142,7 +151,7 @@ export function ScanLinkSheet({ onClose, onLinked }: {
 
               <div>
                 <label className="block text-xs font-semibold text-foreground mb-2">{t(language, "link.relationLabel")}</label>
-                <div className="flex flex-wrap gap-2 mb-2">
+                <div className="flex flex-wrap gap-2 mb-2" data-walk="scanlink-relationship-chips">
                   {relationChips.map(c => (
                     <button
                       key={c}
@@ -164,6 +173,7 @@ export function ScanLinkSheet({ onClose, onLinked }: {
               <button
                 onClick={sendRequest}
                 disabled={phase === "sending"}
+                data-walk="scanlink-send-button"
                 className="w-full bg-primary text-primary-foreground rounded-2xl py-3.5 text-sm font-semibold flex items-center justify-center gap-2 disabled:opacity-40 transition-opacity"
               >
                 {phase === "sending" ? <Loader2 size={16} className="animate-spin" /> : <Send size={16} />}

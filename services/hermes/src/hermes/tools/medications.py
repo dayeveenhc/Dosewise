@@ -7,8 +7,8 @@ import logging
 from datetime import UTC, datetime
 from uuid import uuid4
 
-from ..dosing import WEEKDAYS
-from .base import ToolContext, register
+from ..dosing import WEEKDAY_NAMES, WEEKDAYS
+from .base import ToolContext, find_medications, first_id, match_pending, record_action, register
 from .drug_info import interaction_text, label_mentions
 
 log = logging.getLogger("hermes.tools.medications")
@@ -140,8 +140,8 @@ async def add_prescription(
         )
 
     # confirmed=true: guard that a matching proposal exists in this session.
-    pending = getattr(ctx.session, "pending_proposal", None) if ctx.session else None
-    if pending is None or pending.get("name") != name:
+    pending = match_pending(ctx, "pending_proposal", "name", name)
+    if pending is None:
         return (
             "Refused to save: no matching pending proposal was confirmed. Propose "
             "the prescription first (confirmed=false) and get the user's explicit "
@@ -183,7 +183,7 @@ async def add_prescription(
         except Exception:
             log.warning("failed to upload prescription photo", exc_info=True)
 
-    await ctx.db().insert("medications", row, returning=False)
+    inserted = await ctx.db().insert("medications", row, returning=True)
     if ctx.session is not None:
         ctx.session.pending_proposal = None
         ctx.session.pending_image = None
@@ -193,8 +193,21 @@ async def add_prescription(
         summary += f" — {', '.join(times)}"
     if frequency:
         summary += f" ({frequency})"
-    ctx.committed_actions.append(
-        {"tool": "add_prescription", "summary": summary, "name": name}
+    new_id = first_id(inserted)
+    record_action(
+        ctx,
+        tool="add_prescription",
+        summary=summary,
+        entity_type="medication",
+        entity_id=new_id,
+        changed_fields={
+            "name": {"before": None, "after": name},
+            "dosage": {"before": None, "after": dosage},
+            "purpose": {"before": None, "after": purpose},
+            "times": {"before": None, "after": times or []},
+            "frequency": {"before": None, "after": frequency},
+        },
+        name=name,
     )
     return f"Saved {name} to the medication list and marked it confirmed."
 
@@ -310,17 +323,11 @@ def _normalize_times(times: list[str] | None) -> tuple[list[str], list[str]]:
     return valid, invalid
 
 
-_DAY_NAMES = {
-    "mon": "Monday", "tue": "Tuesday", "wed": "Wednesday", "thu": "Thursday",
-    "fri": "Friday", "sat": "Saturday", "sun": "Sunday",
-}
-
-
 def _days_phrase(days: list[str]) -> str:
     """Plain-language 'every day' vs 'on Monday and Thursday' for read-backs."""
     if not days:
         return "every day"
-    names = [_DAY_NAMES[d] for d in days]
+    names = [WEEKDAY_NAMES[d] for d in days]
     if len(names) == 1:
         return f"every {names[0]}"
     return "on " + ", ".join(names[:-1]) + f" and {names[-1]}"
@@ -359,8 +366,8 @@ async def set_medication_reminder(
         )
 
     # confirmed=true: guard that a matching proposal exists in this session.
-    pending = getattr(ctx.session, "pending_reminder", None) if ctx.session else None
-    if pending is None or pending.get("name") != name:
+    pending = match_pending(ctx, "pending_reminder", "name", name)
+    if pending is None:
         return (
             "Refused to save: no matching pending reminder was confirmed. Propose "
             "the reminder first (confirmed=false) and get the user's explicit yes."
@@ -373,12 +380,7 @@ async def set_medication_reminder(
     if not valid:
         return "Ask the user what time(s) they'd like the reminder, then propose it."
 
-    meds = await ctx.db().select(
-        "medications",
-        columns="id,schedule",
-        filters={"name": f"ilike.{name}", "archived": "eq.false"},
-        limit=1,
-    )
+    meds = await find_medications(ctx, name, columns="id,schedule")
     if not meds:
         if ctx.session is not None:
             ctx.session.pending_reminder = None
@@ -389,7 +391,8 @@ async def set_medication_reminder(
         )
 
     med = meds[0]
-    schedule = dict(med.get("schedule") or {})
+    old_schedule = dict(med.get("schedule") or {})
+    schedule = dict(old_schedule)
     schedule["times"] = valid
     if valid_days:
         schedule["days"] = valid_days
@@ -407,12 +410,21 @@ async def set_medication_reminder(
     if ctx.session is not None:
         ctx.session.pending_reminder = None
         ctx.session.awaiting_confirmation = False
-    ctx.committed_actions.append(
-        {
-            "tool": "set_medication_reminder",
-            "summary": f"{name} at {', '.join(valid)}",
-            "name": name,
+    changed_fields: dict[str, dict] = {
+        "times": {"before": old_schedule.get("times") or [], "after": valid}
+    }
+    if valid_days:
+        changed_fields["days"] = {
+            "before": old_schedule.get("days") or [], "after": valid_days
         }
+    record_action(
+        ctx,
+        tool="set_medication_reminder",
+        summary=f"{name} at {', '.join(valid)}",
+        entity_type="schedule_entry",
+        entity_id=med["id"],
+        changed_fields=changed_fields,
+        name=name,
     )
     return (
         f"Saved. I'll remind you to take {name} at "

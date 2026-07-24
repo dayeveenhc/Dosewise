@@ -9,7 +9,7 @@ it records what the patient/caregiver states or what a document lists.
 
 from __future__ import annotations
 
-from .base import ToolContext, register
+from .base import ToolContext, match_pending, record_action, register
 
 _SCHEMA = {
     "name": "update_medical_profile",
@@ -68,8 +68,8 @@ async def update_medical_profile(
             f"confirm before saving — {verb}: {content}"
         )
 
-    pending = getattr(ctx.session, "pending_profile", None) if ctx.session else None
-    if pending is None or pending.get("content") != content:
+    pending = match_pending(ctx, "pending_profile", "content", content)
+    if pending is None:
         return (
             "Refused to save: no matching pending profile update was confirmed. "
             "Propose it first (confirmed=false) and get the patient's explicit yes."
@@ -102,8 +102,17 @@ async def update_medical_profile(
         ctx.session.awaiting_confirmation = False
         # A committed profile ends any guided-intake (/setup) re-run.
         ctx.session.intake_active = False
-    ctx.committed_actions.append(
-        {"tool": "update_medical_profile", "summary": "medical profile"}
+    record_action(
+        ctx,
+        tool="update_medical_profile",
+        summary="medical profile",
+        entity_type="profile_field",
+        # A stable field key (not the elder uuid) so the UI can place the highlight
+        # on the specific settings field: data-testid="profile_field-medical_profile".
+        entity_id="medical_profile",
+        changed_fields={
+            "medical_profile": {"before": existing or None, "after": new_profile}
+        },
     )
     return "Saved to the patient's medical profile. I'll keep it in mind going forward."
 

@@ -5,6 +5,7 @@ import { MEAL_TIMES } from "../data/medications";
 import { to12h, to24h } from "../lib/medications";
 import { useLanguage } from "../lib/languageContext";
 import { t } from "../lib/language";
+import { emitWalkthroughEvent } from "../lib/walkthrough/bus";
 
 // The elder's own routine, as collected by the wizard's routine step and stored
 // on `ProfileDetails` (note `sleepTime` sits beside `mealTimes`, not inside it).
@@ -136,17 +137,23 @@ function TimeEditor({ initial, onCancel, onSave }: {
  * one-off clock answers (meal times, bedtime). Value in and out is 24h "HH:MM",
  * which is what `ProfileDetails.mealTimes` stores.
  */
-export function TimeField({ value, onChange, label, icon }: {
+export function TimeField({ value, onChange, label, icon, "data-walk": dataWalk, walkEvent }: {
   value: string;
   onChange: (hhmm: string) => void;
   label: string;
   icon?: ReactNode;
+  "data-walk"?: string;
+  // Emitted on lib/walkthrough/bus.ts only when Save actually commits a
+  // different value — a tap on the ∧/∨ steppers alone only mutates the
+  // editor's local draft, so it can't be the signal a "value-change" wait_for
+  // step waits on (see components/Walkthrough.tsx / lib/walkthrough/types.ts).
+  walkEvent?: string;
 }) {
   const { language } = useLanguage();
   const [open, setOpen] = useState(false);
   const hhmm = toHHMM(value);
   return (
-    <div>
+    <div data-walk={dataWalk}>
       <label className="block text-xs font-semibold text-foreground mb-1.5">{label}</label>
       <button
         type="button"
@@ -161,7 +168,15 @@ export function TimeField({ value, onChange, label, icon }: {
       </button>
       {open && (
         <div className="mt-2">
-          <TimeEditor initial={hhmm} onCancel={() => setOpen(false)} onSave={v => { onChange(v); setOpen(false); }} />
+          <TimeEditor
+            initial={hhmm}
+            onCancel={() => setOpen(false)}
+            onSave={v => {
+              onChange(v);
+              setOpen(false);
+              if (walkEvent && v !== hhmm) emitWalkthroughEvent(walkEvent);
+            }}
+          />
         </div>
       )}
     </div>
@@ -176,18 +191,25 @@ export function TimeField({ value, onChange, label, icon }: {
  *
  * Values in and out are the app's 12h display strings (`Medication.times`).
  */
-export function TimesPicker({ times, onChange, label, routine }: {
+export function TimesPicker({ times, onChange, label, routine, "data-walk": dataWalk, walkEvent }: {
   times: string[];
   onChange: (times: string[]) => void;
   label?: string;
   routine?: RoutineTimes;
+  "data-walk"?: string;
+  // Emitted on every real commit (quick-chip toggle, an editor Save, a remove)
+  // — never on merely opening/closing the editor. See TimeField's walkEvent.
+  walkEvent?: string;
 }) {
   const { language } = useLanguage();
   // Which row is open in the editor: an index, "new" while adding, or null.
   const [editing, setEditing] = useState<number | "new" | null>(null);
   const slots = normalize(times);
   const quick = slotsFor(routine);
-  const commit = (next: string[]) => onChange(normalize(next).map(to12h));
+  const commit = (next: string[]) => {
+    onChange(normalize(next).map(to12h));
+    if (walkEvent) emitWalkthroughEvent(walkEvent);
+  };
 
   const toggle = (hhmm: string) => {
     commit(slots.includes(hhmm) ? slots.filter(s => s !== hhmm) : [...slots, hhmm]);
@@ -207,7 +229,7 @@ export function TimesPicker({ times, onChange, label, routine }: {
     quick.map(s => s.hhmm).find(s => !slots.includes(s)) ?? "12:00";
 
   return (
-    <div>
+    <div data-walk={dataWalk}>
       <label className="block text-xs font-semibold text-foreground mb-2">{label ?? t(language, "times.label")}</label>
 
       <div className="grid grid-cols-4 gap-2 mb-3">

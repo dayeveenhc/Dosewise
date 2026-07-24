@@ -15,24 +15,79 @@ const FALLBACK_SIGNED_OUT = "You've been signed out. Please sign in again to kee
 const FALLBACK_RATE_LIMIT = "You're sending messages a little too fast. Please wait a moment and try again.";
 const FALLBACK_UNREACHABLE = "I can't reach the assistant right now. Please check your connection and try again in a moment.";
 
-function fallback(reply: string): AgentTurnResponse {
-  return { reply, tools_used: [], actions: [] };
+function fallback(reply: string, rateLimited = false): AgentTurnResponse {
+  return { reply, tools_used: [], actions: [], walkthrough: null, rateLimited };
+}
+
+// One field's before/after on a committed write. `before` is null for a
+// newly-created record. The UI builds its highlight caption from these.
+export interface ChangedField {
+  before: unknown;
+  after: unknown;
 }
 
 // A write the agent actually committed this turn (never a mere proposal), so the
-// UI can confirm it and redirect to the page that shows the change.
+// UI can confirm it, redirect to the page that shows the change, and highlight
+// the exact record that changed.
 export interface AgentAction {
   tool: string;
   summary?: string;
+  // What changed, not just that something changed (services/hermes tools/base.py
+  // record_action). `entity_type`+`entity_id` locate the exact DOM element via
+  // data-testid="{entity_type}-{entity_id}"; `changed_fields` builds the caption.
+  // Optional so a tool mid-migration (or a channel that doesn't set them) parses.
+  entity_type?: string;
+  entity_id?: string;
+  changed_fields?: Record<string, ChangedField>;
   // For add_prescription: the medication name, so the UI can highlight the exact
   // card that just landed on the timeline / medication list as visible proof.
   name?: string;
+}
+
+// Set when Mei's start_walkthrough tool ran this turn — the step content itself
+// is resolved client-side, by task_name, from lib/walkthrough/steps/. `params`
+// carries only VALUES the app injects into the walkthrough's fill/verify steps
+// (e.g. {name, dose, purpose} for add_prescription_auto) — never selectors.
+export interface WalkthroughPayload {
+  task_name: string;
+  params?: Record<string, string>;
 }
 
 interface AgentTurnResponse {
   reply: string;
   tools_used: string[];
   actions: AgentAction[];
+  walkthrough: WalkthroughPayload | null;
+  // True only when this reply is the client-side rate-limit fallback (HTTP
+  // 429), so the UI can render it as a system notice instead of a normal
+  // agent answer.
+  rateLimited?: boolean;
+}
+
+// A 429 from the shared per-user rate limiter is transient — the server tells us
+// how long to wait via Retry-After. Rather than surfacing the error immediately
+// (which tempts the user to re-send, adding MORE hits to the sliding window), we
+// wait it out ONCE and retry, so a normal propose→confirm rhythm self-heals. The
+// caller's `sending` guard keeps the input locked during the brief wait.
+const RETRY_AFTER_CAP_MS = 8000;
+
+async function postAgentTurn(path: string, jwt: string, body: Record<string, unknown>): Promise<Response> {
+  const doFetch = () => fetch(`${HERMES_URL}${path}`, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      ...(HERMES_API_KEY ? { "X-Hermes-Api-Key": HERMES_API_KEY } : {}),
+    },
+    body: JSON.stringify({ ...body, jwt }),
+  });
+  const resp = await doFetch();
+  if (resp.status !== 429) return resp;
+  const header = resp.headers.get("Retry-After");
+  const secs = header ? Number(header) : NaN;
+  const waitMs = Math.min(Number.isFinite(secs) && secs > 0 ? secs * 1000 : 1500, RETRY_AFTER_CAP_MS);
+  console.warn(`[dosewise] 429 from ${path}; waiting ${waitMs}ms then retrying once`);
+  await new Promise(r => setTimeout(r, waitMs));
+  return doFetch();
 }
 
 // Mirrors Hermes's /agent/turn contract (services/hermes/src/hermes/api/routes.py):
@@ -42,7 +97,8 @@ interface AgentTurnResponse {
 export async function agentTurn(
   message: string,
   imageBase64?: string,
-  pdfBase64?: string
+  pdfBase64?: string,
+  completedWalkthroughs?: string[]
 ): Promise<AgentTurnResponse> {
   try {
     const { data: { session } } = await supabase.auth.getSession();
@@ -55,30 +111,28 @@ export async function agentTurn(
     // (undefined for English keeps Hermes's default behaviour).
     const replyLanguage = replyLanguageFor(readStoredLanguage());
 
-    const resp = await fetch(`${HERMES_URL}/agent/turn`, {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        ...(HERMES_API_KEY ? { "X-Hermes-Api-Key": HERMES_API_KEY } : {}),
-      },
-      body: JSON.stringify({
-        message,
-        jwt: session.access_token,
-        image_base64: imageBase64,
-        pdf_base64: pdfBase64,
-        reply_language: replyLanguage,
-      }),
+    const resp = await postAgentTurn("/agent/turn", session.access_token, {
+      message,
+      image_base64: imageBase64,
+      pdf_base64: pdfBase64,
+      reply_language: replyLanguage,
+      completed_walkthroughs: completedWalkthroughs ?? [],
     });
     if (!resp.ok) {
       // Distinguish the failure classes that used to collapse into one message.
       const detail = await resp.text().catch(() => "");
       console.warn(`[dosewise] agentTurn: HTTP ${resp.status} from /agent/turn`, detail);
       if (resp.status === 401) return fallback(FALLBACK_SIGNED_OUT);
-      if (resp.status === 429) return fallback(FALLBACK_RATE_LIMIT);
+      if (resp.status === 429) return fallback(FALLBACK_RATE_LIMIT, true);
       return fallback(FALLBACK_GENERIC); // 4xx/5xx: server/provider-side issue
     }
     const data = await resp.json();
-    return { reply: data.reply, tools_used: data.tools_used ?? [], actions: data.actions ?? [] };
+    return {
+      reply: data.reply,
+      tools_used: data.tools_used ?? [],
+      actions: data.actions ?? [],
+      walkthrough: data.walkthrough ?? null,
+    };
   } catch (err) {
     // Network failure, CORS rejection, or malformed JSON — the request never got
     // a usable answer back.
@@ -97,6 +151,7 @@ export interface AgentTurnEvent {
   reply?: string;
   tools_used?: string[];
   actions?: AgentAction[];
+  walkthrough?: WalkthroughPayload | null;
 }
 
 // Streaming variant of agentTurn — same contract and fallback behaviour, but
@@ -108,7 +163,8 @@ export async function agentTurnStream(
   message: string,
   onEvent: (event: AgentTurnEvent) => void,
   imageBase64?: string,
-  pdfBase64?: string
+  pdfBase64?: string,
+  completedWalkthroughs?: string[]
 ): Promise<AgentTurnResponse> {
   try {
     const { data: { session } } = await supabase.auth.getSession();
@@ -119,25 +175,18 @@ export async function agentTurnStream(
 
     const replyLanguage = replyLanguageFor(readStoredLanguage());
 
-    const resp = await fetch(`${HERMES_URL}/agent/turn/stream`, {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        ...(HERMES_API_KEY ? { "X-Hermes-Api-Key": HERMES_API_KEY } : {}),
-      },
-      body: JSON.stringify({
-        message,
-        jwt: session.access_token,
-        image_base64: imageBase64,
-        pdf_base64: pdfBase64,
-        reply_language: replyLanguage,
-      }),
+    const resp = await postAgentTurn("/agent/turn/stream", session.access_token, {
+      message,
+      image_base64: imageBase64,
+      pdf_base64: pdfBase64,
+      reply_language: replyLanguage,
+      completed_walkthroughs: completedWalkthroughs ?? [],
     });
     if (!resp.ok || !resp.body) {
       const detail = await resp.text().catch(() => "");
       console.warn(`[dosewise] agentTurnStream: HTTP ${resp.status} from /agent/turn/stream`, detail);
       if (resp.status === 401) return fallback(FALLBACK_SIGNED_OUT);
-      if (resp.status === 429) return fallback(FALLBACK_RATE_LIMIT);
+      if (resp.status === 429) return fallback(FALLBACK_RATE_LIMIT, true);
       return fallback(FALLBACK_GENERIC);
     }
 
@@ -161,6 +210,7 @@ export async function agentTurnStream(
             reply: event.reply ?? "",
             tools_used: event.tools_used ?? [],
             actions: event.actions ?? [],
+            walkthrough: event.walkthrough ?? null,
           };
         } else {
           onEvent(event);
