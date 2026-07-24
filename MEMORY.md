@@ -9,6 +9,44 @@ letting this grow forever — it's a memory aid, not an audit log.
 
 ---
 
+## 2026-07-24 — Conservative refactor pass (branch `refactor/conservative-tidy`)
+
+A behavior-preserving tidy pass, done on a branch AFTER committing the whole
+in-flight tree (the walkthrough/highlight feature was 18 untracked files — never
+committed — plus the add-prescription fix; committing first kept the cleanup a
+separate, revertible diff). Landed as ordered commits:
+
+- **Frontend type-check net (new):** there was NO `tsconfig.json` / `tsc` — the
+  build only transpiles. Added `apps/web/tsconfig.json` (pragmatic, `strict:false`
+  so the existing code is green; the value is catching NEW regressions),
+  `src/vite-env.d.ts`, and `npm run typecheck` (`tsc --noEmit`); dev deps
+  `typescript`/`@types/react-dom`/`@types/node`. **It immediately caught two real
+  bugs:** `MeiSuggestButton` never destructured its `validate` prop → any
+  successful suggestion threw `ReferenceError` (feature broken on the happy path);
+  `AddPrescriptionSheet.pickMedication`'s narrow param type pinned `TypeAhead`'s
+  generic so `m.purposeKey` failed (runtime was fine). Both fixed.
+- **Backend dedup** (all 222 pytest green): `tools/base.py` gained
+  `find_medications` (the `ilike`+`archived=false` lookup, was copy-pasted in
+  doses/refills/verify/set_medication_reminder), `first_id` (post-insert id, 6
+  sites), and `match_pending` (the propose→confirm commit guard, 3 sites —
+  **slot names passed verbatim so the Telegram deterministic-confirm contract is
+  unchanged**). `dosing.py` gained `WEEKDAY_NAMES` (the mon→Monday map was
+  byte-identical in medications.py + schedule.py).
+- **Frontend tidy** (typecheck+vitest+e2e green): removed dead imports/props
+  (Droplets, MEAL_TIMES, ExtractedProfile, unused `onLogDose`) and zero-importer
+  dead exports (sessionState chat-persistence half; data/medications
+  ESTATUS/MED_REASONS/PRESET_TIMES/VOICE_DEMOS); extracted a shared `MealTimes`
+  type (types.ts) used by Patient + ProfileDetails; unshadowed the i18n `t` (local
+  `timer`/`takenLabel`).
+
+**Deliberately skipped** (noted, not done): the `ChatMsg`/`EMsg` unify (would
+couple the caregiver screen to an elderly-namespaced type for ~1 line — bad
+dependency direction); the propose→confirm *propose*-side stash helper (the three
+propose branches diverge too much — only the guard deduped cleanly); large module
+splits (`loop.py`/`telegram.py`), shared chat-screen components, `<PhoneFrame>`,
+host walkthrough hooks — a future pass. `.gitignore` now excludes Playwright/
+pytest artifacts (`e2e/artifacts`, `e2e/design-shots`, `test-results`).
+
 ## 2026-07-24 — Add-prescription via Mei: hybrid (elder walkthrough → Home; caregiver/failure → direct save → Home)
 
 User reported "add Panadol" via Mei played no walkthrough and never showed up.

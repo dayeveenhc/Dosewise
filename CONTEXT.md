@@ -58,6 +58,9 @@ through Supabase Postgres **RLS as the user** (Hermes mints/verifies JWTs — se
 
 Vite/React app with two top-level modes selected at onboarding: **elderly**
 (large-text, simplified, voice-first) and **caregiver** (fuller control view).
+Gates: `npm run build` (transpile-only), `npm run typecheck` (`tsc --noEmit` —
+a pragmatic non-strict `tsconfig.json`, added as a refactor safety net since the
+build doesn't type-check), `npm test` (vitest), `npm run e2e` (Playwright).
 Both have an AI assistant chat screen wired to Hermes:
 
 - `screens/AskMeiScreen.tsx` — caregiver chat ("Ask Mei").
@@ -176,6 +179,12 @@ FastAPI service, `uv`-managed. Key files:
   schedule, doses, refills, caregiver, doctor, escalation, videos, walkthrough,
   verify), registered via `tools/base.py`. `verify.py` is the read-only
   "re-query real state → pass/fail" pattern for Guided Auto-Navigation.
+  `base.py` also holds the shared tool helpers: `find_medications` (the
+  `name ilike` + `archived=false` lookup), `first_id` (new-row id from an insert),
+  `match_pending` (the propose→confirm commit guard — reads the session's
+  `pending_*` slot by name, so the Telegram deterministic-confirm contract is
+  preserved), and `record_action`. Weekday constants (`WEEKDAYS`,
+  `WEEKDAY_NAMES`) live in `dosing.py`.
 - `db/auth.py` — mints Hermes-internal JWTs (HS256) for Telegram/CLI, and
   verifies client-supplied Supabase JWTs. Supabase user tokens are **ES256**
   (asymmetric, verified via the project's JWKS) — HS256 is only for
