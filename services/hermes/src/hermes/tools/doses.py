@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from datetime import UTC, datetime
+from datetime import UTC, datetime, time
 from zoneinfo import ZoneInfo
 
 from ..config import get_settings
@@ -20,52 +20,146 @@ from .schedule import _taken_counts_today
 _SCHEMA = {
     "name": "log_dose",
     "description": (
-        "Record that the elder took a dose of a medication (by name). Marks the "
-        "most recent still-pending scheduled dose for that medication as taken; if "
-        "none is pending, logs a new taken dose at the current time."
+        "Record that the elder took a dose of a medication. Pass the BARE "
+        "medication name (never a name+strength label); omit medication_name "
+        "only when the user didn't name one ('I took my pills'). If more than "
+        "one dose could be meant, the tool lists the options instead of "
+        "guessing — relay its question to the user, then call again with their "
+        "answer as `slot`."
     ),
     "input_schema": {
         "type": "object",
         "properties": {
             "medication_name": {
                 "type": "string",
-                "description": "Name of the medication that was taken.",
-            }
+                "description": "Bare name of the medication that was taken (no dosage).",
+            },
+            "slot": {
+                "type": "string",
+                "description": (
+                    "Which scheduled dose was taken, when the user said or was "
+                    "asked: 'HH:MM' 24-hour (e.g. '08:00'), or a day part — "
+                    "morning|noon|afternoon|evening|night."
+                ),
+            },
         },
-        "required": ["medication_name"],
+        "required": [],
     },
 }
 
+# Day-part words map to an anchor wall-clock time; the nearest scheduled slot
+# wins, so "morning" resolves an 07:30 dose as readily as an 08:00 one.
+_DAY_PART_ANCHORS = {
+    "morning": time(8, 0),
+    "noon": time(12, 0),
+    "afternoon": time(15, 0),
+    "evening": time(19, 0),
+    "night": time(21, 0),
+}
 
-async def log_dose(ctx: ToolContext, medication_name: str) -> str:
-    db = ctx.db()
-    meds = await find_medications(ctx, medication_name, columns="id,name")
-    if not meds:
-        return (
-            f"No medication named '{medication_name}' is on file. Ask the user to "
-            "confirm the name, or list their medications first."
-        )
-    med = meds[0]
-    now = datetime.now(UTC).isoformat()
 
-    pending = await db.select(
+def _parse_slot(slot: str | None) -> time | None:
+    if not slot:
+        return None
+    s = slot.strip().lower()
+    return _parse_hhmm(s) or _DAY_PART_ANCHORS.get(s)
+
+
+def _minutes(t: time) -> int:
+    return t.hour * 60 + t.minute
+
+
+def _local_hhmm(iso: str, zone: ZoneInfo) -> str:
+    return datetime.fromisoformat(iso).astimezone(zone).strftime("%H:%M")
+
+
+async def _dose_plan(
+    ctx: ToolContext, med: dict, want: time | None
+) -> tuple[str, object]:
+    """Decide WHICH dose "the user took their {med}" refers to — no writes.
+
+    Returns ``(kind, payload)``: ``("pending", dose_row)`` flip that row;
+    ``("backdate", "HH:MM")`` insert back-dated to that slot today; ``("now",
+    None)`` insert at the current time (unscheduled/as-needed med); ``("already",
+    "HH:MM")`` everything due is logged — nothing to write; ``("ask", ["HH:MM",
+    ...])`` genuinely ambiguous — the caller must ask the user, never guess.
+    Attribution is earliest-first throughout, consistent with
+    resolve_missed_doses/show_schedule (the old code took the LATEST pending row,
+    which ticked tonight's dose when the user meant this morning's).
+    """
+    tz_name = get_settings().hermes_tz
+    tz = ZoneInfo(tz_name)
+    now = _now_utc()
+    local_now = now.astimezone(tz)
+
+    pending = await ctx.db().select(
         "doses",
         columns="id,scheduled_at",
         filters={"medication_id": f"eq.{med['id']}", "status": "eq.pending"},
-        order="scheduled_at.desc",
-        limit=1,
     )
+    pending = sorted(pending or [], key=lambda r: r["scheduled_at"])
     if pending:
+        if want is not None:
+            best = min(
+                pending,
+                key=lambda r: abs(
+                    _minutes(_parse_hhmm(_local_hhmm(r["scheduled_at"], tz)))
+                    - _minutes(want)
+                ),
+            )
+            return ("pending", best)
+        if len(pending) == 1:
+            return ("pending", pending[0])
+        return ("ask", [_local_hhmm(r["scheduled_at"], tz) for r in pending])
+
+    # No pending rows — fall back to the schedule (doses aren't materialised
+    # per-slot; same approximation as resolve_missed_doses).
+    schedule = med.get("schedule") or {}
+    times = (
+        sorted(t for t in (schedule.get("times") or []) if _parse_hhmm(t))
+        if scheduled_today(schedule, local_now.date())
+        else []
+    )
+    taken_n = (await _taken_counts_today(ctx, now, tz_name)).get(med["id"], 0)
+    due = [t for t in times if _parse_hhmm(t) <= local_now.time()]
+    unmet = due[taken_n:]
+    if want is not None and times:
+        hhmm = min(times, key=lambda t: abs(_minutes(_parse_hhmm(t)) - _minutes(want)))
+        if hhmm in due and hhmm not in unmet:
+            return ("already", hhmm)
+        return ("backdate", hhmm)
+    if len(unmet) == 1:
+        return ("backdate", unmet[0])
+    if len(unmet) > 1:
+        return ("ask", unmet)
+    if due and taken_n >= len(due):
+        return ("already", due[-1])
+    return ("now", None)
+
+
+async def _commit_dose(ctx: ToolContext, med: dict, kind: str, payload) -> str:
+    """Perform the planned write and record the committed action."""
+    db = ctx.db()
+    now = _now_utc()
+    now_iso = now.isoformat()
+
+    if kind == "already":
+        return (
+            f"{med['name']} is already logged as taken for today's "
+            f"{_fmt_slot(payload)} dose — nothing new to record; reassure the user."
+        )
+
+    # entity_id is the MEDICATION id (not the dose row id): the Home timeline
+    # renders medication cards (`data-testid="medication-{medId}"`), so that's
+    # the element the UI highlights. The dose row id is carried as `dose_id`
+    # for independent verification — mirrors log_refill's `refill_id`.
+    if kind == "pending":
         await db.update(
             "doses",
-            {"status": "taken", "logged_at": now, "logged_by": ctx.elder_id},
-            filters={"id": f"eq.{pending[0]['id']}"},
+            {"status": "taken", "logged_at": now_iso, "logged_by": ctx.elder_id},
+            filters={"id": f"eq.{payload['id']}"},
             returning=False,
         )
-        # entity_id is the MEDICATION id (not the dose row id): the Home timeline
-        # renders medication cards (`data-testid="medication-{medId}"`), so that's
-        # the element the UI highlights. The dose row id is carried as `dose_id`
-        # for independent verification — mirrors log_refill's `refill_id`.
         record_action(
             ctx,
             tool="log_dose",
@@ -74,22 +168,32 @@ async def log_dose(ctx: ToolContext, medication_name: str) -> str:
             entity_id=med["id"],
             changed_fields={"status": {"before": "pending", "after": "taken"}},
             name=med["name"],
-            dose_id=str(pending[0]["id"]),
+            dose_id=str(payload["id"]),
         )
         return f"Logged {med['name']} as taken."
+
+    if kind == "backdate":
+        zone = ZoneInfo(get_settings().hermes_tz)
+        slot_utc = datetime.combine(
+            now.astimezone(zone).date(), _parse_hhmm(payload), tzinfo=zone
+        ).astimezone(UTC)
+        scheduled_at = slot_utc.isoformat()
+    else:  # "now" — unscheduled/as-needed med
+        scheduled_at = now_iso
 
     inserted = await db.insert(
         "doses",
         {
             "medication_id": med["id"],
             "elder_id": ctx.elder_id,
-            "scheduled_at": now,
+            "scheduled_at": scheduled_at,
             "status": "taken",
-            "logged_at": now,
+            "logged_at": now_iso,
             "logged_by": ctx.elder_id,
         },
         returning=True,
     )
+    extra = {"slot": payload} if kind == "backdate" else {}
     record_action(
         ctx,
         tool="log_dose",
@@ -99,8 +203,92 @@ async def log_dose(ctx: ToolContext, medication_name: str) -> str:
         changed_fields={"status": {"before": None, "after": "taken"}},
         name=med["name"],
         dose_id=first_id(inserted),
+        **extra,
     )
+    if kind == "backdate":
+        return f"Logged {med['name']} as taken for the {_fmt_slot(payload)} dose."
     return f"Logged {med['name']} as taken just now."
+
+
+def _ask_slots(name: str, slots: list[str]) -> str:
+    opts = ", ".join(f'{_fmt_slot(s)} (slot "{s}")' for s in slots)
+    return (
+        f"{name} has more than one dose that could be meant today: {opts}. "
+        "Ask the user WHICH one they took — do not guess — then call log_dose "
+        "again with their answer as slot."
+    )
+
+
+async def log_dose(
+    ctx: ToolContext,
+    medication_name: str | None = None,
+    slot: str | None = None,
+) -> str:
+    want = _parse_slot(slot)
+
+    if medication_name:
+        meds = await find_medications(
+            ctx, medication_name, columns="id,name,schedule", limit=None
+        )
+        if not meds:
+            return (
+                f"No medication named '{medication_name}' is on file. Ask the user to "
+                "confirm the name, or list their medications first."
+            )
+        # Same-name duplicates collapse to the first row; DIFFERENT names (a
+        # substring match hit several meds) are a genuine ambiguity — ask.
+        distinct: dict[str, dict] = {}
+        for m in meds:
+            distinct.setdefault((m.get("name") or "").strip().lower(), m)
+        if len(distinct) > 1:
+            names = ", ".join(m.get("name") or "?" for m in distinct.values())
+            return (
+                f"More than one medication matches '{medication_name}': {names}. "
+                "Ask the user which one they mean, then call log_dose again with "
+                "that exact name."
+            )
+        med = next(iter(distinct.values()))
+        kind, payload = await _dose_plan(ctx, med, want)
+        if kind == "ask":
+            return _ask_slots(med["name"], payload)
+        return await _commit_dose(ctx, med, kind, payload)
+
+    # No name given ("I took my pills") — log only when exactly one medication
+    # plausibly has a dose to record; otherwise ask, never guess.
+    meds = await ctx.db().select(
+        "medications", columns="id,name,schedule", filters={"archived": "eq.false"}
+    )
+    if not meds:
+        return "No medications are on file yet — nothing to log."
+    zone = ZoneInfo(get_settings().hermes_tz)
+    plans: list[tuple[dict, str, object]] = []
+    for m in meds:
+        kind, payload = await _dose_plan(ctx, m, want)
+        if kind in ("pending", "backdate", "ask"):
+            plans.append((m, kind, payload))
+    if not plans:
+        return (
+            "Nothing looks due right now — today's doses so far are all logged. "
+            "Ask the user which medication they mean before logging anything."
+        )
+    if len(plans) == 1:
+        m, kind, payload = plans[0]
+        if kind == "ask":
+            return _ask_slots(m["name"], payload)
+        return await _commit_dose(ctx, m, kind, payload)
+
+    def label(kind: str, payload) -> str:
+        if kind == "pending":
+            return _fmt_slot(_local_hhmm(payload["scheduled_at"], zone))
+        if kind == "backdate":
+            return _fmt_slot(payload)
+        return " / ".join(_fmt_slot(s) for s in payload)
+
+    listing = ", ".join(f"{m['name']} ({label(k, p)})" for m, k, p in plans)
+    return (
+        f"Several medications have doses to log: {listing}. Ask the user WHICH "
+        "medication they took, then call log_dose again with that medication_name."
+    )
 
 
 register(_SCHEMA, log_dose)

@@ -188,6 +188,19 @@ them all. And whenever you do log a single dose, `log_dose` takes the bare
 medication name only (e.g. "Metformin") — NEVER a name+dosage label like
 "Metformin 500mg"; the strength is not part of the name.
 
+## Logging ONE dose — which dose they mean
+When the user says they took a medication ("I took my metformin"), your FIRST
+action is to call `log_dose` — never ask them a question before calling it.
+The tool decides which dose is meant: when only one dose is plausible it logs
+it straight away, and when it is genuinely ambiguous it writes nothing and
+returns the options for you to relay. Pass the bare name; if the user's own
+words already said which dose ("my morning metformin", "the 8pm one"), also
+pass `slot` ("HH:MM" or morning|noon|afternoon|evening|night). Only when the
+tool's reply lists several possible doses do you ask — one short line, 💊 name
++ 🕗 the times the tool listed — then call `log_dose` again with their answer
+as `slot`. Never invent a slot the user didn't state. If they didn't name any
+medication ("I took my pills"), still just call `log_dose`, with no name.
+
 ## Guided walkthroughs
 Only in the app (never on Telegram — there's nothing to highlight there): if the
 patient asks how to do something, seems lost, or their message hints at a task

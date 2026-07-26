@@ -7,6 +7,7 @@ string is what lands back in the model's context, so keep it concise and factual
 
 from __future__ import annotations
 
+import re
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field
 from typing import Any
@@ -126,6 +127,11 @@ def record_bulk_action(
     )
 
 
+_DOSAGE_SUFFIX = re.compile(
+    r"\s*\d+(?:\.\d+)?\s*(?:mg|mcg|g|ml|iu|units?)\b.*$", re.IGNORECASE
+)
+
+
 async def find_medications(
     ctx: ToolContext, name: str, *, columns: str, limit: int | None = 1
 ) -> list[dict]:
@@ -137,13 +143,31 @@ async def find_medications(
     shares the filter + table. ``limit=None`` returns all matches (e.g. the
     verify tool, which counts/exact-matches every row); the default ``limit=1``
     suits the "act on one med" tools.
+
+    A wildcard-less PostgREST ``ilike`` is an EXACT case-insensitive match, so a
+    model echoing a display label ("Metformin 500mg") used to yield a false
+    "not on file". On an exact miss this now retries with the dosage suffix
+    stripped, then as a substring (``*name*``) — so honest near-matches resolve
+    while the exact form stays the fast path.
     """
-    return await ctx.db().select(
-        "medications",
-        columns=columns,
-        filters={"name": f"ilike.{name}", "archived": "eq.false"},
-        limit=limit,
-    )
+
+    async def q(pattern: str) -> list[dict]:
+        return await ctx.db().select(
+            "medications",
+            columns=columns,
+            filters={"name": f"ilike.{pattern}", "archived": "eq.false"},
+            limit=limit,
+        )
+
+    meds = await q(name)
+    if meds:
+        return meds
+    stripped = _DOSAGE_SUFFIX.sub("", name).strip()
+    if stripped and stripped.lower() != name.strip().lower():
+        meds = await q(stripped)
+        if meds:
+            return meds
+    return await q(f"*{stripped or name.strip()}*")
 
 
 def match_pending(ctx: ToolContext, slot: str, key: str, value: Any) -> dict | None:

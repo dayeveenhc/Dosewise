@@ -16,7 +16,13 @@ def _match_one(row: dict, col: str, expr: str) -> bool:
     if op == "eq":
         return str(actual).lower() == val.lower()
     if op == "ilike":
-        return val.strip("%").lower() in str(actual).lower()
+        # Mirror real PostgREST semantics: wildcard-less ilike is an EXACT
+        # case-insensitive match; only * / % patterns match as substring. The
+        # old always-substring fake masked exactly the find_medications bug.
+        pat = str(val).lower()
+        if "*" in pat or "%" in pat:
+            return pat.strip("*%") in str(actual).lower()
+        return str(actual).lower() == pat
     if op == "lte":
         return actual is not None and str(actual) <= val
     if op == "gte":
