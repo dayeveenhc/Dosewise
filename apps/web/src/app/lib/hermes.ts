@@ -42,6 +42,16 @@ export interface AgentAction {
   // For add_prescription: the medication name, so the UI can highlight the exact
   // card that just landed on the timeline / medication list as visible proof.
   name?: string;
+  // BULK actions (e.g. resolve_missed_doses): one record per affected entity, and
+  // NO top-level entity_type/entity_id. Each entity's entity_id is the id the UI
+  // can resolve to a card (for doses: the MEDICATION uuid); extra per-entity
+  // fields (dose_id, slot, name, …) ride along untyped.
+  entities?: Array<{
+    entity_type: string;
+    entity_id: string;
+    changed_fields?: Record<string, ChangedField>;
+    [k: string]: unknown;
+  }>;
 }
 
 // Set when Mei's start_walkthrough tool ran this turn — the step content itself

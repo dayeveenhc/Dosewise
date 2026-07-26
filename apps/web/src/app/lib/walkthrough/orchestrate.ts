@@ -9,6 +9,7 @@
 // also host-owned (navigate + pulse-highlight the real new/updated element).
 
 import { performAct } from "./actor";
+import { humanizeField, hhmmTo12h } from "../changeHighlight";
 import type { RevealDirective, VerifyDirective, WalkthroughScreen, WalkthroughStep } from "./types";
 
 // Deliberate pacing so an elderly user can follow each step rather than watch it
@@ -36,7 +37,7 @@ export function captionFromVerify(verify?: VerifyDirective): { verb: string; tex
   switch (verify.kind) {
     case "medication-exists": return { verb: "Added", text: verify.name };
     case "profile-list-includes": return { verb: "Added", text: verify.value };
-    case "profile-field": return { verb: "Updated", text: `${FIELD_LABELS[verify.field] ?? verify.field} ${verify.value}` };
+    case "profile-field": return { verb: "Updated", text: `${FIELD_LABELS[verify.field] ?? humanizeField(verify.field)} ${hhmmTo12h(verify.value)}` };
     case "travel-plan-saved": return { verb: "Saved", text: "travel plan" };
     case "care-link-active": return { verb: "Linked", text: "caregiver" };
     default: return undefined;

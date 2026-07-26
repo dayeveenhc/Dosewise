@@ -93,6 +93,7 @@ export function ElderlyPrescriptionScreen({ patient, onOpenAI, onAddRx, onReques
                     <div className="flex items-start justify-between gap-2">
                       <div className="flex items-center gap-1.5 flex-wrap min-w-0">
                         <p className="font-bold text-[17px] text-foreground leading-snug">{m.name}</p>
+                        {m.dose && <span className="text-sm font-semibold text-muted-foreground">{m.dose}</span>}
                         {justAdded && (
                           <span className="flex items-center gap-1 bg-emerald-100 text-emerald-700 text-[10px] font-bold px-2 py-0.5 rounded-full">
                             <Check size={9} strokeWidth={3} />{t(language, "prescription.justAdded")}

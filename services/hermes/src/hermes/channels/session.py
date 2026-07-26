@@ -44,6 +44,13 @@ class SessionState:
     # A pending set_medication_reminder proposal ({"name", "times"}), held until the
     # elder confirms so the commit can only ever save the times it read back.
     pending_reminder: dict | None = None
+    # A pending update_medication_dosage proposal ({"name", "dosage"}), held until the
+    # elder confirms so a dose change only ever saves the value it read back.
+    pending_dosage: dict | None = None
+    # The full list of missed-dose slots read back by resolve_missed_doses
+    # ([{"medication_id", "name", "slot"}, ...]), held until the elder confirms so
+    # the bulk commit can only ever mark slots that were enumerated to them.
+    pending_missed_doses: list | None = None
     # Whether the elder wants spoken replies for typed messages too (from
     # profiles.accessibility.tts, or the /voice command). Default False — voice
     # mirrors the user: a voice note always gets a spoken reply, typed messages
@@ -94,6 +101,8 @@ class SessionRegistry:
         state.slang_loaded = False
         state.awaiting_confirmation = False
         state.pending_reminder = None
+        state.pending_dosage = None
+        state.pending_missed_doses = None
         state.voice_default = False
         state.voice_loaded = False
         state.memory_text = None

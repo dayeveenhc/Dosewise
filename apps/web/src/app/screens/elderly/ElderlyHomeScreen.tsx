@@ -225,7 +225,7 @@ export function ElderlyHomeScreen({ patient, onLogDose, onOpenTravel, justAddedM
 
     if (isTaken) {
       return (
-        <div key={m.id} className="rounded-xl border border-border bg-card flex items-center gap-3 px-3 py-2.5 opacity-60">
+        <div key={m.id} data-testid={m.medicationId ? `medication-${m.medicationId}` : undefined} className="rounded-xl border border-border bg-card flex items-center gap-3 px-3 py-2.5 opacity-60">
           <div className="w-9 h-9 rounded-lg overflow-hidden shrink-0 bg-muted">
             <img src={photo} alt={m.name} className="w-full h-full object-cover" />
           </div>

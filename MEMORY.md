@@ -9,6 +9,120 @@ letting this grow forever — it's a memory aid, not an audit log.
 
 ---
 
+## 2026-07-26 — Bulk actions: full-space discovery, "tick all missed doses" root-caused & fixed on a generic bulk contract
+
+Four-phase orchestrated pass (user-directed): discovery subagents → live root-cause →
+build → catalog. Cross-boundary edits user-authorized.
+
+- **Root cause of "resolve and tick all my missing dosages" (live-proven, 5 dialogs):**
+  three independent layers. (a) *Data*: no "missed dose" substrate — nothing ever creates
+  `pending` dose rows, `show_schedule` today-view has no missed state, `log_dose` stamps
+  `scheduled_at=now`. (b) *Agent*: refuses/one-at-a-time in 3/5 dialogs; when it fans out it
+  echoes show_schedule labels ("Metformin 500mg") into `log_dose`, and **`find_medications`'
+  wildcard-less `ilike.{name}` is an EXACT case-insensitive match** → false "your meds aren't
+  on file" reply. (c) *UI*: `firstHighlightable` + one-slot ChangeHighlight prove only
+  `actions[0]` — whose position is **asyncio.gather completion order, nondeterministic**.
+- **Fix (verified GREEN end-to-end):** new `tools/base.py::record_bulk_action` (bulk
+  committed-action shape `{tool, summary, entities:[...]}`), new **`resolve_missed_doses`**
+  in `doses.py` (18 tools now): propose→confirm, computes today's past-due-untaken slots
+  server-side (reuses `_taken_counts_today` + `dosing.scheduled_today`, tz `hermes_tz`),
+  new `pending_missed_doses` session slot, on confirm **re-computes ∩ stash** (race-safe)
+  and inserts back-dated rows (08:00 SGT slot → `scheduled_at` 00:00 UTC; verified vs
+  `logged_at`=now). Frontend: `AgentAction.entities?`, `highlightableEntities`/`describeBatch`
+  in `changeHighlight.ts`, ChangeHighlight rings ALL entities **simultaneously** (sequential
+  would be ~45s for 15 doses) with one batch caption + cleanup-all + loud error listing
+  unfound entities. soul.md "Missed doses" rail (+ a `log_dose` bare-name-only rule patching
+  the label-echo bug for single asks). **LLM routing 4/4 first-try for the bulk tool** vs
+  log_dose's known ~1/3 — soul-rail specificity works.
+- **Playwright/dev-hook gotcha (pre-existing, latent):** firing `__dwHighlightChange` from a
+  tab that ALREADY renders matching `medication-*` testids (e.g. Prescriptions) makes the
+  first synchronous poll latch onto pre-navigation elements; the tab switch unmounts them and
+  the `isConnected` bail ends the highlight with NO ring and no error. Affects single + bulk
+  identically; real chat fires from the AI tab (renders no med testids) so production is
+  unaffected. Follow-up if it ever bites: defer the first poll until navigation commits.
+- **Other hazards surfaced by discovery (not fixed, catalogued):** Telegram tap-confirm
+  doesn't know `pending_dosage` and No-tap never clears it (declined dose change stays
+  committable); `start_walkthrough` double-queue silently drops the first while reporting
+  success for both; `_MAX_ITERATIONS=8` exhaustion → generic retry, no partial-success
+  report; caregiver chat acts on the **caregiver's own data** (`routes.py` derives elder_id
+  from JWT sub — no act-on-behalf-of); `update_medical_profile` writes a blob the UI never
+  renders; elder doctor-question tick REVERTS on refresh (local state vs DB status).
+- **Deliverables:** full discovery inventories (relayed in-chat), root-cause report,
+  `docs/scenario-catalog-2026-07-26.md` (bulk variants + dead ends + defects, new-vs-known).
+  Gates: hermes pytest **235**, web vitest **59**, typecheck, build, live e2e + screenshots
+  (`e2e/artifacts/bulk-resolve/`). Uncommitted on `fix/ci-lint-node`.
+
+## 2026-07-25 — Voice→female, highlight bug-fixes, +2 real scenarios (dose-taken, dosage-update), 8 scenarios triaged as gaps
+
+Orchestrated pass (subagent A/B/C trios per buildable task; gaps documented not built).
+User-authorized crossing the `apps/web`→`services/hermes` boundary for this task.
+
+- **Voice = softer female** (`lib/speech.ts`): `pickVoice` now prefers a female voice within
+  the language-narrowed candidates before the first-match fallback — new exported
+  `isFemaleVoice(v)` (male-name exclusion short-circuits FIRST, then `/female|woman|女/`, then a
+  curated `FEMALE_VOICE_NAMES` list) + `pickVoice = candidates.find(isFemaleVoice) ?? candidates[0]`.
+  The cancel→speak race fix in `speak()` is untouched. Verified via `speech.test.ts` (mocked
+  `getVoices`, no browser TTS in headless). Real female voice for en/zh/yue/ms where the OS
+  ships one; **Tamil and Hokkien fall back** (browsers rarely ship those) — by design, never breaks.
+- **Highlight bug-fixes** (Add-Medicine + Add-Condition), all shared by `ChangeHighlight` AND
+  the walkthrough Reveal via `HighlightCaption.tsx`:
+  - *Alignment (Bugfix-A):* caption was positioned/clamped against `window.innerWidth`, but the
+    demo is a centered phone frame → drifted on desktop. Now clamps to the **frame** rect, found
+    self-containedly by `document.elementFromPoint(rect centre)` → walk up the `offsetParent`
+    chain to the outermost positioned ancestor (the `w-[390px]` device div). Pill height is
+    **measured** (`ResizeObserver`), not the old hardcoded `PILL_H=30`. `ChangeHighlight` now
+    **defers the first rect until the smooth `scrollIntoView` settles** (two frames within 0.5px)
+    instead of measuring pre-scroll, and the rAF tracking loop **bails on `!el.isConnected`** so
+    a tab-switch mid-highlight no longer parks the pill at (0,0). Proven at 900px+1280px
+    (`e2e/bugfix-highlight.spec.ts`): wrapper.left == frameLeft+8, pill centred over card.
+  - *Formatting (Bugfix-B):* `describeChange` + `orchestrate.ts::captionFromVerify` now
+    `humanizeField()` any unmapped field (no raw snake_case leak), format HH:MM as 12h
+    (`hhmmTo12h` — a LOCAL helper, deliberately NOT `medications.to12h`, because `medications.ts`
+    imports `./supabase` whose top-level throws on missing env and breaks the vitest import graph),
+    add units/pluralization ("supply 5 pills → 30 pills"), guard the empty-summary dangling
+    "Updated: ", and cap multi-field captions (first 3 + "+k more").
+- **Scenario 1 (dose taken → Home):** `log_dose` now sets `entity_id = med id` (mirrors
+  `log_refill`) and carries `dose_id` as an extra, so ChangeHighlight's suffix fallback lands on
+  the `medication-{uuid}` card (the frontend renders meds, never dose rows). Kept
+  `entity_type="dose"` (→ Home), NOT the spec's guessed `schedule_entry`. Added the missing
+  `data-testid="medication-{medicationId}"` to the Home **taken-card** branch; `describeChange`
+  gained a **"Taken:" verb** for `log_dose`. `fetchElderMedications` already maps real
+  `doses`→`taken` and `ElderlyAIScreen` refetches before firing the highlight — no data gap.
+  Live-green: real turn, independent re-read, ring + "Taken: Metformin" caption.
+- **Scenario 6 (dosage update → Prescriptions):** new **`update_medication_dosage`** tool
+  (propose→confirm, `pending_dosage` slot added to `channels/session.py`), `entity_type="medication"`,
+  `changed_fields.dosage:{before,after}` → "Updated: 500mg → 1000mg" (a change, not "Added").
+  Registry **16→17** (`medications` registers four now; `__init__.py` docstring + `test_hermes.py`
+  hard-coded set updated), `soul.md` gained a "Dose changes" rail (use this, not add_prescription,
+  for an existing-med dose edit). The elder Prescriptions card now renders `m.dose` so the ringed
+  card visibly shows "1000mg". `tests/fakes.py::FakeDB.update` now applies the patch to in-memory
+  rows so independent re-reads reflect writes. Live-green end-to-end.
+- **8 scenarios deferred as GAPS** (not built) — full analysis + sizes in
+  `docs/change-highlight-gap-analysis-2026-07-25.md`. Key user-review decisions recorded there:
+  **#2** don't add a `caregiver_alerts` table — reuse `message_caregiver`/`conversation_turns`;
+  **#3** no symptom-review screen exists (needs new table+tool+screen); **#4** recommend NOT
+  persisting a proactive interaction "what-if" (keep conversational); **#7** no vitals store/screen
+  exists. Structural blockers for the rest: no dose-level DOM target, the **caregiver app never
+  mounts `ChangeHighlight`**, and symptoms/vitals/interactions/allergy-severity have no
+  table/model.
+- **Local-Hermes gotcha (reconfirmed, now for :8901):** a working-tree hermes started on :8901
+  **inherits the repo `.env` `TELEGRAM_BOT_TOKEN`** and will poll Telegram → `409` against the
+  pm2 prod poller. Always launch local verification hermes with `TELEGRAM_BOT_TOKEN="" HERMES_PORT=8901`.
+- **State:** all green (hermes pytest 227, web vitest 42, typecheck, build; live e2e for both
+  scenarios + bug-fixes; a Phase-3 spot-check independently re-verified all three with its own
+  geometry reads). Changes are **uncommitted** on branch `fix/ci-lint-node`; new e2e specs
+  (`bugfix-highlight`, `scenario1-dose-taken`, `scenario6-dosage-update`) + `speech.test.ts` +
+  `HighlightCaption.test.ts` + `test_update_dosage.py` added.
+- **Honest caveat (LLM tool-selection is probabilistic — code is fine, demo reliability isn't):**
+  the two scenario e2e specs prove the *highlight/caption/UI* deterministically but lean on a
+  dev-hook / direct-write for it (the repo's established pattern, since real turns are
+  nondeterministic) — spec-green alone does NOT prove the real LLM→tool path. The spot-check
+  closed that by driving real turns: `log_dose` fired ~1/3 of turns, `update_medication_dosage`
+  committed ~2/5; the misses were the model *narrating instead of calling the tool*, and when the
+  propose turn is skipped the confirm-guard **correctly refuses** (no false write). So the safety
+  rail holds; making Mei reliably call these on first ask is soul.md/prompt tuning (a possible
+  follow-up, like the `add_prescription` rail), not a code defect.
+
 ## 2026-07-24 — Conservative refactor pass (branch `refactor/conservative-tidy`)
 
 A behavior-preserving tidy pass, done on a branch AFTER committing the whole

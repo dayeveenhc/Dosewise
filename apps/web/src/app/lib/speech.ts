@@ -10,15 +10,50 @@ export function speechSupported(): boolean {
   return typeof window !== "undefined" && "speechSynthesis" in window;
 }
 
+// Known-female platform voice names across the 6 supported locales (en, zh,
+// yue, ms, ta). Best-effort curation — the generic-token net below is primary.
+export const FEMALE_VOICE_NAMES = [
+  // en
+  "samantha", "victoria", "karen", "moira", "tessa", "zira", "aria", "jenny",
+  "susan", "google us english", "google uk english female",
+  // zh (Mandarin)
+  "ting-ting", "tingting", "mei-jia", "meijia", "xiaoxiao", "xiaoyi",
+  // yue (Cantonese)
+  "sin-ji", "sinji",
+  // ms (Melayu)
+  "damayanti",
+  // ta (Tamil)
+  "vani",
+];
+
+// Obvious male voices to skip when a female alternative exists (soft, not a
+// hard reject). Deliberately short — over-excluding neutral names hurts more.
+const MALE_VOICE_NAMES = ["daniel", "alex", "fred", "rishi", "aaron"];
+
+// Female heuristic: generic tokens (incl. the CJK 女 marker) in name/voiceURI,
+// or a curated known-female name. Male-named voices are excluded so they never
+// win by matching a stray token.
+export function isFemaleVoice(v: { name: string; voiceURI: string }): boolean {
+  const hay = `${v.name} ${v.voiceURI}`.toLowerCase();
+  if (MALE_VOICE_NAMES.some(n => hay.includes(n))) return false;
+  if (/female|woman|女/.test(hay)) return true;
+  return FEMALE_VOICE_NAMES.some(n => hay.includes(n));
+}
+
 function pickVoice(lang: string): SpeechSynthesisVoice | undefined {
   const voices = speechSynthesis.getVoices();
   if (!voices.length) return undefined;
   const base = lang.toLowerCase();
   const short = base.split("-")[0];
-  return (
-    voices.find(v => v.lang.toLowerCase() === base) ??
-    voices.find(v => v.lang.toLowerCase().startsWith(short))
-  );
+  const candidates = voices.filter(v => v.lang.toLowerCase() === base);
+  if (!candidates.length) {
+    for (const v of voices) {
+      if (v.lang.toLowerCase().startsWith(short)) candidates.push(v);
+    }
+  }
+  if (!candidates.length) return undefined;
+  // Prefer a female voice; else fall back to the first (softest available) match.
+  return candidates.find(isFemaleVoice) ?? candidates[0];
 }
 
 interface SpeakHandlers {

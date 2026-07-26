@@ -30,6 +30,14 @@ class ToolContext:
     # something was saved (vs merely proposed) and act on it — e.g. the web app
     # confirms and redirects to the page that shows the change. Fresh per turn:
     # ToolContext is rebuilt per request (HTTP) / per message (Telegram).
+    #
+    # Two entry shapes exist:
+    # * single (``record_action``) — ``{tool, summary, entity_type, entity_id,
+    #   changed_fields, **extra}`` — one write to one entity.
+    # * bulk (``record_bulk_action``) — ``{tool, summary, entities: [...], **extra}``
+    #   — ONE committed action covering multiple entities (e.g. resolving every
+    #   missed dose at once). Each item in ``entities`` mirrors the single shape's
+    #   per-entity fields: ``{entity_type, entity_id, changed_fields, ...}``.
     committed_actions: list[dict] = field(default_factory=list)
     # Set by start_walkthrough when queued this turn — {"task_name": str}. NOT a
     # write, so deliberately separate from committed_actions: nothing was saved,
@@ -72,6 +80,9 @@ def record_action(
       is ``None`` for a newly-created record. The UI builds its caption from this.
 
     ``extra`` keeps back-compat keys (e.g. ``name`` for the legacy med highlight).
+
+    For a single commit that touches MANY entities at once, use
+    ``record_bulk_action`` instead — one action with an ``entities`` list.
     """
     ctx.committed_actions.append(
         {
@@ -80,6 +91,36 @@ def record_action(
             "entity_type": entity_type,
             "entity_id": str(entity_id),
             "changed_fields": changed_fields or {},
+            **extra,
+        }
+    )
+
+
+def record_bulk_action(
+    ctx: ToolContext,
+    *,
+    tool: str,
+    summary: str,
+    entities: list[dict],
+    **extra: Any,
+) -> None:
+    """Append ONE committed action covering MULTIPLE entities.
+
+    Shape: ``{tool, summary, entities: [{entity_type, entity_id, changed_fields,
+    ...}, ...], **extra}``. Each entity dict mirrors ``record_action``'s per-entity
+    fields (``entity_type`` / ``entity_id`` / ``changed_fields``, plus any
+    per-entity extras like ``dose_id`` or ``slot``); ``entity_id`` is coerced to
+    ``str`` exactly like ``record_action`` does. Called ONLY from a commit branch —
+    never a propose — so a bulk write (e.g. resolve_missed_doses marking every
+    missed dose taken) surfaces as one action the UI can walk, not N loose ones.
+    """
+    ctx.committed_actions.append(
+        {
+            "tool": tool,
+            "summary": summary,
+            "entities": [
+                {**e, "entity_id": str(e.get("entity_id", ""))} for e in entities
+            ],
             **extra,
         }
     )

@@ -135,6 +135,13 @@ changed_fields** (e.g. "Updated: dose time 18:00 → 20:00") — never a generic
 it `console.error`s loudly if the element is genuinely absent. Only ~10 of the 20
 target flows persist a re-queryable entity; the rest (localStorage/mock/view-only,
 or non-existent tables) get navigation only and must not fabricate an entity_id.
+Covered elder flows now include **dose-taken** (`log_dose` → Home timeline card,
+caption "Taken: …"; `entity_id` is the **medication** id so the suffix fallback
+resolves — the UI renders meds, not dose rows) and **dosage-update**
+(`update_medication_dosage` → Prescriptions card, "Updated: 500mg → 1000mg"). The
+other 8 requested scenarios are triaged as greenfield gaps (new table/tool/screen,
+or caregiver-side `ChangeHighlight` which is **not mounted** today) — see
+`docs/change-highlight-gap-analysis-2026-07-25.md`.
 
 All clock-time entry goes through one component, `components/TimesPicker.tsx`:
 `TimesPicker` (a medication's one-or-more dose times) and `TimeField` (a single
@@ -155,7 +162,9 @@ describe doses against ("one after breakfast").
 Voice input/output is client-side (browser Web Speech API — `SpeechRecognition`
 + `speechSynthesis`), not routed through Hermes; it degrades gracefully where
 unsupported. Text-to-speech goes through the shared `lib/speech.ts::speak`
-(cancel→speak race fix + `voiceschanged` voice selection). Whether Mei reads
+(cancel→speak race fix + `voiceschanged` voice selection). `pickVoice` **prefers a
+softer female voice** per language (exported `isFemaleVoice` heuristic; falls back to
+first-available where the OS ships no female voice, e.g. Tamil/Hokkien). Whether Mei reads
 replies aloud is one persisted setting — `voiceOutput` on `AccessibilityProvider`
 (`accessibility.tsx`, key `dosewise:accessibility`) — read/written by both
 Settings "Read Aloud" toggles, both chats, and the in-chat "Language & voice"
@@ -177,7 +186,18 @@ FastAPI service, `uv`-managed. Key files:
   Telegram-specific button taps) so both channels get accurate answers.
 - `tools/` — one file per tool (medications, profile, drug_info, interactions,
   schedule, doses, refills, caregiver, doctor, escalation, videos, walkthrough,
-  verify), registered via `tools/base.py`. `verify.py` is the read-only
+  verify), registered via `tools/base.py`. **18 tools** — `medications` registers
+  four (`add_prescription`, `set_medication_reminder`, `update_medication_dosage`,
+  `list_medications`); `update_medication_dosage` is the propose→confirm dose EDIT
+  on an existing med (2026-07-25). `doses` registers two: `log_dose` (single) and
+  **`resolve_missed_doses`** (2026-07-26) — the BULK propose→confirm resolver that
+  computes today's past-due-untaken slots **server-side** (no name param, no LLM
+  fan-out), back-dates each inserted dose to its slot time, and emits ONE bulk
+  committed action `{tool, summary, entities:[{entity_type, entity_id,
+  changed_fields, dose_id, slot, name}, ...]}` via `base.py::record_bulk_action`
+  (the generic multi-entity contract alongside single `record_action`).
+  `ChangeHighlight` is bulk-aware: it rings ALL resolved entities simultaneously
+  with one batch caption ("Taken: 3 missed doses marked taken"). `verify.py` is the read-only
   "re-query real state → pass/fail" pattern for Guided Auto-Navigation.
   `base.py` also holds the shared tool helpers: `find_medications` (the
   `name ilike` + `archived=false` lookup), `first_id` (new-row id from an insert),

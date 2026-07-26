@@ -53,6 +53,12 @@ class FakeDB:
 
     async def update(self, table, patch, *, filters, returning=True):
         self.updated.append((table, patch, filters))
+        # Apply the patch to matching in-memory rows so an independent re-read (a
+        # later select) reflects the write, mirroring PostgREST. Existing assertions
+        # that inspect ``self.updated`` are unaffected.
+        for row in self.tables.get(table, []):
+            if all(_match_one(row, col, expr) for col, expr in (filters or {}).items()):
+                row.update(patch)
         return [patch] if returning else []
 
 

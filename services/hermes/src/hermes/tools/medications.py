@@ -1,5 +1,6 @@
 """Medication tools: list_medications, add_prescription (scan -> propose -> confirm),
-set_medication_reminder (propose -> confirm daily reminder times)."""
+set_medication_reminder (propose -> confirm daily reminder times),
+update_medication_dosage (propose -> confirm a dose change on an existing med)."""
 
 from __future__ import annotations
 
@@ -432,6 +433,107 @@ async def set_medication_reminder(
     )
 
 
+_SCHEMA_UPDATE_DOSAGE = {
+    "name": "update_medication_dosage",
+    "description": (
+        "Update the dosage of a medication the elder ALREADY has on file. Use when "
+        "the dose itself changed — 'the doctor changed my metformin to 1000mg', "
+        "'increase my atorvastatin to 40mg', 'my dose went down to 250mg'. This is an "
+        "UPDATE to an existing prescription; do NOT use add_prescription (that is for a "
+        "brand-new medication) and do NOT start a walkthrough. SAFETY: the "
+        "propose→confirm rule applies — first call with confirmed=false to read the "
+        "change back (old dose → new dose), and only call again with confirmed=true "
+        "after the user's explicit yes."
+    ),
+    "input_schema": {
+        "type": "object",
+        "properties": {
+            "medication_name": {
+                "type": "string",
+                "description": "Medication name (already on file).",
+            },
+            "dosage": {
+                "type": "string",
+                "description": "The new dosage, e.g. '1000mg'.",
+            },
+            "confirmed": {
+                "type": "boolean",
+                "description": "false = propose only (no write); true = commit after "
+                "the user confirmed.",
+            },
+        },
+        "required": ["medication_name", "dosage"],
+    },
+}
+
+
+async def update_medication_dosage(
+    ctx: ToolContext,
+    medication_name: str,
+    dosage: str,
+    confirmed: bool = False,
+) -> str:
+    if not confirmed:
+        meds = await find_medications(ctx, medication_name, columns="id,name,dosage")
+        if not meds:
+            return (
+                f"No medication named '{medication_name}' is on file, so I can't change "
+                "its dose. Ask the user to confirm the name, or add the prescription "
+                "first with add_prescription."
+            )
+        med = meds[0]
+        old = med.get("dosage") or "an unrecorded dose"
+        if ctx.session is not None:
+            ctx.session.pending_dosage = {"name": medication_name, "dosage": dosage}
+            ctx.session.awaiting_confirmation = True
+        return (
+            "PROPOSED (not yet saved). Read this back to the user and ask them to "
+            f"confirm before saving: change {med['name']} dose from {old} to {dosage}."
+        )
+
+    # confirmed=true: guard that a matching proposal exists in this session.
+    pending = match_pending(ctx, "pending_dosage", "name", medication_name)
+    if pending is None:
+        return (
+            "Refused to save: no matching pending dosage change was confirmed. Propose "
+            "the change first (confirmed=false) and get the user's explicit yes."
+        )
+    # A tap/short "yes" that doesn't resupply the dose still saves the one read back.
+    dosage = dosage or pending.get("dosage")
+
+    meds = await find_medications(ctx, medication_name, columns="id,name,dosage")
+    if not meds:
+        if ctx.session is not None:
+            ctx.session.pending_dosage = None
+            ctx.session.awaiting_confirmation = False
+        return (
+            f"No medication named '{medication_name}' is on file, so I can't change its "
+            "dose. Ask the user to confirm the name or add the prescription first."
+        )
+    med = meds[0]
+    before = med.get("dosage")
+    await ctx.db().update(
+        "medications",
+        {"dosage": dosage},
+        filters={"id": f"eq.{med['id']}"},
+        returning=False,
+    )
+    if ctx.session is not None:
+        ctx.session.pending_dosage = None
+        ctx.session.awaiting_confirmation = False
+    record_action(
+        ctx,
+        tool="update_medication_dosage",
+        summary=f"{med['name']}: {dosage}",
+        entity_type="medication",
+        entity_id=med["id"],
+        changed_fields={"dosage": {"before": before, "after": dosage}},
+        name=med["name"],
+    )
+    return f"Saved. I updated {med['name']} to {dosage}."
+
+
 register(_LIST_SCHEMA, list_medications)
 register(_ADD_SCHEMA, add_prescription)
 register(_REMINDER_SCHEMA, set_medication_reminder)
+register(_SCHEMA_UPDATE_DOSAGE, update_medication_dosage)

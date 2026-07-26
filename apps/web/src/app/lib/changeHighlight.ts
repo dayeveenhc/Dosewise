@@ -1,6 +1,6 @@
 import type { Screen } from "../types";
 import type { ElderlyTab } from "../screens/elderly/types";
-import type { AgentAction } from "./hermes";
+import type { AgentAction, ChangedField } from "./hermes";
 
 // Where a committed change lives, per interface. ChangeHighlight navigates here,
 // then finds the exact record on-screen by data-testid="{entity_type}-{entity_id}".
@@ -25,22 +25,57 @@ export const ENTITY_TARGETS: Record<string, EntityTarget> = {
   escalation:        { elderly: "ai",            caregiver: "notifications" },
 };
 
-// A committed action that carries enough to highlight the exact record.
+// One resolvable "point at this record" unit. A single action is its own
+// 1-element case; a BULK action (entities[] on the wire, no top-level
+// entity_type/entity_id) yields one per affected entity. Extra per-entity
+// payload (dose_id, slot, name, …) rides along untyped.
+export interface HighlightEntity {
+  entity_type: string;
+  entity_id: string;
+  changed_fields?: Record<string, ChangedField>;
+  [k: string]: unknown;
+}
+
+// What testIdFor/findEntityElement actually need — satisfied by both a whole
+// AgentAction and a single HighlightEntity, so element resolution is one code
+// path for single and bulk.
+type EntityRef = { entity_type?: string; entity_id?: string };
+
+function resolvable(e: EntityRef): boolean {
+  return !!e.entity_type && !!e.entity_id && e.entity_type in ENTITY_TARGETS;
+}
+
+// The resolvable entities of an action, in wire order. Single action → a
+// 1-element array built from its own fields; bulk → its entities filtered to
+// the ones we can actually point at. Lets ChangeHighlight treat both shapes
+// uniformly.
+export function highlightableEntities(a: AgentAction): HighlightEntity[] {
+  if (a.entities?.length) return a.entities.filter(resolvable);
+  if (resolvable(a)) {
+    return [{ entity_type: a.entity_type!, entity_id: a.entity_id!, changed_fields: a.changed_fields }];
+  }
+  return [];
+}
+
+// A committed action that carries enough to highlight the exact record(s).
 export function isHighlightable(a: AgentAction): boolean {
-  return !!a.entity_type && !!a.entity_id && a.entity_type in ENTITY_TARGETS;
+  return highlightableEntities(a).length > 0;
 }
 
 // First committed action this turn that we can navigate-to and highlight, if any.
+// A bulk action counts as ONE action here.
 export function firstHighlightable(actions: AgentAction[]): AgentAction | null {
   return actions.find(isHighlightable) ?? null;
 }
 
 export function targetFor(a: AgentAction): EntityTarget | null {
+  const first = highlightableEntities(a)[0];
+  if (first) return ENTITY_TARGETS[first.entity_type] ?? null;
   return a.entity_type ? ENTITY_TARGETS[a.entity_type] ?? null : null;
 }
 
-export function testIdFor(a: AgentAction): string {
-  return `${a.entity_type}-${a.entity_id}`;
+export function testIdFor(e: EntityRef): string {
+  return `${e.entity_type}-${e.entity_id}`;
 }
 
 // Resolve the DOM element for a change. Prefer the exact
@@ -57,7 +92,7 @@ function cssEscape(value: string): string {
   return esc ? esc(value) : value.replace(/["\\\]]/g, "\\$&");
 }
 
-export function findEntityElement(a: AgentAction): HTMLElement | null {
+export function findEntityElement(a: EntityRef): HTMLElement | null {
   const exact = document.querySelector<HTMLElement>(`[data-testid="${testIdFor(a)}"]`);
   if (exact) return exact;
   const id = a.entity_id;
@@ -79,13 +114,64 @@ const FIELD_LABELS: Record<string, string> = {
   name: "name",
   dosage: "dose",
   frequency: "frequency",
+  reminder_at: "reminder time",
+  travel_start: "travel start",
+  travel_end: "travel end",
+  purpose: "purpose",
 };
+
+// Count fields that read better with a unit than a bare number. Kept tiny — most
+// fields are self-describing via their label.
+const FIELD_UNITS: Record<string, string> = {
+  pills_remaining: "pill",
+};
+
+// Turn a raw backend key (snake_case OR camelCase) into a human phrase so a
+// field that isn't in FIELD_LABELS can NEVER surface its raw key in the caption
+// (e.g. "reminder_at" → "Reminder at", "weightKg" → "Weight kg"). Exported so the
+// client walkthrough caption (orchestrate.captionFromVerify) shares one rule.
+export function humanizeField(field: string): string {
+  const words = field
+    .replace(/([a-z0-9])([A-Z])/g, "$1 $2") // camelCase → words
+    .replace(/[_-]+/g, " ")
+    .trim()
+    .toLowerCase();
+  return words ? words.charAt(0).toUpperCase() + words.slice(1) : field;
+}
+
+// Format an HH:MM (24h) string as a 12h clock ("18:00" → "6:00 PM"). SAFELY
+// no-ops on anything that isn't a valid HH:MM in range, so free text / already-
+// formatted values pass through untouched. Local (not medications.to12h) because
+// that module pulls in the Supabase client at import time and would break here.
+export function hhmmTo12h(s: string): string {
+  const m = /^(\d{1,2}):(\d{2})$/.exec(s.trim());
+  if (!m) return s;
+  const h = Number(m[1]);
+  const mm = Number(m[2]);
+  if (h > 23 || mm > 59) return s;
+  const period = h >= 12 ? "PM" : "AM";
+  const h12 = h % 12 === 0 ? 12 : h % 12;
+  return `${h12}:${m[2]} ${period}`;
+}
 
 function fmt(v: unknown): string {
   if (v == null) return "";
   if (Array.isArray(v)) return v.map(fmt).join(", ");
+  if (typeof v === "string") return hhmmTo12h(v);
   return String(v);
 }
+
+// Render a changed value with its field's unit (+ pluralization) when it has one,
+// e.g. pills_remaining 1 → "1 pill", 30 → "30 pills". Falls back to plain fmt.
+function fmtValue(field: string, v: unknown): string {
+  const unit = FIELD_UNITS[field];
+  if (unit && typeof v === "number") return `${v} ${v === 1 ? unit : `${unit}s`}`;
+  return fmt(v);
+}
+
+// Cap on how many changed fields we spell out before collapsing the tail to
+// "+k more" — keeps a multi-field caption from overflowing the pill at 900/1280px.
+const MAX_FIELDS = 3;
 
 // Build the highlight caption FROM changed_fields, so it's accurate to what
 // actually changed — never a generic "success". Returns a verb + detail, e.g.
@@ -93,22 +179,72 @@ function fmt(v: unknown): string {
 // {verb: "Updated", text: "dose time 6:00 PM → 8:00 PM"}.
 export function describeChange(a: AgentAction): { verb: string; text: string } {
   const entries = Object.entries(a.changed_fields ?? {});
+  // A logged dose reads as "Taken: Metformin", not the raw "status pending → taken"
+  // field diff — the verb IS the change.
+  if (a.tool === "log_dose" || a.changed_fields?.status?.after === "taken") {
+    return { verb: "Taken", text: a.summary || a.name || "dose" };
+  }
   const allNew = entries.length > 0 && entries.every(([, f]) => f.before == null);
   if (allNew || a.tool === "add_prescription") {
     return { verb: "Added", text: a.summary || a.name || "new item" };
   }
   const changed = entries.filter(([, f]) => JSON.stringify(f.before) !== JSON.stringify(f.after));
-  if (changed.length === 0) return { verb: "Updated", text: a.summary || "" };
-  const parts = changed.map(([field, f]) => {
-    const label = FIELD_LABELS[field] ?? field;
-    const before = fmt(f.before);
-    const after = fmt(f.after);
+  // Nothing visibly changed: use the summary (or name) — never a dangling
+  // "Updated:" with empty text.
+  if (changed.length === 0) {
+    return { verb: "Updated", text: a.summary?.trim() || a.name?.trim() || "no changes" };
+  }
+  const lone = changed.length === 1;
+  const shown = changed.slice(0, MAX_FIELDS);
+  const overflow = changed.length - shown.length;
+  const parts = shown.map(([field, f]) => {
+    const label = FIELD_LABELS[field] ?? humanizeField(field);
+    const before = fmtValue(field, f.before);
+    const after = fmtValue(field, f.after);
     // Long free-text (e.g. the medical-profile blob) reads badly as "a → b";
     // show just the field label — the caption still says WHICH field changed.
     if (before.length > 40 || after.length > 40) return label;
-    if (before && after) return `${label} ${before} → ${after}`;
-    if (after) return `${label} ${after}`;
+    // A lone dosage change reads cleanest without the "dose" prefix: the values
+    // already carry the unit ("500mg → 1000mg").
+    const prefix = lone && field === "dosage" ? "" : `${label} `;
+    if (before && after) return `${prefix}${before} → ${after}`;
+    if (after) return `${prefix}${after}`;
     return label;
   });
-  return { verb: "Updated", text: parts.join("; ") };
+  const text = overflow > 0 ? `${parts.join("; ")}; +${overflow} more` : parts.join("; ");
+  return { verb: "Updated", text };
+}
+
+// Caption for an action that may be BULK. Non-bulk actions (and a 1-entity bulk,
+// which reads exactly like a single change built from that entity's fields) go
+// through describeChange; a real batch gets ONE count-style caption — the verb
+// classified the same way describeChange does (taken / all-new / updated), the
+// text preferring the backend summary (already human, e.g. "3 missed doses
+// marked taken"). Never leaks raw field names: the fallback texts are counts,
+// and the single path reuses describeChange's humanize/format helpers.
+export function describeBatch(a: AgentAction): { verb: string; text: string } {
+  const ents = highlightableEntities(a);
+  if (!a.entities || ents.length === 0) return describeChange(a);
+  if (ents.length === 1) {
+    const e = ents[0];
+    return describeChange({
+      ...a,
+      entity_type: e.entity_type,
+      entity_id: e.entity_id,
+      changed_fields: e.changed_fields ?? a.changed_fields,
+      name: typeof e.name === "string" ? e.name : a.name,
+    });
+  }
+  const n = ents.length;
+  const summary = a.summary?.trim();
+  const allTaken = ents.every(e => e.changed_fields?.status?.after === "taken");
+  if (a.tool === "resolve_missed_doses" || allTaken) {
+    return { verb: "Taken", text: summary || `${n} doses marked taken` };
+  }
+  const allNew = ents.every(e => {
+    const fields = Object.values(e.changed_fields ?? {});
+    return fields.length > 0 && fields.every(f => f.before == null);
+  });
+  if (allNew) return { verb: "Added", text: summary || `${n} items added` };
+  return { verb: "Updated", text: summary || `${n} items updated` };
 }
