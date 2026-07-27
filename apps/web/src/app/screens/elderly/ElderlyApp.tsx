@@ -369,7 +369,10 @@ export function ElderlyApp({ patient, elderId, onUpdatePatient, onBack, onSignOu
       } : m),
     });
     const med = patient.medications.find(m => m.id === medId);
-    if (elderId && med?.medicationId) logDoseTaken(med.medicationId, elderId);
+    // Pass the TAPPED card's own slot so a medication with more than one
+    // pending dose today flips the one the elder actually tapped, not
+    // whichever is latest — found live, Phase-4 spot-check of scenario s03.
+    if (elderId && med?.medicationId) logDoseTaken(med.medicationId, elderId, to24h(med.time));
   };
 
   const handleAddPrescription = async (med: Omit<Medication, "id" | "status"> & { times?: string[] }) => {
