@@ -9,6 +9,75 @@ letting this grow forever — it's a memory aid, not an audit log.
 
 ---
 
+## 2026-07-27 (later) — "I took all" after a schedule listing didn't log doses — root-caused, fixed, verified 12/12 live
+
+Real user report: Mei showed today's schedule (6 due-now meds + duplicate
+already-taken "Tacrolimus" rows), the user replied **"i took all"**, and
+nothing got logged. Root-caused live (soul.md-only fix, no tool/code changes)
+— see `services/hermes/src/hermes/agent/soul.md`'s "Schedule"/"Missed doses"
+sections and `tests/test_missed_doses_after_schedule.py`.
+
+**Root cause, refined by live evidence (the ORIGINAL hypothesis — a silent
+`confirmed=true`-with-no-propose refusal — did NOT reproduce in 5/5 trials):**
+`show_schedule` never touches `ctx.session` (by design — it's read-only), so
+Mei's own schedule listing stashes no `pending_missed_doses`. soul.md's
+"Missed doses" rail was keyed only on an *imperative* ask ("tick all my missed
+doses"), never on a *declarative* broad confirm replying to Mei's own prior
+listing. Live trials showed the propose→confirm plumbing was **already
+correct** — turn 2 always routes to a bulk tool with `confirmed=false` and
+computes the right set — the actual gap was that Mei's follow-up
+("Would you like me to mark these as taken?") re-asks almost the same thing
+the user just said, a dead end many users won't answer a second time.
+
+**Fix:** two additive soul.md paragraphs (extends "Missed doses" + one
+cross-ref sentence on "Schedule"): (1) a broad post-listing confirm is a fresh
+`resolve_missed_doses(confirmed=false)` trigger, never a bare `confirmed=true`
+— defensive, guards the theoretical silent-refusal path even though it didn't
+reproduce; (2) reuses the already-established "Guided walkthroughs" **"yes IS
+the confirm"** exception: when Mei JUST showed the specific list this same
+exchange and the reply is an unhedged blanket yes, she *may* call
+`confirmed=true` in the same turn instead of asking again. **Honest result
+after two wording iterations** (the second more blunt/imperative, mirroring
+the `log_dose` fix's style): the same-turn collapse is attempted sometimes
+(one trial called the tool twice in one turn) but is **not reliable** —
+same "LLM instruction-following is probabilistic" ceiling documented
+elsewhere in this project. Did not chase a third iteration — diminishing
+returns, and it's not what matters most.
+
+**What actually matters is fixed and verified 12/12 across two trial
+batches + one full 8-medication end-to-end run matching the exact reported
+shape (6 unmet + 2 duplicate already-taken "Tacrolimus" rows, reproduced via
+two distinct `medications` rows):** "I took all" now **always** correctly
+proposes via `resolve_missed_doses` (consistently — no longer sometimes
+`log_doses`), and **always** correctly commits when the user answers "yes"
+once more, with an independent re-read confirming exactly the right doses
+land and already-taken ones are never touched/double-logged. Before this fix,
+nothing ever got logged, ever, for this conversational shape — that's closed.
+Users should still expect one short confirmation reply after "I took all";
+this is an intentional safety property (never write without some real
+confirming moment in the exchange), not a residual bug.
+
+**Duplicate-Tacrolimus (secondary, from the original report):** code
+investigation found no dedup anywhere in `show_schedule`/`resolve_missed_doses`'s
+read path, and nothing prevents either (a) two distinct `medications` rows
+with the same name (no DB unique constraint), or (b) one row whose
+`schedule.times` itself contains a literal duplicate entry. Both are equally
+plausible from code alone; **deliberately not fixed** — deciding which
+applies to the real reporting user's actual data (and whether it's even a bug
+vs. legitimate dual-prescription data) needs their actual account, which
+isn't reachable from this conversation. The `resolve_missed_doses` fix is
+verified robust either way (proven against the two-distinct-rows shape:
+doesn't double-log, doesn't choke).
+
+**Verification discipline:** reused this session's own established live
+pattern (throwaway elder via plain Supabase signup, real `:8901` turns, raw
+JSON captured, independent Supabase re-reads never trusting the reply) rather
+than inventing new scaffolding. New test file
+`test_missed_doses_after_schedule.py` is the first **agent-loop-level**
+(multi-turn, `run_agent_turn(..., history=...)` chained) test in the suite —
+prior propose→confirm tests were all tool-level only. Gate: 299 pytest (+2),
+ruff clean.
+
 ## 2026-07-27 — 32-scenario restructure: named-dose root-caused & fixed (2 code paths), one pacing contract, full live verification
 
 The big one. User-directed 4-phase orchestrated pass: root-cause the specific
