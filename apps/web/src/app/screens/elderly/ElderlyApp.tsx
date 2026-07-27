@@ -181,9 +181,13 @@ export function ElderlyApp({ patient, elderId, onUpdatePatient, onBack, onSignOu
   const handleWalkthroughStart = (taskName: WalkthroughTaskName, params: WalkthroughParams = {}) => {
     // "onboarding" steps live on the wizard, not this shell — running them here
     // would stall on selectors that never mount. Surface it to App instead
-    // (chat→wizard entry; scenario s30 finishes the UX).
+    // (chat→wizard entry; scenario s30 finishes the UX). Deliberately does NOT
+    // save a walkthrough session: this shell's own <Walkthrough> never runs
+    // for this task, so a saved session would only get restored on return
+    // (after the wizard hands back via resumeElderAfterWizard) and mount an
+    // overlay whose first selector doesn't exist here — a permanent stuck
+    // scrim with no Exit, found live by scenario s30.
     if (taskName === "onboarding" && onStartOnboardingWizard) {
-      saveWalkthroughSession(elderId, { taskName, stepIndex: 0, startedAt: Date.now(), params });
       onStartOnboardingWizard();
       return;
     }

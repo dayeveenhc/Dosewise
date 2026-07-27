@@ -2,7 +2,7 @@ import { useRef, useState } from "react";
 import type { ReactNode, ChangeEvent } from "react";
 import { ArrowLeft, Loader2, Plus, X, Check, Sunrise, Coffee, Utensils, UtensilsCrossed, Moon, PartyPopper, Users, Camera, Sparkles, Venus, Mars, Eye, EyeOff } from "lucide-react";
 import { supabase } from "../../lib/supabase";
-import { saveProfile } from "../../lib/profile";
+import { saveProfile, markWalkthroughCompleted } from "../../lib/profile";
 import { addMedication, archiveMedication, to24h } from "../../lib/medications";
 import { extractProfile, fileToBase64 } from "../../lib/hermes";
 import { normalizeAllergies } from "../../lib/changeHighlight";
@@ -503,6 +503,10 @@ export function GuidedSetupWizard({ mode, hasSession, elderId: initialElderId, p
     } else {
       await saveProfile(elderId, role, fullName, {});
     }
+    // Mark this task done so prompts.py's "not yet shown" gate can actually
+    // suppress re-offering onboarding once it's genuinely complete — every
+    // wizard run (new signup or a chat-triggered one) reaches this point.
+    await markWalkthroughCompleted(elderId, role, "onboarding");
     setFinishing(false);
     // Gated on the real, resolved profile/medication writes above — never the
     // Finish button's click alone.

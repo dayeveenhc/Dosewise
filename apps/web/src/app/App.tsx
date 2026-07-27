@@ -352,8 +352,18 @@ export default function App() {
   // Dev-only deterministic triggers, mirroring ElderlyApp.tsx's caregiver-side
   // gap: an e2e drive can start a caregiver walkthrough or fire ChangeHighlight
   // with a committed action (real entity_id) without depending on the LLM.
+  // Gated on appMode==="caregiver" (and re-run on every appMode change, so the
+  // cleanup fires the INSTANT it stops being true): `App` itself is the root
+  // component and never unmounts, so an unconditional `useEffect(...,[])` here
+  // would register these once for the whole SPA session and then RACE against
+  // ElderlyApp's own registration of the exact same two window properties the
+  // moment appMode flips to "elderly" — whichever mounts/re-renders last wins,
+  // a real, timing-dependent bug found live re-running the full scenario
+  // regression suite (every elder-mode dev-hook scenario intermittently landed
+  // on a plain Home screen with no overlay at all — the caregiver's
+  // no-op-for-this-task handleWalkthroughStart had silently won the race).
   useEffect(() => {
-    if (!import.meta.env.DEV) return;
+    if (!import.meta.env.DEV || appMode !== "caregiver") return;
     type Hook = (t: string, p?: WalkthroughParams) => void;
     (window as unknown as { __dwStartWalkthrough?: Hook }).__dwStartWalkthrough = (task, params) =>
       handleWalkthroughStart(task as WalkthroughTaskName, params ?? {});
@@ -365,7 +375,7 @@ export default function App() {
       delete (window as unknown as { __dwHighlightChange?: HlHook }).__dwHighlightChange;
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
+  }, [appMode]);
 
   const handleWalkthroughNavigate = (target: WalkthroughScreen) => {
     if (target.mode === "caregiver") setScreen(target.screen);
@@ -429,8 +439,29 @@ export default function App() {
   // stage the elder shell can't spotlight. Switch into the wizard;
   // resumeElderAfterWizard routes its exit/completion back into the elder app.
   // Scenario s30 finishes the UX on top of this pathway.
-  const handleElderOnboardingWalkthrough = () => {
+  const handleElderOnboardingWalkthrough = async () => {
     if (!session) return; // guarded: only an active session can round-trip back
+    // The wizard always starts from BLANK local state here (no prefill
+    // threading exists for this entry point) and its own finish() does a
+    // full profile save from that state — so re-running it for an elder who
+    // already has real profile data would silently wipe it. Re-query the
+    // REAL profile rather than trust local `patients` state: `patients`
+    // initializes from the mock PATIENTS literal (which already has non-empty
+    // conditions/allergies baked in) until the async fetch replaces it, so a
+    // synchronous check here can read stale mock data for a genuinely blank
+    // elder — found live re-verifying scenario s30's own fix. `wakeTime`/
+    // weight/height are wizard-routine-only fields (never set on the mock
+    // default), but conditions/allergies can ALSO be populated with no wizard
+    // run at all (e.g. a caregiver-entered diagnosis) — also found live by
+    // s30, which seeded exactly that shape. A real prefill-and-merge flow is
+    // future work if "redo onboarding" is ever wanted as an intentional
+    // feature; refusing outright is the safe default until then.
+    const real = await fetchProfile(elderId);
+    const d = real?.details;
+    const alreadyHasProfile =
+      !!d?.wakeTime || !!d?.weightKg || !!d?.heightCm ||
+      (d?.conditions?.length ?? 0) > 0 || (d?.allergies?.length ?? 0) > 0;
+    if (alreadyHasProfile) return;
     setResumeElderAfterWizard(true);
     setPendingMode("elderly");
     setWizardPrefill(undefined);
