@@ -64,7 +64,14 @@ export function ScanLinkSheet({ onClose, onLinked }: {
       const s = scannerRef.current;
       scannerRef.current = null;
       if (s) {
-        s.stop().then(() => s.clear()).catch(() => {});
+        // stop() can throw SYNCHRONOUSLY (not just reject) when start() never
+        // reached "running" — e.g. camera permission denied — which would
+        // otherwise crash this cleanup with no error boundary in the tree.
+        try {
+          s.stop().then(() => s.clear()).catch(() => {});
+        } catch {
+          // Nothing was actually running; nothing to stop.
+        }
       }
     };
   }, [phase, language]);

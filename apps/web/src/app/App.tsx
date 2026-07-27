@@ -349,6 +349,24 @@ export default function App() {
     saveWalkthroughSession(elderId, { taskName, stepIndex: 0, startedAt: Date.now() });
   };
 
+  // Dev-only deterministic triggers, mirroring ElderlyApp.tsx's caregiver-side
+  // gap: an e2e drive can start a caregiver walkthrough or fire ChangeHighlight
+  // with a committed action (real entity_id) without depending on the LLM.
+  useEffect(() => {
+    if (!import.meta.env.DEV) return;
+    type Hook = (t: string, p?: WalkthroughParams) => void;
+    (window as unknown as { __dwStartWalkthrough?: Hook }).__dwStartWalkthrough = (task, params) =>
+      handleWalkthroughStart(task as WalkthroughTaskName, params ?? {});
+    type HlHook = (action: AgentAction) => void;
+    (window as unknown as { __dwHighlightChange?: HlHook }).__dwHighlightChange = action =>
+      setHighlightChange(action);
+    return () => {
+      delete (window as unknown as { __dwStartWalkthrough?: Hook }).__dwStartWalkthrough;
+      delete (window as unknown as { __dwHighlightChange?: HlHook }).__dwHighlightChange;
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
   const handleWalkthroughNavigate = (target: WalkthroughScreen) => {
     if (target.mode === "caregiver") setScreen(target.screen);
   };
