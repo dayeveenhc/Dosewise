@@ -76,73 +76,73 @@ normally forbids touching `services/hermes/` or `supabase/`**; cross-cutting
 work across that boundary needs explicit user sign-off (as happened for the
 Hermes wiring — see MEMORY.md).
 
-Mei can also run a **Guided Walkthrough**: a scripted, spotlight-and-narrate
-overlay (`components/Walkthrough.tsx`) that highlights one screen element at a
-time, but never fills/taps/submits on the user's behalf — every step ends
-only when the real user performs the real action (native DOM listener, or an
-app-emitted event via `lib/walkthrough/steps/` + `lib/walkthrough/bus.ts` for
-actions no generic listener can tell apart, e.g. an async write's real
-success). Started by Hermes's `start_walkthrough` tool (task name only — step
-content stays client-side); see MEMORY.md's 2026-07-22 entry for the full
-architecture and known gaps.
+Mei can also run a **Guided Walkthrough**: a scripted overlay
+(`components/Walkthrough.tsx`) that spotlights one screen element at a time.
+A step is either **user-driven** (`waitFor` — a native DOM listener or an
+app-emitted `lib/walkthrough/bus.ts` event; the real user performs the real
+action, Mei never fills/taps/submits) or **autonomous** (`act` — Mei performs
+the fill/tap/upload/submit herself, visibly animated via `lib/walkthrough/
+actor.ts`, then `verify`/`reveal` phases orchestrated by `lib/walkthrough/
+orchestrate.ts::runActStep`; a failed Verify STOPS and never implies success).
+`start_walkthrough` (Hermes) takes a task name plus an optional `params` object
+(VALUES only — selectors/step content always stay client-side); the resolver
+is `lib/walkthrough/steps/index.ts::resolveWalkthroughSteps(task, role,
+params)` over `steps/*.ts`, one file per task, 15 task names total (static
+step files and `*_auto` param-builders alike). The overlay root is
+`pointer-events-none` so a real user tap always reaches the spotlighted
+element underneath (the consent flows — `accept_caregiver_link` — depend on
+this: Mei navigates, the human taps).
 
-A **Guided Auto-Navigation** mode is layered on top (2026-07-23): a step can
-instead carry an `act` (Mei performs the fill/tap/upload/submit herself, visibly
-animated — `lib/walkthrough/actor.ts`) plus `verify`/`reveal` phases (orchestrated
-by `lib/walkthrough/orchestrate.ts::runActStep` — a failed Verify STOPS and never
-implies success), so `waitFor` is now optional on a step. **Four autonomous scenarios** are built and live-validated end-to-end
-(Playwright, real Supabase, incl. write-fail paths): `add_prescription_auto`,
-`travel_mode_auto`, `edit_profile_auto`, and `accept_caregiver_link` (the
-consent flow — Mei navigates but the elder taps Accept themselves, then Verify
-confirms the link is active). Verify is a real re-query: client `onVerify` (host,
-e.g. `ElderlyApp`) mirrors the Hermes read-only `verify_medication_exists` tool
-(`tools/verify.py`); `onReveal` pulse-highlights where the change landed. The
-overlay is `pointer-events-none` so a real user tap reaches the spotlighted
-element (the consent flows depend on this). **In real chat Mei fulfills a
-request by triggering the matching `*_auto` walkthrough with the patient's real
-values** — `start_walkthrough` takes an optional `params` object (VALUES only;
-step content/selectors stay client-side), the autonomous step files are param
-builders, and soul.md prefers this over a silent direct write (prescriptions
-still propose first for the interaction check). Adds land where the UI reads
-them (e.g. `add_condition_auto` writes structured `conditions[]`, not the
-free-text `medical_profile` blob). Full detail + scope/safety decisions:
-MEMORY.md's 2026-07-23 entries.
+**All pacing flows through one module, `lib/walkthrough/pacing.ts`** (2026-07-27)
+— nine constants (navigate/field-prehighlight/fill-per-char/field-floor/
+between-fields/pre-click/verify-min/reveal-pulse/highlight-dwell-min),
+enforced as **minimums** via `lib/walkthrough/pace.ts::createPaceController().
+paced()`, the only timed-wait path in the whole system (auto-logs every phase
+to a DEV-only `window.__dwPhaseLog` so e2e specs measure real elapsed time).
+The overlay has a **Next** control (autonomous steps only — gated on
+`step.act || (!waitFor && (verify||reveal))`, disabled until the current
+phase's minimum has elapsed, never appears on a `waitFor`/consent step) and a
+**Replay** control (reveal phase only, re-fires the same reveal + restarts its
+dwell). `lib/walkthrough/verify.ts` (`pollVerify` + `buildVerifyRunner`) is
+the one generic "re-query real state, never trust the write's own return"
+mechanism — hosts (`ElderlyApp`, the caregiver shell) inject their real data
+fetchers; it must never itself import anything Supabase-backed (breaks the
+vitest import graph — same reason `lib/changeHighlight.ts` keeps a local
+`hhmmTo12h`).
 
-**Add-prescription is a hybrid (2026-07-24):** `add_prescription_auto` runs the
-animated walkthrough in the **elder** shell and now reveals on **Home**
-(`tab:"home"`, `[data-tour="elder-schedule"]` — the Home timeline self-highlights
-the new dose via `justAddedMed`); `ACTION_TARGETS.add_prescription.elderly` is
-`"home"` too. The **caregiver** shell can't run the elder-mode steps, so its
-`handleWalkthroughStart` intercepts `add_prescription_auto` and does a **direct
-save** from params → Patient med-list. A verify-failure in the elder walkthrough
-now calls the new `Walkthrough` prop `onVerifyFailed`, and `ElderlyApp` falls
-back to a direct save **only if the med is genuinely absent** (re-query guards
-against a double-save when Verify merely raced); a real write failure keeps the
-honest `walk.verifyFailed`. The elder sheet's `onAdded` tab-switch is gated on
-`!walkthroughTask` so it doesn't fight the Home reveal. MEMORY.md's 2026-07-24
-entry has the why.
+**Proof-of-change is the `ChangeHighlight` layer.** Its keystone: every write
+tool's `committed_actions` entry carries **what** changed —
+`{tool, summary, entity_type, entity_id, changed_fields}` (single writes via
+`tools/base.py::record_action`; multi-entity writes — e.g. resolving every
+missed dose at once — via `record_bulk_action`'s `{tool, summary, entities:[
+...]}`, rung simultaneously with one batch caption). `changed_fields` is
+`{field:{before,after}}`. `components/ChangeHighlight.tsx` (logic in
+`lib/changeHighlight.ts`) navigates to the entity's screen, finds the exact
+record by `data-testid="{entity_type}-{entity_id}"` (suffix `-{id}` fallback
+so e.g. a `schedule_entry` change to a med resolves the `medication-<uuid>`
+card), pulses `.change-highlight` (or the non-emerald `.change-highlight-
+stopped` variant when `changed_fields.status.after==="discontinued"`), and
+shows a caption derived from `changed_fields` — never a generic toast; loudly
+`console.error`s if the element is genuinely absent rather than fabricating a
+target. **Mounted in both shells** — `ElderlyApp.tsx` and (2026-07-27)
+`App.tsx`'s caregiver branch, each with its own DEV-only `window.
+__dwHighlightChange`/`__dwStartWalkthrough` registration (gated on
+`appMode==="caregiver"` in `App.tsx`'s case — it never unmounts, so an
+unconditional registration would race `ElderlyApp`'s own one for the same two
+window properties the instant an elder session mounts; MEMORY.md's
+2026-07-27 entry has the story). Not every scenario has a re-queryable
+backing entity — genuinely mock/view-only flows (caregiver weekly summary,
+notifications, emergency contacts) stay honest-navigation-only.
 
-**Proof-of-change is now the `ChangeHighlight` layer (2026-07-23 rebuild)**, which
-supersedes the old selector-pulse / name-string highlight for the flows it covers.
-Its keystone: every write tool's `committed_actions` entry carries **what** changed
-—`{tool, summary, entity_type, entity_id, changed_fields}` (built via
-`services/hermes/tools/base.py::record_action`; `changed_fields` is
-`{field:{before,after}}`). The web `components/ChangeHighlight.tsx` (logic in
-`lib/changeHighlight.ts`) navigates to that entity's screen, finds the exact record
-by `data-testid="{entity_type}-{entity_id}"` (with a suffix `-{id}` fallback so a
-`schedule_entry`/`refill_request` change to a med resolves the `medication-<uuid>`
-card), pulses `.change-highlight` around it, and shows a caption **derived from
-changed_fields** (e.g. "Updated: dose time 18:00 → 20:00") — never a generic toast;
-it `console.error`s loudly if the element is genuinely absent. Only ~10 of the 20
-target flows persist a re-queryable entity; the rest (localStorage/mock/view-only,
-or non-existent tables) get navigation only and must not fabricate an entity_id.
-Covered elder flows now include **dose-taken** (`log_dose` → Home timeline card,
-caption "Taken: …"; `entity_id` is the **medication** id so the suffix fallback
-resolves — the UI renders meds, not dose rows) and **dosage-update**
-(`update_medication_dosage` → Prescriptions card, "Updated: 500mg → 1000mg"). The
-other 8 requested scenarios are triaged as greenfield gaps (new table/tool/screen,
-or caregiver-side `ChangeHighlight` which is **not mounted** today) — see
-`docs/change-highlight-gap-analysis-2026-07-25.md`.
+Every requested scenario now has its own independently-runnable e2e module —
+`apps/web/e2e/scenarios/sNN-slug.spec.ts` (32 of them; `manifest.ts` + a
+`coverage.spec.ts` guard keep the set exactly 32, wired, no orphans), each:
+real `:8901` turn with a verbatim trigger phrase → independent Supabase
+re-check → UI drive with phase-log timing asserted against `PACING` →
+screenshot. `README.md` in that directory has the template + the shared-file
+ownership rules. A pytest (`services/hermes/tests/test_walkthrough.py`)
+enforces TASK_NAMES/labels/TS-union/resolver stay in 4-way agreement — this
+pass found and would otherwise have reintroduced that exact drift.
 
 All clock-time entry goes through one component, `components/TimesPicker.tsx`:
 `TimesPicker` (a medication's one-or-more dose times) and `TimeField` (a single
@@ -185,26 +185,42 @@ FastAPI service, `uv`-managed. Key files:
 - `agent/soul.md` + `agent/prompts.py` — the Dosewise persona/system prompt.
   Kept **channel-neutral** (describes app screens generically, not
   Telegram-specific button taps) so both channels get accurate answers.
-- `tools/` — one file per tool (medications, profile, drug_info, interactions,
-  schedule, doses, refills, caregiver, doctor, escalation, videos, walkthrough,
-  verify), registered via `tools/base.py`. **18 tools** — `medications` registers
-  four (`add_prescription`, `set_medication_reminder`, `update_medication_dosage`,
-  `list_medications`); `update_medication_dosage` is the propose→confirm dose EDIT
-  on an existing med (2026-07-25). `doses` registers two: `log_dose` (single) and
-  **`resolve_missed_doses`** (2026-07-26) — the BULK propose→confirm resolver that
-  computes today's past-due-untaken slots **server-side** (no name param, no LLM
-  fan-out), back-dates each inserted dose to its slot time, and emits ONE bulk
-  committed action `{tool, summary, entities:[{entity_type, entity_id,
-  changed_fields, dose_id, slot, name}, ...]}` via `base.py::record_bulk_action`
-  (the generic multi-entity contract alongside single `record_action`).
-  `ChangeHighlight` is bulk-aware: it rings ALL resolved entities simultaneously
-  with one batch caption ("Taken: 3 missed doses marked taken"). `verify.py` is the read-only
-  "re-query real state → pass/fail" pattern for Guided Auto-Navigation.
-  `base.py` also holds the shared tool helpers: `find_medications` (the
-  `name ilike` + `archived=false` lookup), `first_id` (new-row id from an insert),
-  `match_pending` (the propose→confirm commit guard — reads the session's
-  `pending_*` slot by name, so the Telegram deterministic-confirm contract is
-  preserved), and `record_action`. Weekday constants (`WEEKDAYS`,
+- `tools/` — one file per tool (medications, profile, symptoms, drug_info,
+  interactions, schedule, doses, refills, caregiver, doctor, escalation,
+  videos, walkthrough, verify), registered via `tools/base.py`. **25 tools.**
+  `medications` registers five: `add_prescription`, `set_medication_reminder`,
+  `update_medication_dosage` (propose→confirm dose EDIT), **`discontinue_medication`**
+  (2026-07-27, propose→confirm, sets `archived=true` — never deletes), `list_medications`.
+  `doses` registers five: `log_dose` (single — takes optional `medication_name` AND
+  `slot`; the selection engine `_dose_plan` picks earliest-first among today's
+  pending doses, asks when genuinely ambiguous and writes nothing until answered,
+  proceeds silently when only one dose is plausible — the 2026-07-27 root-cause fix
+  for "marking one named medication taken" unreliability, see MEMORY.md),
+  `resolve_missed_doses` (the "all" bulk resolver, server-side missed-slot
+  computation), **`log_doses`** (2026-07-27, EXPLICIT-list bulk — "I took my X and
+  my Y", distinct from the "all" filter — propose→confirm via the generic
+  `pending_bulk` slot), **`undo_dose`** (flips a mistaken tick back), **`snooze_dose`**
+  (today-only reminder move into `accessibility.dose_snoozes`, never touches the
+  recurring schedule). `profile` registers **`set_allergy_severity`** (2026-07-27,
+  propose→confirm — promotes the WHOLE `accessibility.allergies` array from legacy
+  plain strings to `{name,severity}` objects on first grade, not just the target
+  entry) alongside `update_medical_profile`. `symptoms.py` (new) registers
+  **`add_symptom`** (immediate, empathetic, never diagnoses, `entity_id` is the
+  symptom's own id not the medication's). `caregiver.py` gained **`add_care_note`**
+  (immediate, writes the caregiver's OWN `conversation_turns` row — no
+  act-on-behalf-of exists). Bulk commits emit ONE committed action via
+  `base.py::record_bulk_action` (`{tool, summary, entities:[{entity_type,
+  entity_id, changed_fields, ...}, ...]}`, the generic multi-entity contract
+  alongside single `record_action`); `ChangeHighlight` is bulk-aware and rings ALL
+  resolved entities simultaneously with one batch caption. `verify.py` is the
+  read-only "re-query real state → pass/fail" pattern for Guided Auto-Navigation.
+  `base.py` also holds the shared tool helpers: `find_medications` (exact `ilike`
+  first, then dosage-suffix-stripped, then wildcard fallback — the exact-only form
+  used to false-"not found" on a label-echoed "Metformin 500mg"), `first_id`
+  (new-row id from an insert), `match_pending`/`match_pending_bulk` (the
+  propose→confirm commit guards — read the session's `pending_*`/`pending_bulk`
+  slot, so the Telegram deterministic-confirm contract is preserved), and
+  `record_action`/`record_bulk_action`. Weekday constants (`WEEKDAYS`,
   `WEEKDAY_NAMES`) live in `dosing.py`.
 - `db/auth.py` — mints Hermes-internal JWTs (HS256) for Telegram/CLI, and
   verifies client-supplied Supabase JWTs. Supabase user tokens are **ES256**

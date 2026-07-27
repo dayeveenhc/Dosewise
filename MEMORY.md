@@ -9,6 +9,176 @@ letting this grow forever — it's a memory aid, not an audit log.
 
 ---
 
+## 2026-07-27 — 32-scenario restructure: named-dose root-caused & fixed (2 code paths), one pacing contract, full live verification
+
+The big one. User-directed 4-phase orchestrated pass: root-cause the specific
+"marking my metformin taken doesn't work" complaint → build one shared
+pacing/verification structure → build+verify all 32 requested scenarios as
+independent `e2e/scenarios/sNN-*.spec.ts` modules → independent spot-check of
+5 by fresh agents re-deriving evidence from scratch. ~40 subagents total.
+Deliberately did NOT hand the executing agents a file layout — the structure
+below is what emerged from reading the actual codebase state.
+
+**Root cause (Phase 1, live-proven on :8901 with raw request/response capture
+before any fix):** `log_dose` took only `medication_name`, no slot param, and
+picked the **latest** pending dose (`scheduled_at.desc limit 1`) — at 2pm,
+"I just took my metformin" ticked the 8 PM dose while the overdue 8 AM one sat
+untouched, and "my **morning** metformin" did the same since there was no way
+to say which slot. 2/2 live ambiguous-case runs hit the wrong slot pre-fix; no
+disambiguation existed anywhere. Fixed: one selection engine
+(`doses.py::_dose_plan`), earliest-first everywhere (now consistent with
+`resolve_missed_doses`); exactly one plausible dose → logs silently; ≥2
+pending + no slot → returns the options and **writes nothing** (stateless ask,
+so a plain-text follow-up with the answer works on Telegram too); `slot`
+accepts `HH:MM` or a day-part word; already-taken guard stops double-logging.
+soul.md needed one iteration — first draft had Mei ask her OWN clarifying
+questions before ever calling the tool (0/3 turns even reached it); rewritten
+to "call first, only relay the tool's own question" → 5/5 live. `find_medications`
+also gained a dosage-suffix-strip + wildcard fallback (the old exact-match
+`ilike` false-"not found"-ed on a label-echoed "Metformin 500mg"), and
+`FakeDB`'s ilike was corrected to mirror real PostgREST semantics (the old
+always-substring fake was masking exactly this class of bug).
+
+**A second, independent instance of the SAME bug class**, found by a Phase-4
+spot-check re-verifying s03 from scratch (not the chat path — the direct "tap
+the card" flow): `lib/medications.ts::logDoseTaken` still did
+`.order("scheduled_at",{ascending:false}).limit(1)` — tapping a SPECIFIC
+slot's card could flip a DIFFERENT slot's dose. Its own comment claimed to
+mirror the Hermes tool, but was never updated when that tool was rewritten.
+Fixed: threaded the tapped card's own slot through (every card already carries
+it — `fetchElderMedications` emits one per `schedule.times` entry) and match
+the nearest pending dose to it. **Lesson: a fix on one interaction path
+(chat) doesn't imply the other path (direct UI) got the same fix — check
+both**, especially when a comment says "mirrors X" — that comment rots.
+
+**Pacing (the "too fast to follow" complaint):** one module,
+`lib/walkthrough/pacing.ts` — 9 constants (navigate 500 / field-prehighlight
+300 / fill 45ms-per-char / field-floor 900 / between-fields 500 / pre-click
+400 / verify-min 600 / reveal-pulse 1400 / highlight-dwell-min 2500), enforced
+as **minimums** via `pace.ts::createPaceController().paced()` — the only
+timed-wait path anywhere in the walkthrough/highlight system, auto-logging
+every phase to a DEV-only `window.__dwPhaseLog` so e2e specs measure real
+elapsed time rather than trust the implementation. Killed 5 scattered
+constants, a `2600↔CSS-1.3s×2` hand-sync, and 5 copy-pasted `12×400` verify
+polls (now one `verify.ts::pollVerify`+`buildVerifyRunner`). New overlay
+controls: **Next** (autonomous steps only — gated by `step.act ||
+(!waitFor && (verify||reveal))`, disabled until the phase minimum, unit-pinned
+to never appear on a `waitFor`/consent step) and **Replay** (reveal phase
+only). `ActDirective.paceMs` removed outright — the mechanical guarantee that
+no scenario can define its own timing.
+
+**Scenario structure:** kept the existing convention
+(`lib/walkthrough/steps/<task>.ts` + one spec per scenario) rather than
+inventing a new layout — the prior sessions had that part right. Canonical
+per-scenario module is `e2e/scenarios/sNN-slug.spec.ts`: fixture → real
+`:8901` turn (verbatim trigger phrase, ≤3 attempts, raw JSON saved) →
+independent Supabase re-check (never the turn's own return) → UI drive with
+measured phase-log timing against imported `PACING` → screenshot → zero
+scenario-local ms literals. `e2e/scenarios/manifest.ts` (32 rows) +
+`coverage.spec.ts` guard the set stays exactly 32, wired, no orphans.
+Registry-parity is enforced by a pytest that regex-extracts `TASK_NAMES`,
+`_WALKTHROUGH_LABELS`, the TS union, and the resolver's cases and asserts all
+four equal (a real 4-way drift bug this pass would otherwise have
+reintroduced).
+
+**7 new backend tools** (registry 18→25): `undo_dose`, `log_doses` (explicit
+multi-med list — distinct from `resolve_missed_doses`'s "all" filter),
+`snooze_dose` (today-only, `accessibility.dose_snoozes`, never touches the
+recurring schedule), `discontinue_medication` (archives, never deletes),
+`set_allergy_severity` (promotes the WHOLE allergies array from legacy
+strings to `{name,severity}` on first grade — order + other entries
+preserved), `add_symptom`, `add_care_note`. New generic `pending_bulk`
+propose→confirm slot (`{tool,items}` + `match_pending_bulk`) is the
+list-shaped-slot pattern `resolve_missed_doses`'s bespoke one anticipated.
+
+**Real bugs found and fixed live, beyond the headline (in the order hit):**
+1. **Chat handoff navigated on propose-only turns.** `ElderlyAIScreen`/
+   `AskMeiScreen`'s live `tool_end` handler navigated on ANY matching tool
+   dispatch, with no signal for "did it actually commit" — a propose-only
+   turn (e.g. `update_medication_dosage`'s first call) looked exactly like a
+   commit over SSE. Fixed: `ACTION_TARGETS` entries carry `confirmFirst`
+   (ground-truthed from each handler's real `confirmed` parameter); the live
+   navigate is gated on `!confirmFirst`, deferring to the turn's real
+   `actions[]` instead of guessing from `tool_end`.
+2. **`ScanLinkSheet` crashed the whole app to a blank page** on
+   camera-permission-denied: its cleanup called `scanner.stop()` on an
+   `html5-qrcode` instance that never reached "running", which throws
+   **synchronously** (before the existing `.catch(()=>{})` chain ever
+   attaches) — with no error boundary in the tree, uncaught. Would hit any
+   real caregiver who denies/lacks camera access. Fixed with a try/catch
+   around the synchronous call.
+3. **`window.__dwHighlightChange`/`__dwStartWalkthrough` existed only in
+   `ElderlyApp.tsx`** — the caregiver shell had `<ChangeHighlight>` and
+   `setHighlightChange` wired but no dev-hook registration, blocking ANY
+   caregiver-side highlight/walkthrough test. Fixed by mirroring the
+   registration into `App.tsx`'s caregiver branch.
+4. **That fix (3) introduced a real race**, caught only by a full 32-scenario
+   sweep: `App.tsx` never unmounts, so an unconditional
+   `useEffect(...,[])` registered the caregiver hooks once for the whole SPA
+   session and then raced `ElderlyApp`'s own registration of the *same two
+   window properties* the instant an elder signed in — whichever mounted
+   last won. Intermittently landed 9 other already-green elder-mode
+   scenarios on a plain Home screen with no overlay at all (the caregiver's
+   no-op handler had silently won). Fixed by gating the registration on
+   `appMode==="caregiver"` with `appMode` in the effect's deps, so it exists
+   only while that mode is actually active. **Re-verified by a completely
+   independent Phase-4 spot-check** (fresh stress-testing, tighter timing
+   than originally used, could not reproduce) as well as the orchestrator's
+   own repeat-each=3 runs.
+5. **Stuck black overlay on return from the chat→wizard hook.**
+   `ElderlyApp.handleWalkthroughStart` saved a walkthrough session for
+   `"onboarding"` before handing off, but that task's steps never run through
+   `ElderlyApp`'s own `<Walkthrough>` — on return, its mount-effect restored
+   the stale session and mounted an overlay whose first selector doesn't
+   exist there, an un-dismissable `rect=null` scrim with no Exit. Fixed by
+   never saving that session for this one task.
+6. **Silent real medical-data loss on onboarding re-entry.** The chat-hook
+   always opens `GuidedSetupWizard` with blank local state (no prefill
+   threading exists for this entry point), and `finish()` saves straight
+   from that state — so re-entering onboarding for an elder who'd already
+   been through it wiped their real conditions/allergies/routine. Fixed:
+   `handleElderOnboardingWalkthrough` now **re-queries the real profile**
+   (`fetchProfile`, not cached `patients[0]` state — which itself starts
+   from the mock `PATIENTS` default with non-empty conditions/allergies
+   until the async fetch resolves, a trap the first, narrower guard attempt
+   fell into) and refuses re-entry outright if any wizard-collected field is
+   already populated. `finish()` also now calls
+   `markWalkthroughCompleted("onboarding")` — the "not yet shown" prompt gate
+   could never actually suppress a second offer before, since nothing ever
+   marked it done.
+7. **`logDoseTaken`'s wrong-slot bug** (Phase 4 finding, see "second instance"
+   above).
+
+**Confirmed working as designed, not bugs:** `GuidedSetupWizard`'s stage
+position is a plain unpersisted `useState(0)` — exit-and-resume genuinely
+**restarts**, not resumes (proven with real evidence: every field lost, only
+the auth session itself remembered). The 28-step spotlight tour in
+`steps/onboarding.ts` has no `<Walkthrough>` mount site reachable from
+`appMode==="onboarding"` — the wizard is real, but its content is only ever
+driven as plain fields, never spotlighted; a pre-existing, larger gap than
+this pass's scope, documented not built.
+
+**Result:** all 32 scenarios green (`e2e/scenarios/s01`–`s32`), hermes pytest
+297, web vitest 103, typecheck/build clean, 4-way task-name parity green,
+coverage guard 32/32. **Honest caveat, consistent with every prior session's
+own disclosures:** a handful of scenarios (s13, s15, s32 seen this pass) flake
+under a tight back-to-back full-sweep on a REAL LLM tool-routing miss (the
+model chats instead of calling/confirming a tool on that particular turn) —
+never a deterministic UI/pacing/DB assertion, never the same scenario twice
+in a row, and every one has also passed cleanly in isolation multiple times.
+This is the same "LLM tool-selection is probabilistic" property documented
+since 2026-07-25 (`log_dose` firing ~1/3 of real turns pre-dating this pass
+entirely) — soul.md rail-strength tuning is the lever, not a code defect.
+Full patch-queue of lower-priority findings (LLM-routing reliability on
+`discontinue_medication` and the weekly-pattern confirm; the Home
+over-reporting "taken" on a multi-slot med while one slot is still pending;
+the med card not rendering `schedule.days`; the "Stopped" transient caption
+staying emerald/checkmark though the persistent ring is correctly amber;
+`PatientSwitcher`'s missing outside-click dismiss; a `conversation_turns`
+duplicate-row collision between `_persist`'s generic memory log and
+`add_care_note`'s own table use; a few E2E-helper gaps) relayed in-chat, not
+built this pass — none block the 32 scenarios' own correctness.
+
 ## 2026-07-26 — Bulk actions: full-space discovery, "tick all missed doses" root-caused & fixed on a generic bulk contract
 
 Four-phase orchestrated pass (user-directed): discovery subagents → live root-cause →
