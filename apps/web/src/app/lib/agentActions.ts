@@ -19,6 +19,14 @@ export const ACTION_TARGETS: Record<string, ActionTarget> = {
   update_medical_profile:  { elderly: "settings",      caregiver: "patient",  doneKey: "ai.doneUpdateProfile",   labelKey: "ai.labelProfile" },
   set_medication_reminder: { elderly: "prescriptions", caregiver: "patient",  doneKey: "ai.doneSetReminder",     labelKey: "ai.labelMedications" },
   log_refill:              { elderly: "prescriptions", caregiver: "patient",  doneKey: "ai.doneLogRefill",       labelKey: "ai.labelMedications" },
+  update_medication_dosage:{ elderly: "prescriptions", caregiver: "patient",  doneKey: "ai.doneUpdateDosage",    labelKey: "ai.labelMedications" },
+  log_doses:               { elderly: "home",          caregiver: "timeline", doneKey: "ai.doneLogDose",         labelKey: "ai.labelSchedule" },
+  undo_dose:               { elderly: "home",          caregiver: "timeline", doneKey: "ai.doneUndoDose",        labelKey: "ai.labelSchedule" },
+  snooze_dose:             { elderly: "home",          caregiver: "timeline", doneKey: "ai.doneSnoozeDose",      labelKey: "ai.labelSchedule" },
+  discontinue_medication:  { elderly: "prescriptions", caregiver: "patient",  doneKey: "ai.doneDiscontinue",     labelKey: "ai.labelMedications" },
+  set_allergy_severity:    { elderly: "settings",      caregiver: "patient",  doneKey: "ai.doneAllergySeverity", labelKey: "ai.labelProfile" },
+  add_symptom:             { elderly: "settings",      caregiver: "patient",  doneKey: "ai.doneAddSymptom",      labelKey: "ai.labelProfile" },
+  add_care_note:           { elderly: "home",          caregiver: "messages", doneKey: "ai.doneAddCareNote",     labelKey: "ai.labelMessages" },
 };
 
 // First committed action that has a known destination, if any.

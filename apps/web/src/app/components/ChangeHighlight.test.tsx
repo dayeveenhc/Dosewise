@@ -1,6 +1,8 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { act, cleanup, render, waitFor } from "@testing-library/react";
 import type { AgentAction } from "../lib/hermes";
+import { PACING } from "../lib/walkthrough/pacing";
+import { readPhaseLog, resetPhaseLog } from "../lib/walkthrough/phaseLog";
 import { ChangeHighlight } from "./ChangeHighlight";
 
 // jsdom implements none of these (layout APIs); they're irrelevant to what
@@ -19,6 +21,7 @@ beforeEach(() => {
   (globalThis as unknown as { ResizeObserver: unknown }).ResizeObserver = ResizeObserverStub;
   // HighlightCaption's frame hit-test; null → it falls back to viewport bounds.
   document.elementFromPoint = () => null;
+  resetPhaseLog();
 });
 
 afterEach(() => {
@@ -138,14 +141,15 @@ describe("ChangeHighlight — bulk actions ring every element simultaneously", (
     for (const card of cards) expect(card.classList.contains("change-highlight")).toBe(true);
     expect(errSpy).not.toHaveBeenCalled();
 
-    // Rings stay up while the poller keeps looking for the straggler.
-    act(() => { vi.advanceTimersByTime(3000); });
+    // Rings stay up while the poller keeps looking for the straggler (the
+    // dwell runs to PACING.HIGHLIGHT_DWELL_MIN_MS).
+    act(() => { vi.advanceTimersByTime(PACING.HIGHLIGHT_DWELL_MIN_MS - 500); });
     for (const card of cards) expect(card.classList.contains("change-highlight")).toBe(true);
     expect(errSpy).not.toHaveBeenCalled();
 
     // When the highlight ends, the missing entity is reported loudly — never
     // silently — and every ring is cleaned up.
-    act(() => { vi.advanceTimersByTime(2500); });
+    act(() => { vi.advanceTimersByTime(1000); });
     expect(errSpy).toHaveBeenCalledTimes(1);
     expect(String(errSpy.mock.calls[0][0])).toContain('data-testid="dose-uuid-missing"');
     expect(onDone).toHaveBeenCalledTimes(1);
@@ -194,5 +198,22 @@ describe("ChangeHighlight — bulk actions ring every element simultaneously", (
       expect(caption).not.toBeNull();
       expect(caption!.textContent).toBe("Updated: dose time 6:00 PM → 8:00 PM");
     });
+  });
+
+  it("records one DEV phase-log dwell entry, from first show to dismiss", () => {
+    vi.useFakeTimers();
+    addCard("uuid-log");
+    const onDone = vi.fn();
+
+    render(
+      <ChangeHighlight change={bulkChange(["uuid-log"])} mode="elderly" onNavigate={vi.fn()} onDone={onDone} />,
+    );
+    act(() => { vi.advanceTimersByTime(PACING.HIGHLIGHT_DWELL_MIN_MS + 500); });
+
+    expect(onDone).toHaveBeenCalledTimes(1);
+    const entries = readPhaseLog().filter(e => e.surface === "highlight");
+    expect(entries).toHaveLength(1);
+    expect(entries[0]).toMatchObject({ phase: "dwell", minMs: PACING.HIGHLIGHT_DWELL_MIN_MS });
+    expect(entries[0].endedAt).toBeGreaterThanOrEqual(entries[0].startedAt);
   });
 });

@@ -43,6 +43,12 @@ _WALKTHROUGH_LABELS = {
         "accepting a pending caregiver link request (Mei opens it, the patient taps "
         "Accept themselves, then Mei confirms it linked)"
     ),
+    "language_voice_tour": "changing language & voice settings",
+    "notifications_tour": "checking their notifications and alerts",
+    "emergency_contact_tour": "setting up an emergency contact",
+    "caregiver_view_toggle_tour": "switching between the patient and caregiver views",
+    "patient_schedule_tour": "seeing the patient's medication schedule",
+    "weekly_summary_tour": "reading the weekly summary",
 }
 
 _FALLBACK_PROMPT = """\

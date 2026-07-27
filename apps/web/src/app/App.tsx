@@ -9,6 +9,7 @@ import { supabase } from "./lib/supabase";
 import { ensureProfile, fetchElderMedications, fetchArchivedMedications, addMedication, archiveMedication, to24h } from "./lib/medications";
 import { fetchProfileRole, fetchProfile, calculateAge } from "./lib/profile";
 import type { WizardPrefill } from "./lib/profile";
+import { normalizeAllergies } from "./lib/changeHighlight";
 import { readStoredAppMode, persistAppMode } from "./lib/sessionState";
 import { WelcomeScreen } from "./screens/setup/WelcomeScreen";
 import { SetupMethodScreen } from "./screens/setup/SetupMethodScreen";
@@ -25,6 +26,8 @@ import { SettingsScreen } from "./screens/SettingsScreen";
 import { AddPrescriptionSheet } from "./screens/AddPrescriptionSheet";
 import { EditProfileSheet } from "./screens/EditProfileSheet";
 import { ElderlyApp } from "./screens/elderly/ElderlyApp";
+import { ChangeHighlight } from "./components/ChangeHighlight";
+import type { AgentAction } from "./lib/hermes";
 import { AccessibilityProvider } from "./accessibility.tsx";
 import { GuidedTour } from "./components/GuidedTour";
 import type { TourStep } from "./components/GuidedTour";
@@ -37,7 +40,9 @@ import { LanguageProvider, readStoredLanguage } from "./lib/languageContext";
 import { t } from "./lib/language";
 import { Walkthrough } from "./components/Walkthrough";
 import { resolveWalkthroughSteps } from "./lib/walkthrough/steps";
-import type { WalkthroughScreen, WalkthroughTaskName, WalkthroughParams } from "./lib/walkthrough/types";
+import { buildVerifyRunner } from "./lib/walkthrough/verify";
+import { PACING } from "./lib/walkthrough/pacing";
+import type { WalkthroughScreen, WalkthroughTaskName, WalkthroughParams, VerifyDirective, RevealDirective } from "./lib/walkthrough/types";
 import { defaultDoseTime } from "./components/TimesPicker";
 import { MED_COLOURS } from "./data/medications";
 import { loadWalkthroughSession, saveWalkthroughSession, clearWalkthroughSession } from "./lib/walkthroughState";
@@ -92,6 +97,14 @@ export default function App() {
   const [showScanLink, setShowScanLink] = useState(false);
   const [walkthroughTask, setWalkthroughTask] = useState<WalkthroughTaskName | null>(null);
   const [walkthroughStepIndex, setWalkthroughStepIndex] = useState(0);
+  // The committed change being pulse-highlighted caregiver-side (mirrors
+  // ElderlyApp's proof layer — the caregiver app previously had none).
+  const [highlightChange, setHighlightChange] = useState<AgentAction | null>(null);
+  // Set when an ACTIVE elder session asked for the "onboarding" walkthrough:
+  // the wizard is a separate stage, so we switch into it and this flag routes
+  // the wizard's exit/completion back into the elder app instead of the
+  // normal post-setup path.
+  const [resumeElderAfterWizard, setResumeElderAfterWizard] = useState(false);
 
   // Demo pop-up notifications — fires a couple of sample alerts a little
   // after landing in the caregiver app, so the top-of-screen toast UI has
@@ -250,9 +263,15 @@ export default function App() {
         mealTimes: profile?.details.mealTimes ?? prev[0].mealTimes,
         sleepTime: profile?.details.sleepTime ?? prev[0].sleepTime,
         travelPlan: profile?.details.travelPlan ?? prev[0].travelPlan,
+        doseSnoozes: profile?.details.dose_snoozes ?? prev[0].doseSnoozes,
         conditions: profile?.details.conditions?.length ? profile.details.conditions : prev[0].conditions,
+        // Allergy entries may be legacy strings or promoted {name, severity}
+        // objects — Patient.allergies stays a plain name list.
         allergies: profile?.details.allergies?.length || profile?.details.drugAllergies?.length
-          ? [...(profile.details.allergies ?? []), ...(profile.details.drugAllergies ?? [])]
+          ? [
+              ...normalizeAllergies(profile.details.allergies).map(a => a.name).filter(Boolean),
+              ...(profile.details.drugAllergies ?? []),
+            ]
           : prev[0].allergies,
         medications,
         pastMedications,
@@ -354,6 +373,51 @@ export default function App() {
     clearWalkthroughSession(elderId);
     setWalkthroughTask(null);
     setWalkthroughStepIndex(0);
+  };
+
+  // Caregiver-shell Verify: real re-queries for checks the signed-in
+  // CAREGIVER's own data can answer (their profile/accessibility); kinds that
+  // need ELDER data (medications, archived meds, the elder-side care-link
+  // check) get honest stubs that return false — never a faked pass this
+  // context can't actually prove.
+  const handleWalkthroughVerify = async (verify: VerifyDirective): Promise<boolean> => {
+    if (!elderId) return false;
+    return buildVerifyRunner({
+      elderId,
+      fetchProfile,
+      fetchAccessibility: async id => (await fetchProfile(id))?.details ?? null,
+      fetchElderMedications: async () => [],
+      fetchArchivedMedications: async () => [],
+      hasActiveCareLink: async () => false,
+    })(verify);
+  };
+
+  // Caregiver-shell Reveal: navigate + pulse the real element (minimal mirror
+  // of ElderlyApp's handleWalkthroughReveal; no caption tracker here).
+  const handleWalkthroughReveal = (reveal: RevealDirective) => {
+    if (reveal.screen.mode === "caregiver") setScreen(reveal.screen.screen);
+    if (reveal.pulse === false) return;
+    setTimeout(() => {
+      const el = document.querySelector<HTMLElement>(reveal.selector);
+      if (!el) return;
+      el.scrollIntoView({ block: "center", behavior: "smooth" });
+      el.classList.add("walk-reveal-pulse");
+      setTimeout(() => el.classList.remove("walk-reveal-pulse"), PACING.REVEAL_PULSE_MS);
+    }, PACING.NAVIGATE_MS);
+  };
+
+  // Chat→wizard entry: an ACTIVE elder session received start_walkthrough
+  // ("onboarding"), whose steps live on the wizard — a separate onboarding
+  // stage the elder shell can't spotlight. Switch into the wizard;
+  // resumeElderAfterWizard routes its exit/completion back into the elder app.
+  // Scenario s30 finishes the UX on top of this pathway.
+  const handleElderOnboardingWalkthrough = () => {
+    if (!session) return; // guarded: only an active session can round-trip back
+    setResumeElderAfterWizard(true);
+    setPendingMode("elderly");
+    setWizardPrefill(undefined);
+    setPreAuthStage("wizard");
+    setAppMode("onboarding");
   };
 
   const handleAddPrescription = async (med: Omit<Medication, "id" | "status"> & { times?: string[] }) => {
@@ -489,8 +553,22 @@ export default function App() {
                 hasSession={!!session}
                 elderId={elderId}
                 prefill={wizardPrefill}
-                onComplete={() => { setNeedsWizard(false); setWizardPrefill(undefined); setScreen("dashboard"); setJustOnboarded(true); setAppMode(pendingMode); }}
-                onExit={() => setPreAuthStage("method")}
+                onComplete={() => {
+                  setNeedsWizard(false); setWizardPrefill(undefined); setScreen("dashboard");
+                  if (resumeElderAfterWizard) {
+                    // Chat-initiated onboarding run: back into the elder app,
+                    // without re-triggering the post-setup auto-tour.
+                    setResumeElderAfterWizard(false);
+                    setAppMode("elderly");
+                  } else {
+                    setJustOnboarded(true);
+                    setAppMode(pendingMode);
+                  }
+                }}
+                onExit={() => {
+                  if (resumeElderAfterWizard) { setResumeElderAfterWizard(false); setAppMode("elderly"); }
+                  else setPreAuthStage("method");
+                }}
               />
             )}
           </div>
@@ -513,6 +591,7 @@ export default function App() {
                 onSignOut={() => supabase.auth.signOut()}
                 startTour={justOnboarded}
                 careMessages={careMessages}
+                onStartOnboardingWizard={handleElderOnboardingWalkthrough}
               />
             </AccessibilityProvider>
             <ToastStack
@@ -603,8 +682,8 @@ export default function App() {
                 onDismiss={id => setNotifications(prev => prev.filter(n => n.id !== id))}
               />
             )}
-            {screen === "ai" && <AskMeiScreen patient={patient} elderId={elderId} onUpdatePatient={handleUpdatePatient} onNavigate={setScreen} onMedsChanged={refreshMedications} onMedAdded={flagJustAdded} onWalkthroughStart={handleWalkthroughStart} />}
-            {screen === "messages" && <MessagesScreen />}
+            {screen === "ai" && <AskMeiScreen patient={patient} elderId={elderId} onUpdatePatient={handleUpdatePatient} onNavigate={setScreen} onMedsChanged={refreshMedications} onMedAdded={flagJustAdded} onHighlightChange={setHighlightChange} onWalkthroughStart={handleWalkthroughStart} />}
+            {screen === "messages" && <MessagesScreen elderId={elderId} />}
             {screen === "settings" && <SettingsScreen patient={patient} caregiverAccount={caregiverAccount} onSwitchMode={openModeSwitch} onSignOut={() => supabase.auth.signOut()} onEditProfile={() => setShowEditProfile(true)} />}
           </div>
 
@@ -645,6 +724,13 @@ export default function App() {
             onClick={id => { setToasts(prev => prev.filter(t => t.id !== id)); setScreen("notifications"); }}
           />
 
+          {/* Caregiver proof-of-change layer — mirrors ElderlyApp's wiring. */}
+          <ChangeHighlight
+            change={highlightChange}
+            mode="caregiver"
+            onNavigate={target => setScreen(target as Screen)}
+            onDone={() => setHighlightChange(null)}
+          />
           {showCaregiverTour && <GuidedTour steps={caregiverTourSteps} onFinish={() => setShowCaregiverTour(false)} />}
           {walkthroughTask && walkthroughSteps.length > 0 && (
             <Walkthrough
@@ -654,6 +740,8 @@ export default function App() {
               onNavigate={handleWalkthroughNavigate}
               onAdvance={handleWalkthroughAdvance}
               onExit={handleWalkthroughExit}
+              onVerify={handleWalkthroughVerify}
+              onReveal={handleWalkthroughReveal}
             />
           )}
           {showCaregiverTourConfirm && (

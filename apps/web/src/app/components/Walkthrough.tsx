@@ -1,10 +1,12 @@
 import { useEffect, useRef, useState } from "react";
 import { useLanguage } from "../lib/languageContext";
 import { t } from "../lib/language";
-import { onWalkthroughEvent } from "../lib/walkthrough/bus";
+import { onWalkthroughEvent, WALK_PHASE_EVENT } from "../lib/walkthrough/bus";
 import { runActStep } from "../lib/walkthrough/orchestrate";
+import { createPaceController } from "../lib/walkthrough/pace";
 import { calloutTop } from "../lib/walkthrough/placement";
 import { SpotlightCallout } from "./SpotlightCallout";
+import type { PaceController, PacePhaseState } from "../lib/walkthrough/pace";
 import type { RevealDirective, VerifyDirective, WalkthroughScreen, WalkthroughStep } from "../lib/walkthrough/types";
 
 interface Rect { top: number; left: number; width: number; height: number }
@@ -18,15 +20,19 @@ function sameScreen(a: WalkthroughScreen, b: WalkthroughScreen): boolean {
 
 /**
  * The guided-walkthrough spotlight overlay. Reuses GuidedTour's mask/measure/
- * callout-positioning approach (this app's existing passive product tour), but
- * NEVER advances on its own button tap — every step's completion condition
- * (step.waitFor) is a real user action on the real target, detected either via
- * a native DOM listener (bypassing React's synthetic events, since this
- * component doesn't own the spotlighted node) or an app-emitted event
- * (lib/walkthrough/bus.ts) for actions no generic DOM listener can tell apart
- * from a false positive (see types.ts's WaitFor doc). The ONLY button here is
- * "Exit walkthrough" — there is deliberately no Next/Back, so advancement can
- * never originate from this component itself.
+ * callout-positioning approach (this app's existing passive product tour).
+ *
+ * The advancement invariant: user-driven (waitFor) steps NEVER advance from
+ * this component — their completion condition is a real user action on the
+ * real target, detected via a native DOM listener (bypassing React's synthetic
+ * events, since this component doesn't own the spotlighted node) or an
+ * app-emitted event (lib/walkthrough/bus.ts; see types.ts's WaitFor doc), and
+ * they get no Next button (the consent taps depend on this). Autonomous steps
+ * auto-advance on the paced minimums (lib/walkthrough/pacing.ts via their
+ * step's PaceController), and the user may advance them EARLIER — but never
+ * before a phase's minimum — via Next, which only shortens dwell/animation and
+ * never performs or fakes the step's action (a running Verify always waits for
+ * its real result).
  */
 export function Walkthrough({
   steps,
@@ -65,8 +71,16 @@ export function Walkthrough({
   // of guessing (was a fixed 140 that overlapped/left gaps). Seeded with a sane
   // default until the first measure lands.
   const [calloutHeight, setCalloutHeight] = useState(150);
+  // Live pace telemetry for THIS step's controller (phase name + whether the
+  // paced minimum has elapsed), driving the Next/Replay buttons and the
+  // "checking…" label. Fed by the controller's bus events, not prop drilling.
+  const [paceState, setPaceState] = useState<PacePhaseState>({ phase: null, canAdvance: false });
+  const paceRef = useRef<PaceController | null>(null);
   const rootRef = useRef<HTMLDivElement>(null);
   const step = steps[stepIndex];
+  // Autonomous = Mei acts (or an act-less verify/reveal tail step). waitFor
+  // steps are user-driven and never get pace controls.
+  const autonomous = !!(step.act || (!step.waitFor && (step.verify || step.reveal)));
 
   // Enter the step: ask the host to navigate first (mirrors GuidedTour's
   // onEnter — this component never owns the Screen/ElderlyTab state itself).
@@ -142,16 +156,22 @@ export function Walkthrough({
   useEffect(() => {
     actedRef.current = false;
     setPhaseError(false);
+    setPaceState({ phase: null, canAdvance: false });
     // Autonomous path: an `act` step, OR an act-less step that carries
     // verify/reveal and is NOT user-driven (no waitFor) — e.g. the caregiver-
     // link flow's post-consent verify step. Plain highlight-only steps have a
     // waitFor and stay user-driven (handled by the effect below).
-    if (!(step.act || (!step.waitFor && (step.verify || step.reveal)))) return;
+    if (!autonomous) return;
     let cancelled = false;
+    // One PaceController per autonomous step: it floors every phase at the
+    // PACING minimums and carries the user's Next/Replay requests.
+    const pace = createPaceController({ stepId: step.id });
+    paceRef.current = pace;
     void (async () => {
-      // Act → (Verify) → (Reveal) → advance. A failed Verify STOPS here and
-      // shows an error — never advances, so success is never implied.
+      // (Navigate) → Act → (Verify) → (Reveal) → advance. A failed Verify STOPS
+      // here and shows an error — never advances, so success is never implied.
       const outcome = await runActStep(step, {
+        pace,
         onVerify,
         onReveal,
         onNavigate,
@@ -167,7 +187,21 @@ export function Walkthrough({
         if (step.verify) onVerifyFailed?.(step.verify);
       }
     })();
-    return () => { cancelled = true; };
+    return () => {
+      cancelled = true;
+      pace.cancel();
+      if (paceRef.current === pace) paceRef.current = null;
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [stepIndex]);
+
+  // Mirror the controller's phase telemetry (bus) into render state so the
+  // Next/Replay buttons and the "checking…" label track the live phase.
+  useEffect(() => {
+    if (!autonomous) return;
+    return onWalkthroughEvent(WALK_PHASE_EVENT, detail => {
+      setPaceState(detail as PacePhaseState);
+    });
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [stepIndex]);
 
@@ -281,7 +315,12 @@ export function Walkthrough({
         <SpotlightCallout
           stepIndex={stepIndex}
           stepCount={steps.length}
-          body={t(language, phaseError ? "walk.verifyFailed" : step.instructionKey)}
+          body={t(
+            language,
+            phaseError ? "walk.verifyFailed"
+              : paceState.phase === "verify" ? "walk.checking"
+              : step.instructionKey,
+          )}
           error={phaseError}
           top={top}
           counterKey="walk.stepCounter"
@@ -291,6 +330,29 @@ export function Walkthrough({
           <button onClick={onExit} className="text-xs text-muted-foreground font-medium px-2 py-1.5">
             {t(language, "walk.exit")}
           </button>
+          {/* Pace controls exist ONLY on autonomous steps — never on waitFor
+              steps (the consent taps must stay entirely user-performed), and
+              they only shorten dwell/animation, never perform the action. */}
+          {autonomous && !phaseError && (
+            <>
+              <div className="flex-1" />
+              {paceState.phase === "reveal" && (
+                <button
+                  onClick={() => paceRef.current?.requestReplay()}
+                  className="min-h-[44px] px-4 py-2 rounded-xl border border-border bg-card text-sm font-semibold text-foreground"
+                >
+                  {t(language, "walk.replay")}
+                </button>
+              )}
+              <button
+                disabled={!paceState.canAdvance}
+                onClick={() => paceRef.current?.requestNext()}
+                className="min-h-[44px] px-5 py-2 rounded-xl bg-primary text-primary-foreground text-sm font-semibold disabled:opacity-40"
+              >
+                {t(language, "walk.next")}
+              </button>
+            </>
+          )}
         </SpotlightCallout>
       )}
     </div>

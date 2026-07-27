@@ -69,6 +69,12 @@ class SessionState:
     # A pending update_medical_profile proposal ({"content", "replace"}), held until
     # the elder confirms so a profile write only ever saves what was read back.
     pending_profile: dict | None = None
+    # A pending BULK proposal shared by the multi-item propose→confirm tools
+    # ({"tool": str, "items": list}). Guarded on commit by
+    # tools/base.py::match_pending_bulk — the commit is honored only when the
+    # stash belongs to the SAME tool, so a confirm can never save a list that
+    # was never read back (or one proposed by a different tool).
+    pending_bulk: dict | None = None
     # True while a /setup re-run forces guided-intake mode even though a profile
     # already exists. Cleared when a profile update commits.
     intake_active: bool = False
@@ -110,6 +116,7 @@ class SessionRegistry:
         state.medical_profile = None
         state.medical_profile_loaded = False
         state.pending_profile = None
+        state.pending_bulk = None
         state.intake_active = False
         self._profile_to_chat[elder_id] = chat_id
 

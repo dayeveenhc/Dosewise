@@ -21,7 +21,8 @@ Dosewise/
 ├── services/hermes/      # Python 3.12 + FastAPI agent orchestrator — the
 │                         # security boundary; holds all external API keys
 ├── supabase/              # Postgres schema + RLS policies + seed data
-└── docs/architecture.md  # deeper architecture reference
+└── docs/                 # dated review docs (scenario catalog, gap analysis,
+                          # security verification) — no architecture.md exists
 ```
 
 `apps/mobile/` (Expo/React Native) is referenced in the root README but is

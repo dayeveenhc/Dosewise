@@ -1,6 +1,8 @@
 // The engine of Guided Auto-Navigation: Mei performs a step's action herself,
 // VISIBLY animated (never instant), so the elder can watch and follow. The
 // Walkthrough overlay awaits performAct(), then advances to Verify/Reveal.
+// All timing comes from PACING (lib/walkthrough/pacing.ts) — an ActDirective
+// carries no pace of its own.
 //
 // The crux gotcha this module exists to handle: a naive `el.value = x` on a
 // React-controlled input is silently dropped — React tracks the value on the
@@ -9,11 +11,8 @@
 // event, which is what React's onChange actually listens for.
 
 import { emitWalkthroughEvent } from "./bus";
+import { PACING } from "./pacing";
 import type { ActDirective } from "./types";
-
-// Deliberately unhurried so an elderly user can watch each character land and
-// follow along (was 55 — too fast to track). Retune here.
-const DEFAULT_PACE_MS = 100;
 
 // Native value setters, captured off the prototype so React's own descriptor
 // override doesn't swallow the assignment (see file header).
@@ -46,22 +45,33 @@ async function waitForEl(selector: string, shouldCancel: () => boolean, timeoutM
 async function typeInto(
   el: HTMLInputElement | HTMLTextAreaElement,
   value: string,
-  paceMs: number,
-  shouldCancel: () => boolean,
+  ctx: ActContext,
 ): Promise<void> {
   el.focus();
   for (let i = 1; i <= value.length; i++) {
-    if (shouldCancel()) return;
+    if (ctx.shouldCancel()) return;
+    // Next (after the phase minimum) fast-forwards: jump straight to the full
+    // value below — one native-setter call + events, never a faked action.
+    if (ctx.shouldFastForward?.()) break;
     setInputValue(el, value.slice(0, i));
-    await sleep(paceMs);
+    await sleep(PACING.FILL_MS_PER_CHAR);
   }
   setInputValue(el, value); // ensure the full value even if a char coalesced
   el.dispatchEvent(new Event("change", { bubbles: true }));
   el.blur();
 }
 
+// "Look here" ring shown on the target for `ms` before Mei touches it, so the
+// elder's eye lands on the field/button before anything changes. The caller
+// removes the class once the act is done.
+async function preHighlight(el: HTMLElement, ms: number, ctx: ActContext): Promise<void> {
+  el.classList.add("walk-field-prehighlight");
+  if (!ctx.shouldFastForward?.()) await sleep(ms);
+}
+
 // A deliberate press so a programmatic tap reads as a real, watchable action —
-// a clear press-in, a beat, then release (was a quick 130/80ms flash).
+// a clear press-in, a beat, then release. The 280/180 micro-animation is
+// engine-local (not pacing); the pre-click highlight window is PACING-driven.
 async function pressPulse(el: HTMLElement, shouldCancel: () => boolean): Promise<void> {
   const prevTransition = el.style.transition;
   const prevTransform = el.style.transform;
@@ -89,6 +99,9 @@ export interface ActContext {
   // Set true when the overlay unmounts (Exit) mid-animation, so a running act
   // bails instead of driving a torn-down screen.
   shouldCancel: () => boolean;
+  // From the step's PaceController: true once the user tapped Next after the
+  // phase minimum — in-flight typing completes instantly, waits collapse.
+  shouldFastForward?: () => boolean;
 }
 
 /**
@@ -105,7 +118,13 @@ export async function performAct(act: ActDirective, ctx: ActContext): Promise<vo
     switch (act.kind) {
       case "fill":
         if (el instanceof HTMLInputElement || el instanceof HTMLTextAreaElement) {
-          await typeInto(el, act.value, act.paceMs ?? DEFAULT_PACE_MS, ctx.shouldCancel);
+          try {
+            await preHighlight(el, PACING.FIELD_PREHIGHLIGHT_MS, ctx);
+            if (ctx.shouldCancel()) return;
+            await typeInto(el, act.value, ctx);
+          } finally {
+            el.classList.remove("walk-field-prehighlight");
+          }
         }
         break;
       case "select":
@@ -115,7 +134,13 @@ export async function performAct(act: ActDirective, ctx: ActContext): Promise<vo
         }
         break;
       case "click":
-        await pressPulse(el, ctx.shouldCancel);
+        try {
+          await preHighlight(el, PACING.PRE_CLICK_MS, ctx);
+          if (ctx.shouldCancel()) return;
+          await pressPulse(el, ctx.shouldCancel);
+        } finally {
+          el.classList.remove("walk-field-prehighlight");
+        }
         if (!ctx.shouldCancel()) el.click();
         break;
       case "upload":

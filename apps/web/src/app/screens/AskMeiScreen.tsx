@@ -3,10 +3,13 @@ import type { ChangeEvent } from "react";
 import { Send, TrendingUp, Plane, Check, Sparkles, ChevronUp, Camera, FileText, Pill, Globe, Mic, Volume2, X, Trash2, AlertTriangle } from "lucide-react";
 import type { Patient, Screen } from "../types";
 import { agentTurnStream, fileToBase64 } from "../lib/hermes";
-import type { AgentTurnEvent } from "../lib/hermes";
+import type { AgentTurnEvent, AgentAction } from "../lib/hermes";
 import { firstRoutableAction, ACTION_TARGETS } from "../lib/agentActions";
+import { firstHighlightable } from "../lib/changeHighlight";
+import { emitWalkthroughEvent } from "../lib/walkthrough/bus";
 import { fetchProfile } from "../lib/profile";
 import type { WalkthroughTaskName, WalkthroughParams } from "../lib/walkthrough/types";
+import { PACING } from "../lib/walkthrough/pacing";
 import { WeeklySummarySheet } from "./WeeklySummarySheet";
 import { TravelModeSheet } from "./TravelModeSheet";
 import { useLanguage } from "../lib/languageContext";
@@ -41,16 +44,16 @@ function renderWithBold(text: string) {
 }
 
 // A single feature tile in the "Quick help" launcher.
-function FeatureBtn({ icon: Icon, label, onClick, className = "" }: { icon: any; label: string; onClick: () => void; className?: string }) {
+function FeatureBtn({ icon: Icon, label, onClick, className = "", "data-walk": dataWalk }: { icon: any; label: string; onClick: () => void; className?: string; "data-walk"?: string }) {
   return (
-    <button onClick={onClick} className={`h-[88px] flex flex-col items-center justify-center gap-1.5 bg-card border border-border rounded-2xl px-2 text-center active:bg-muted transition-colors ${className}`}>
+    <button onClick={onClick} data-walk={dataWalk} className={`h-[88px] flex flex-col items-center justify-center gap-1.5 bg-card border border-border rounded-2xl px-2 text-center active:bg-muted transition-colors ${className}`}>
       <div className="w-10 h-10 rounded-xl bg-primary/10 flex items-center justify-center shrink-0"><Icon size={18} className="text-primary" /></div>
       <span className="text-[12px] font-bold text-foreground leading-tight">{label}</span>
     </button>
   );
 }
 
-export function AskMeiScreen({ patient, elderId, onUpdatePatient, onNavigate, onMedsChanged, onMedAdded, onWalkthroughStart }: { patient: Patient; elderId?: string; onUpdatePatient: (p: Patient) => void; onNavigate?: (screen: Screen) => void; onMedsChanged?: () => void | Promise<void>; onMedAdded?: (name: string) => void; onWalkthroughStart?: (taskName: WalkthroughTaskName, params?: WalkthroughParams) => void }) {
+export function AskMeiScreen({ patient, elderId, onUpdatePatient, onNavigate, onMedsChanged, onMedAdded, onHighlightChange, onWalkthroughStart }: { patient: Patient; elderId?: string; onUpdatePatient: (p: Patient) => void; onNavigate?: (screen: Screen) => void; onMedsChanged?: () => void | Promise<void>; onMedAdded?: (name: string) => void; onHighlightChange?: (action: AgentAction) => void; onWalkthroughStart?: (taskName: WalkthroughTaskName, params?: WalkthroughParams) => void }) {
   const { language, setLanguage } = useLanguage();
   const { voiceOutput, setVoiceOutput } = useAccessibility();
   const [messages, setMessages] = useState<ChatMsg[]>(() => [
@@ -176,7 +179,8 @@ export function AskMeiScreen({ patient, elderId, onUpdatePatient, onNavigate, on
           { id: LIVE_STEP_ID, role: "agent", text: t(language, "ai.openingLabel", { done, detail: "", label }), time: nowLabel(), isConfirmation: true },
         ]);
         scrollToBottom();
-        if (onNavigate) setTimeout(() => onNavigate(target.caregiver), 600);
+        // Screen-transition settle shared with the walkthrough engine.
+        if (onNavigate) setTimeout(() => onNavigate(target.caregiver), PACING.NAVIGATE_MS);
       }
     };
 
@@ -186,6 +190,9 @@ export function AskMeiScreen({ patient, elderId, onUpdatePatient, onNavigate, on
     scrollToBottom();
     speak(reply);
     if (walkthrough) onWalkthroughStart?.(walkthrough.task_name as WalkthroughTaskName, walkthrough.params);
+    // Gated for a walkthrough's "agent-action-committed" step: the real
+    // committed_actions this turn, never tools_used (mirrors ElderlyAIScreen).
+    if (actions.length) emitWalkthroughEvent("agent-action-committed", { tools: actions.map(a => a.tool) });
     // Refresh medication state whenever the agent committed *any* write this turn
     // (not only routable ones) — awaited + caught so a failed refetch is visible,
     // not silently swallowed while chat has already reported success.
@@ -196,10 +203,16 @@ export function AskMeiScreen({ patient, elderId, onUpdatePatient, onNavigate, on
         console.warn("[dosewise] medication refresh after agent write failed:", err);
       }
     }
-    // Flag a freshly added prescription so the timeline/patient list highlights
-    // it as visible proof the dose (and its dosage) really landed.
-    const added = actions.find(a => a.tool === "add_prescription");
-    if (added?.name) onMedAdded?.(added.name);
+    // Canonical proof-of-change (mirrors ElderlyAIScreen): highlight the EXACT
+    // record by entity_type/entity_id; fall back to the legacy name-keyed card
+    // flag only when the action isn't highlightable.
+    const highlight = firstHighlightable(actions);
+    if (highlight) {
+      onHighlightChange?.(highlight);
+    } else {
+      const added = actions.find(a => a.tool === "add_prescription");
+      if (added?.name) onMedAdded?.(added.name);
+    }
     // The live tool_end handler above already showed the confirmation bubble and
     // navigated for the common case. This only fires as a fallback — e.g. a
     // routable action whose event never arrived (older/non-streaming path).
@@ -467,7 +480,7 @@ export function AskMeiScreen({ patient, elderId, onUpdatePatient, onNavigate, on
             </div>
 
             <div className="grid grid-cols-2 gap-2">
-              <FeatureBtn icon={TrendingUp} label={t(language, "common.weeklySummary")} onClick={() => { setQuickOpen(false); setShowSummary(true); }} />
+              <FeatureBtn icon={TrendingUp} label={t(language, "common.weeklySummary")} data-walk="cg-weeklysummary-tile" onClick={() => { setQuickOpen(false); setShowSummary(true); }} />
               <FeatureBtn icon={Plane}      label={t(language, "common.travelMode")}   onClick={() => { setQuickOpen(false); setShowTravel(true); }} />
               <FeatureBtn icon={Camera}     label={t(language, "common.addPrescription")} onClick={() => { setQuickOpen(false); setPickerFor("rx"); }} />
               <FeatureBtn icon={FileText}   label={t(language, "ai.updateProfile")}       onClick={() => { setQuickOpen(false); setPickerFor("report"); }} />

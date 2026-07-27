@@ -1,6 +1,7 @@
 """Medication tools: list_medications, add_prescription (scan -> propose -> confirm),
 set_medication_reminder (propose -> confirm daily reminder times),
-update_medication_dosage (propose -> confirm a dose change on an existing med)."""
+update_medication_dosage (propose -> confirm a dose change on an existing med),
+discontinue_medication (propose -> confirm archiving a med — never a delete)."""
 
 from __future__ import annotations
 
@@ -9,7 +10,15 @@ from datetime import UTC, datetime
 from uuid import uuid4
 
 from ..dosing import WEEKDAY_NAMES, WEEKDAYS
-from .base import ToolContext, find_medications, first_id, match_pending, record_action, register
+from .base import (
+    ToolContext,
+    find_medications,
+    first_id,
+    match_pending,
+    match_pending_bulk,
+    record_action,
+    register,
+)
 from .drug_info import interaction_text, label_mentions
 
 log = logging.getLogger("hermes.tools.medications")
@@ -533,7 +542,124 @@ async def update_medication_dosage(
     return f"Saved. I updated {med['name']} to {dosage}."
 
 
+_DISCONTINUE_SCHEMA = {
+    "name": "discontinue_medication",
+    "description": (
+        "Stop a medication the elder no longer takes ('stop taking my X', "
+        "'discontinue X', 'remove X'). Marks it Stopped in the record — it is "
+        "NEVER deleted; the history stays visible under past medications. "
+        "SAFETY: propose→confirm — first call with confirmed=false to read the "
+        "stop back, and only call again with confirmed=true after the user's "
+        "explicit yes. Not for a dose change (update_medication_dosage) or a "
+        "time change (set_medication_reminder)."
+    ),
+    "input_schema": {
+        "type": "object",
+        "properties": {
+            "medication_name": {
+                "type": "string",
+                "description": "Name of the medication to stop (already on file).",
+            },
+            "confirmed": {
+                "type": "boolean",
+                "description": "false = propose only (no write); true = commit "
+                "after the user confirmed.",
+            },
+        },
+        "required": ["medication_name"],
+    },
+}
+
+
+async def discontinue_medication(
+    ctx: ToolContext, medication_name: str, confirmed: bool = False
+) -> str:
+    if not confirmed:
+        meds = await find_medications(
+            ctx, medication_name, columns="id,name,dosage", limit=None
+        )
+        # Same-name duplicates collapse to the first row; DIFFERENT matched
+        # names are a genuine ambiguity — ask, never guess which to stop.
+        distinct: dict[str, dict] = {}
+        for m in meds:
+            distinct.setdefault((m.get("name") or "").strip().lower(), m)
+        if not distinct:
+            return (
+                f"No medication named '{medication_name}' is on file, so there's "
+                "nothing to stop. Ask the user to confirm the name, or list "
+                "their medications first."
+            )
+        if len(distinct) > 1:
+            names = ", ".join(m.get("name") or "?" for m in distinct.values())
+            return (
+                f"More than one medication matches '{medication_name}': {names}. "
+                "Ask the user which one they mean, then call "
+                "discontinue_medication again with that exact name."
+            )
+        med = next(iter(distinct.values()))
+        if ctx.session is not None:
+            ctx.session.pending_bulk = {
+                "tool": "discontinue_medication",
+                "items": [{"medication_id": med["id"], "name": med["name"]}],
+            }
+            ctx.session.awaiting_confirmation = True
+        label = med["name"] + (f" {med['dosage']}" if med.get("dosage") else "")
+        return (
+            f"PROPOSED (not yet saved). Stop {label} — it stays in the record "
+            "as Stopped, never deleted. Read this back and ask the user one "
+            "yes/no before saving."
+        )
+
+    # confirmed=true: only honor a confirm for the med that was read back.
+    items = match_pending_bulk(ctx, "discontinue_medication")
+    item = items[0] if items else None
+    stashed = ((item or {}).get("name") or "").strip().lower()
+    if item is None or stashed != (medication_name or "").strip().lower():
+        return (
+            "Refused to save: no matching pending stop was confirmed. Propose "
+            "it first (confirmed=false) and get the user's explicit yes."
+        )
+    if ctx.session is not None:
+        ctx.session.pending_bulk = None
+        ctx.session.awaiting_confirmation = False
+
+    # Re-read fresh by id (never trust the stash's snapshot of the row).
+    meds = await ctx.db().select(
+        "medications",
+        columns="id,name,archived",
+        filters={"id": f"eq.{item.get('medication_id')}"},
+        limit=1,
+    )
+    if not meds or meds[0].get("archived"):
+        return (
+            f"{item.get('name') or 'That medication'} is no longer active on "
+            "file — there's nothing to stop. Tell the user honestly."
+        )
+    med = meds[0]
+    # NEVER a delete: archived=true is the Stopped state the UI shows.
+    await ctx.db().update(
+        "medications",
+        {"archived": True},
+        filters={"id": f"eq.{med['id']}"},
+        returning=False,
+    )
+    record_action(
+        ctx,
+        tool="discontinue_medication",
+        summary=f"{med['name']} stopped",
+        entity_type="medication",
+        entity_id=med["id"],
+        changed_fields={"status": {"before": "active", "after": "discontinued"}},
+        name=med["name"],
+    )
+    return (
+        f"Done. {med['name']} is marked as Stopped — it stays in the record, "
+        "nothing was deleted."
+    )
+
+
 register(_LIST_SCHEMA, list_medications)
 register(_ADD_SCHEMA, add_prescription)
 register(_REMINDER_SCHEMA, set_medication_reminder)
 register(_SCHEMA_UPDATE_DOSAGE, update_medication_dosage)
+register(_DISCONTINUE_SCHEMA, discontinue_medication)

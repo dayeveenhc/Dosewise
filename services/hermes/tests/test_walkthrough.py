@@ -2,6 +2,9 @@
 
 from __future__ import annotations
 
+import re
+from pathlib import Path
+
 from fakes import FakeDB, FakeSupabase
 from hermes.agent.prompts import system_prompt_for
 from hermes.channels.session import SessionState
@@ -63,3 +66,54 @@ def _undone_line(prompt: str) -> str:
         if "Walkthroughs this patient has NOT been shown yet" in line:
             return line
     raise AssertionError("undone-walkthroughs line not found in prompt")
+
+
+def test_task_names_parity():
+    """All four owners of the walkthrough task-name vocabulary must agree:
+    (1) tools/walkthrough.py TASK_NAMES, (2) agent/prompts.py
+    _WALKTHROUGH_LABELS keys, (3) the web WalkthroughTaskName union
+    (types.ts), (4) the web step-resolver mapping (steps/index.ts). STRICT by
+    design — a name added on one side only must fail here with the exact set
+    difference."""
+    repo = Path(__file__).resolve().parents[3]
+    hermes_src = repo / "services" / "hermes" / "src" / "hermes"
+    web_walk = repo / "apps" / "web" / "src" / "app" / "lib" / "walkthrough"
+
+    tools_py = (hermes_src / "tools" / "walkthrough.py").read_text(encoding="utf-8")
+    m = re.search(r"TASK_NAMES\s*=\s*\[(.*?)\]", tools_py, re.S)
+    assert m, "TASK_NAMES list not found in tools/walkthrough.py"
+    tool_names = set(re.findall(r'"([a-z0-9_]+)"', m.group(1)))
+    # Sanity: the regex read the same list the import exposes.
+    assert tool_names == set(TASK_NAMES)
+
+    prompts_py = (hermes_src / "agent" / "prompts.py").read_text(encoding="utf-8")
+    m = re.search(r"_WALKTHROUGH_LABELS\s*=\s*\{(.*?)\n\}", prompts_py, re.S)
+    assert m, "_WALKTHROUGH_LABELS dict not found in agent/prompts.py"
+    label_keys = set(re.findall(r'"([a-z0-9_]+)"\s*:', m.group(1)))
+
+    types_ts = (web_walk / "types.ts").read_text(encoding="utf-8")
+    m = re.search(r"WalkthroughTaskName\s*=(.*?);", types_ts, re.S)
+    assert m, "WalkthroughTaskName union not found in types.ts"
+    union_body = re.sub(r"//[^\n]*", "", m.group(1))  # strip line comments
+    ts_union = set(re.findall(r'"([a-z0-9_]+)"', union_body))
+
+    steps_ts = (web_walk / "steps" / "index.ts").read_text(encoding="utf-8")
+    ts_mapping = set(re.findall(r'case\s+"([a-z0-9_]+)"', steps_ts))
+    # link_caregiver is resolved via an if-check, not a case.
+    ts_mapping |= set(re.findall(r'taskName\s*===\s*"([a-z0-9_]+)"', steps_ts))
+
+    base = set(TASK_NAMES)
+    others = {
+        "agent/prompts.py _WALKTHROUGH_LABELS keys": label_keys,
+        "apps/web types.ts WalkthroughTaskName union": ts_union,
+        "apps/web steps/index.ts mapping keys": ts_mapping,
+    }
+    problems = [
+        f"- {label}: missing={sorted(base - got)} extra={sorted(got - base)}"
+        for label, got in others.items()
+        if got != base
+    ]
+    assert not problems, (
+        "walkthrough task names out of sync with tools/walkthrough.py "
+        f"TASK_NAMES ({len(base)} names):\n" + "\n".join(problems)
+    )

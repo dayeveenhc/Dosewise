@@ -8,6 +8,8 @@ import {
   findEntityElement,
   highlightableEntities,
   isHighlightable,
+  normalizeAllergies,
+  slugify,
   targetFor,
   testIdFor,
 } from "./changeHighlight";
@@ -308,5 +310,121 @@ describe("findEntityElement — exact then suffix-by-id fallback", () => {
     document.body.innerHTML = `<div data-testid="medication-other">card</div>`;
     const a: AgentAction = { tool: "x", entity_type: "medication", entity_id: "missing" };
     expect(findEntityElement(a)).toBeNull();
+  });
+});
+
+describe("describeChange — 2026-07 tool verbs (undo/discontinue/snooze/severity/symptom)", () => {
+  it("an undone dose (taken → pending) reads as Unmarked with the med name", () => {
+    const a: AgentAction = {
+      tool: "undo_dose",
+      summary: "Metformin un-ticked",
+      name: "Metformin",
+      entity_type: "dose",
+      entity_id: "med-1",
+      changed_fields: { status: { before: "taken", after: "pending" } },
+    };
+    expect(describeChange(a)).toEqual({ verb: "Unmarked", text: "Metformin" });
+  });
+
+  it("a discontinued medication reads as Stopped with the med name", () => {
+    const a: AgentAction = {
+      tool: "discontinue_medication",
+      summary: "Aspirin stopped",
+      name: "Aspirin",
+      entity_type: "medication",
+      entity_id: "med-2",
+      changed_fields: { status: { before: "active", after: "discontinued" } },
+    };
+    expect(describeChange(a)).toEqual({ verb: "Stopped", text: "Aspirin" });
+  });
+
+  it("a snooze reads as a 12h reminder move, even on a first snooze (before null)", () => {
+    const a: AgentAction = {
+      tool: "snooze_dose",
+      summary: "Metformin snoozed to 8:30 PM",
+      name: "Metformin",
+      entity_type: "dose",
+      entity_id: "med-1",
+      changed_fields: { snoozed_until: { before: null, after: "20:30" } },
+    };
+    // NOT "Added" despite before == null — the snooze branch outranks all-new.
+    expect(describeChange(a)).toEqual({ verb: "Snoozed", text: "reminder to 8:30 PM today" });
+  });
+
+  it("an allergy severity grade reads as '<name> allergy — before → after', unset when new", () => {
+    const base: AgentAction = {
+      tool: "set_allergy_severity",
+      summary: "Penicillin allergy: severe",
+      name: "Penicillin",
+      entity_type: "allergy",
+      entity_id: "penicillin",
+      changed_fields: { severity: { before: null, after: "severe" } },
+    };
+    expect(describeChange(base)).toEqual({ verb: "Updated", text: "Penicillin allergy — unset → severe" });
+    const regraded = { ...base, changed_fields: { severity: { before: "mild", after: "severe" } } };
+    expect(describeChange(regraded)).toEqual({ verb: "Updated", text: "Penicillin allergy — mild → severe" });
+  });
+
+  it("a symptom report reads as Noted with the symptom text, not Added", () => {
+    const a: AgentAction = {
+      tool: "add_symptom",
+      summary: "dizzy after lunch",
+      entity_type: "symptom",
+      entity_id: "abc123",
+      changed_fields: { symptom: { before: null, after: "dizzy after lunch" } },
+    };
+    expect(describeChange(a)).toEqual({ verb: "Noted", text: "dizzy after lunch" });
+  });
+
+  it("a bulk log_doses batch reads as Taken with the backend summary", () => {
+    const a: AgentAction = {
+      tool: "log_doses",
+      summary: "2 doses marked taken",
+      entities: [
+        { entity_type: "dose", entity_id: "med-1", changed_fields: { status: { before: "pending", after: "taken" } }, name: "Metformin" },
+        { entity_type: "dose", entity_id: "med-2", changed_fields: { status: { before: null, after: "taken" } }, name: "Lisinopril" },
+      ],
+    };
+    expect(describeBatch(a)).toEqual({ verb: "Taken", text: "2 doses marked taken" });
+  });
+
+  it("the new entity types resolve to their home screens", () => {
+    expect(ENTITY_TARGETS.allergy).toEqual({ elderly: "settings", caregiver: "patient" });
+    expect(ENTITY_TARGETS.symptom).toEqual({ elderly: "settings", caregiver: "patient" });
+    expect(ENTITY_TARGETS.care_note).toEqual({ elderly: "home", caregiver: "messages" });
+  });
+});
+
+describe("slugify — mirrors the backend allergy slug rule exactly", () => {
+  it("lowercases and joins word runs with single dashes", () => {
+    expect(slugify("Penicillin G")).toBe("penicillin-g"); // the docstring's own example
+    expect(slugify("Ibuprofen 400mg")).toBe("ibuprofen-400mg");
+  });
+
+  it("collapses every run of non-[a-z0-9] chars to ONE dash and trims edge dashes", () => {
+    expect(slugify("  Aspirin!!  ")).toBe("aspirin");
+    expect(slugify("--Weird__  Name--")).toBe("weird-name");
+    expect(slugify("A&B / C")).toBe("a-b-c");
+  });
+
+  it("a name with no [a-z0-9] at all slugs to the empty string", () => {
+    expect(slugify("!!!")).toBe("");
+  });
+});
+
+describe("normalizeAllergies — legacy strings and promoted objects, one shape out", () => {
+  it("handles a mixed list", () => {
+    expect(normalizeAllergies(["Penicillin", { name: "Aspirin", severity: "severe" }, { name: "Latex" }])).toEqual([
+      { name: "Penicillin", severity: null },
+      { name: "Aspirin", severity: "severe" },
+      { name: "Latex", severity: null },
+    ]);
+  });
+
+  it("non-arrays and junk entries normalize safely", () => {
+    expect(normalizeAllergies(undefined)).toEqual([]);
+    expect(normalizeAllergies("Penicillin")).toEqual([]);
+    expect(normalizeAllergies([{ severity: "mild" }])).toEqual([{ name: "", severity: "mild" }]);
+    expect(normalizeAllergies([{ name: "X", severity: 3 }])).toEqual([{ name: "X", severity: null }]);
   });
 });

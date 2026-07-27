@@ -1,16 +1,18 @@
-"""Dose logging: log_dose + resolve_missed_doses."""
+"""Dose logging: log_dose, resolve_missed_doses, log_doses (explicit-list bulk),
+undo_dose (flip a mistaken tick back), snooze_dose (today-only reminder snooze)."""
 
 from __future__ import annotations
 
-from datetime import UTC, datetime, time
+from datetime import UTC, datetime, time, timedelta
 from zoneinfo import ZoneInfo
 
 from ..config import get_settings
-from ..dosing import _parse_hhmm, scheduled_today
+from ..dosing import _parse_hhmm, scheduled_today, start_of_day_utc
 from .base import (
     ToolContext,
     find_medications,
     first_id,
+    match_pending_bulk,
     record_action,
     record_bulk_action,
     register,
@@ -219,6 +221,36 @@ def _ask_slots(name: str, slots: list[str]) -> str:
     )
 
 
+async def _resolve_one_med(
+    ctx: ToolContext, medication_name: str, tool: str
+) -> tuple[dict | None, str | None]:
+    """Exactly one non-archived med for ``medication_name``, or ``(None, reply)``.
+
+    Shared by every by-name dose tool. Same-name duplicate rows collapse to the
+    first; DIFFERENT matched names (a substring match hit several meds) are a
+    genuine ambiguity — the reply asks which, naming ``tool`` for the retry.
+    """
+    meds = await find_medications(
+        ctx, medication_name, columns="id,name,schedule", limit=None
+    )
+    if not meds:
+        return None, (
+            f"No medication named '{medication_name}' is on file. Ask the user to "
+            "confirm the name, or list their medications first."
+        )
+    distinct: dict[str, dict] = {}
+    for m in meds:
+        distinct.setdefault((m.get("name") or "").strip().lower(), m)
+    if len(distinct) > 1:
+        names = ", ".join(m.get("name") or "?" for m in distinct.values())
+        return None, (
+            f"More than one medication matches '{medication_name}': {names}. "
+            f"Ask the user which one they mean, then call {tool} again with "
+            "that exact name."
+        )
+    return next(iter(distinct.values())), None
+
+
 async def log_dose(
     ctx: ToolContext,
     medication_name: str | None = None,
@@ -227,27 +259,9 @@ async def log_dose(
     want = _parse_slot(slot)
 
     if medication_name:
-        meds = await find_medications(
-            ctx, medication_name, columns="id,name,schedule", limit=None
-        )
-        if not meds:
-            return (
-                f"No medication named '{medication_name}' is on file. Ask the user to "
-                "confirm the name, or list their medications first."
-            )
-        # Same-name duplicates collapse to the first row; DIFFERENT names (a
-        # substring match hit several meds) are a genuine ambiguity — ask.
-        distinct: dict[str, dict] = {}
-        for m in meds:
-            distinct.setdefault((m.get("name") or "").strip().lower(), m)
-        if len(distinct) > 1:
-            names = ", ".join(m.get("name") or "?" for m in distinct.values())
-            return (
-                f"More than one medication matches '{medication_name}': {names}. "
-                "Ask the user which one they mean, then call log_dose again with "
-                "that exact name."
-            )
-        med = next(iter(distinct.values()))
+        med, problem = await _resolve_one_med(ctx, medication_name, "log_dose")
+        if med is None:
+            return problem
         kind, payload = await _dose_plan(ctx, med, want)
         if kind == "ask":
             return _ask_slots(med["name"], payload)
@@ -465,3 +479,444 @@ async def resolve_missed_doses(ctx: ToolContext, confirmed: bool = False) -> str
 
 
 register(_RESOLVE_SCHEMA, resolve_missed_doses)
+
+
+_UNDO_SCHEMA = {
+    "name": "undo_dose",
+    "description": (
+        "Undo a dose that was marked taken TODAY by mistake ('actually I didn't "
+        "take it', 'undo that', 'I ticked the wrong one'). Flips the most "
+        "recently logged dose back to not-taken, immediately — undoing a fresh "
+        "mistake needs no confirmation round-trip. Pass the BARE medication "
+        "name when the user said one; omit it to undo the last dose logged "
+        "today."
+    ),
+    "input_schema": {
+        "type": "object",
+        "properties": {
+            "medication_name": {
+                "type": "string",
+                "description": "Bare name of the medication to un-tick (no dosage).",
+            },
+        },
+        "required": [],
+    },
+}
+
+
+async def undo_dose(ctx: ToolContext, medication_name: str | None = None) -> str:
+    tz_name = get_settings().hermes_tz
+    zone = ZoneInfo(tz_name)
+    now = _now_utc()
+
+    med: dict | None = None
+    if medication_name:
+        med, problem = await _resolve_one_med(ctx, medication_name, "undo_dose")
+        if med is None:
+            return problem
+
+    filters = {
+        "status": "eq.taken",
+        # "Today" is the elder's wall-clock day: logged_at at/after local midnight.
+        "logged_at": f"gte.{start_of_day_utc(now, tz_name)}",
+    }
+    if med is not None:
+        filters["medication_id"] = f"eq.{med['id']}"
+    rows = await ctx.db().select(
+        "doses", columns="id,medication_id,scheduled_at,logged_at", filters=filters
+    )
+    rows = sorted(rows or [], key=lambda r: str(r.get("logged_at") or ""), reverse=True)
+    if not rows:
+        scope = f" of {med['name']}" if med is not None else ""
+        return (
+            f"No dose{scope} was logged as taken today, so there's nothing to "
+            "undo. Tell the user honestly — nothing was changed."
+        )
+
+    dose = rows[0]
+    if med is None:
+        meds = await ctx.db().select(
+            "medications",
+            columns="id,name",
+            filters={"id": f"eq.{dose['medication_id']}"},
+            limit=1,
+        )
+        med = meds[0] if meds else {"id": dose["medication_id"], "name": "your medicine"}
+
+    await ctx.db().update(
+        "doses",
+        {"status": "pending", "logged_at": None, "logged_by": None},
+        filters={"id": f"eq.{dose['id']}"},
+        returning=False,
+    )
+    slot = _fmt_slot(_local_hhmm(dose["scheduled_at"], zone))
+    record_action(
+        ctx,
+        tool="undo_dose",
+        summary=f"{med['name']} un-ticked",
+        entity_type="dose",
+        entity_id=med["id"],
+        changed_fields={"status": {"before": "taken", "after": "pending"}},
+        name=med["name"],
+        dose_id=str(dose["id"]),
+    )
+    return (
+        f"Undone — {med['name']}'s {slot} dose is no longer marked as taken. "
+        "Read that back so the user knows exactly which dose was un-ticked."
+    )
+
+
+register(_UNDO_SCHEMA, undo_dose)
+
+
+_LOG_MANY_SCHEMA = {
+    "name": "log_doses",
+    "description": (
+        "Record that the elder took SEVERAL medications they NAMED in one "
+        "message ('I took my metformin and my lisinopril'). Pass the bare names "
+        "(no dosages). SAFETY: first call with confirmed=false to read the list "
+        "back, and only call again with confirmed=true after the user's "
+        "explicit yes. For 'all my missed doses' with no names use "
+        "resolve_missed_doses; for a single medication use log_dose."
+    ),
+    "input_schema": {
+        "type": "object",
+        "properties": {
+            "medication_names": {
+                "type": "array",
+                "items": {"type": "string"},
+                "description": (
+                    "Bare names of the medications the user said they took."
+                ),
+            },
+            "confirmed": {
+                "type": "boolean",
+                "description": "false = list what would be logged (no write); "
+                "true = mark them all taken after the user confirmed.",
+            },
+        },
+        "required": ["medication_names"],
+    },
+}
+
+
+async def _plan_named_dose(ctx: ToolContext, med: dict) -> tuple[str, object]:
+    """``_dose_plan`` for the bulk flow: an "ask" (multi-slot) resolves to its
+    EARLIEST option instead of a question — the read-back SHOWS the chosen slot,
+    so the user's single yes covers it. Never forks the selection logic: the
+    ambiguity is re-planned through ``_dose_plan`` with that slot as the want."""
+    kind, payload = await _dose_plan(ctx, med, None)
+    if kind == "ask":
+        kind, payload = await _dose_plan(ctx, med, _parse_hhmm(min(payload)))
+    return kind, payload
+
+
+def _slot_label(kind: str, payload, zone: ZoneInfo) -> str:
+    if kind == "pending":
+        return _fmt_slot(_local_hhmm(payload["scheduled_at"], zone))
+    if kind == "backdate":
+        return _fmt_slot(payload)
+    return "just now"
+
+
+async def log_doses(
+    ctx: ToolContext,
+    medication_names: list[str],
+    confirmed: bool = False,
+) -> str:
+    zone = ZoneInfo(get_settings().hermes_tz)
+
+    if not confirmed:
+        names = [str(n).strip() for n in (medication_names or []) if str(n).strip()]
+        if not names:
+            return (
+                "No medication names were given. Ask the user which medicines "
+                "they took — or use resolve_missed_doses for an 'all my missed "
+                "doses' request."
+            )
+        items: list[dict] = []
+        lines: list[str] = []
+        missing: list[str] = []
+        ambiguous: list[str] = []
+        already: list[str] = []
+        seen_ids: set = set()
+        for raw in names:
+            meds = await find_medications(
+                ctx, raw, columns="id,name,schedule", limit=None
+            )
+            distinct: dict[str, dict] = {}
+            for m in meds:
+                distinct.setdefault((m.get("name") or "").strip().lower(), m)
+            if not distinct:
+                missing.append(raw)
+                continue
+            if len(distinct) > 1:
+                opts = ", ".join(m.get("name") or "?" for m in distinct.values())
+                ambiguous.append(f"'{raw}' (matches {opts})")
+                continue
+            med = next(iter(distinct.values()))
+            if med["id"] in seen_ids:
+                continue  # the user named the same med twice
+            kind, payload = await _plan_named_dose(ctx, med)
+            if kind == "already":
+                already.append(f"{med['name']} ({_fmt_slot(payload)})")
+                continue
+            seen_ids.add(med["id"])
+            items.append(
+                {
+                    "medication_id": med["id"],
+                    "name": med["name"],
+                    "kind": kind,
+                    "payload": payload,
+                }
+            )
+            lines.append(f"{med['name']} ({_slot_label(kind, payload, zone)})")
+        notes = []
+        if already:
+            notes.append(f"Already logged today: {', '.join(already)}.")
+        if missing:
+            notes.append(f"Not on file: {', '.join(missing)}.")
+        if ambiguous:
+            notes.append(f"Ask which is meant: {'; '.join(ambiguous)}.")
+        note_text = (" " + " ".join(notes)) if notes else ""
+        if not items:
+            return (
+                "Nothing to log from that list." + note_text
+                + " Tell the user honestly — nothing was written."
+            )
+        if ctx.session is not None:
+            ctx.session.pending_bulk = {"tool": "log_doses", "items": items}
+            ctx.session.awaiting_confirmation = True
+        return (
+            "PROPOSED (not yet saved). These doses would be marked as taken: "
+            f"{', '.join(lines)}.{note_text} Read the list back and ask the "
+            "user ONE yes/no to confirm marking them all as taken."
+        )
+
+    # confirmed=true: only honor a confirm when this list was proposed this session.
+    items = match_pending_bulk(ctx, "log_doses")
+    if items is None:
+        return (
+            "Refused to save: no pending dose list was proposed and confirmed. "
+            "Propose first (confirmed=false), read the list back, and get the "
+            "user's explicit yes."
+        )
+    if ctx.session is not None:
+        ctx.session.pending_bulk = None
+        ctx.session.awaiting_confirmation = False
+
+    done: list[str] = []
+    skipped: list[str] = []
+    failed: list[str] = []
+    # _commit_dose appends ONE single log_dose action per dose. The frontend
+    # must see ONE committed action for the whole bulk (one batch highlight,
+    # not N loose captions), so snapshot the length here and splice the
+    # per-item actions out afterwards, replacing them with one bulk action.
+    pre = len(ctx.committed_actions)
+    for item in items:
+        meds = await ctx.db().select(
+            "medications",
+            columns="id,name,schedule",
+            filters={"id": f"eq.{item.get('medication_id')}", "archived": "eq.false"},
+            limit=1,
+        )
+        if not meds:
+            failed.append(item.get("name") or "an unknown medication")
+            continue
+        med = meds[0]
+        # Race-safe: RE-resolve the plan fresh rather than trusting the stashed
+        # payload — a dose logged since the propose must not be double-written.
+        kind, payload = await _plan_named_dose(ctx, med)
+        if kind == "already":
+            skipped.append(f"{med['name']} ({_fmt_slot(payload)})")
+            continue
+        try:
+            await _commit_dose(ctx, med, kind, payload)
+        except Exception:
+            failed.append(med["name"])
+            continue
+        done.append(f"{med['name']} ({_slot_label(kind, payload, zone)})")
+
+    singles = ctx.committed_actions[pre:]
+    del ctx.committed_actions[pre:]
+    if singles:
+        entities = [
+            {k: v for k, v in a.items() if k not in ("tool", "summary")}
+            for a in singles
+        ]
+        n = len(entities)
+        record_bulk_action(
+            ctx,
+            tool="log_doses",
+            summary=f"{n} dose{'s' if n != 1 else ''} marked taken",
+            entities=entities,
+            dose_ids=[e.get("dose_id", "") for e in entities],
+        )
+
+    parts: list[str] = []
+    if done:
+        parts.append(
+            f"Marked {len(done)} dose{'s' if len(done) != 1 else ''} as taken: "
+            f"{', '.join(done)}."
+        )
+    if skipped:
+        parts.append(f"Already logged since the propose: {', '.join(skipped)}.")
+    if failed:
+        parts.append(f"Could not save: {', '.join(failed)} — tell the user honestly.")
+    if not parts:
+        parts.append("Nothing left to mark — those doses are already logged.")
+    return " ".join(parts)
+
+
+register(_LOG_MANY_SCHEMA, log_doses)
+
+
+_SNOOZE_SCHEMA = {
+    "name": "snooze_dose",
+    "description": (
+        "Snooze TODAY's reminder for one medication ('remind me in 30 minutes', "
+        "'snooze it until 8:30'). One-time only: today's reminder moves, the "
+        "medication's schedule does NOT change — for a permanent time change "
+        "use set_medication_reminder instead. Give minutes from now OR an "
+        "until time; with neither, it snoozes 30 minutes."
+    ),
+    "input_schema": {
+        "type": "object",
+        "properties": {
+            "medication_name": {
+                "type": "string",
+                "description": "Bare name of the medication (no dosage).",
+            },
+            "minutes": {
+                "type": "integer",
+                "description": "Snooze this many minutes from now (default 30).",
+            },
+            "until": {
+                "type": "string",
+                "description": "Snooze until this time today, 24-hour 'HH:MM' "
+                "in the elder's local time.",
+            },
+        },
+        "required": ["medication_name"],
+    },
+}
+
+
+async def snooze_dose(
+    ctx: ToolContext,
+    medication_name: str,
+    minutes: int | None = None,
+    until: str | None = None,
+) -> str:
+    tz_name = get_settings().hermes_tz
+    zone = ZoneInfo(tz_name)
+    now = _now_utc()
+    local_now = now.astimezone(zone)
+
+    med, problem = await _resolve_one_med(ctx, medication_name, "snooze_dose")
+    if med is None:
+        return problem
+
+    # Target slot: the earliest due-but-unmet slot today (same earliest-first
+    # attribution as _dose_plan/_missed_doses_today), else the next upcoming
+    # slot today. A snooze moves TODAY's reminder only — no slot left today
+    # means there is honestly nothing to snooze.
+    schedule = med.get("schedule") or {}
+    times = (
+        sorted(t for t in (schedule.get("times") or []) if _parse_hhmm(t))
+        if scheduled_today(schedule, local_now.date())
+        else []
+    )
+    if not times:
+        return (
+            f"{med['name']} has no scheduled dose times today, so there's no "
+            "reminder to snooze."
+        )
+    taken_n = (await _taken_counts_today(ctx, now, tz_name)).get(med["id"], 0)
+    due = [t for t in times if _parse_hhmm(t) <= local_now.time()]
+    unmet = due[taken_n:]
+    upcoming = [t for t in times if _parse_hhmm(t) > local_now.time()]
+    if unmet:
+        slot = unmet[0]
+    elif upcoming:
+        slot = upcoming[0]
+    else:
+        return (
+            f"All of {med['name']}'s doses today are already logged and no more "
+            "are scheduled today — nothing to snooze."
+        )
+
+    if until is not None:
+        t = _parse_hhmm(str(until).strip())
+        if t is None:
+            return (
+                "That snooze time isn't clear. Ask the user for it as a 24-hour "
+                "time like 20:30, and don't save yet."
+            )
+        until_hhmm = f"{t.hour:02d}:{t.minute:02d}"
+    else:
+        offset = 30 if minutes is None else int(minutes)
+        if offset <= 0:
+            return (
+                "Ask the user how many minutes to snooze for (a positive "
+                "number), and don't save yet."
+            )
+        until_hhmm = (local_now + timedelta(minutes=offset)).strftime("%H:%M")
+
+    # Demo-grade persistence: profiles.accessibility.dose_snoozes (jsonb
+    # catch-all, read-merge-write — never overwrite the whole object). One
+    # entry per (medication_id, slot, date); a re-snooze replaces it.
+    db = ctx.db()
+    rows = await db.select(
+        "profiles",
+        columns="accessibility",
+        filters={"id": f"eq.{ctx.elder_id}"},
+        limit=1,
+    )
+    access = dict((rows[0].get("accessibility") if rows else None) or {})
+    snoozes = [s for s in (access.get("dose_snoozes") or []) if isinstance(s, dict)]
+    local_date = local_now.date().isoformat()
+
+    def _same(s: dict) -> bool:
+        return (
+            s.get("medication_id") == med["id"]
+            and s.get("slot") == slot
+            and s.get("date") == local_date
+        )
+
+    before = next((s.get("until") for s in snoozes if _same(s)), None)
+    snoozes = [s for s in snoozes if not _same(s)]
+    snoozes.append(
+        {
+            "medication_id": med["id"],
+            "name": med["name"],
+            "slot": slot,
+            "date": local_date,
+            "until": until_hhmm,
+        }
+    )
+    access["dose_snoozes"] = snoozes
+    await db.update(
+        "profiles",
+        {"accessibility": access},
+        filters={"id": f"eq.{ctx.elder_id}"},
+        returning=False,
+    )
+    record_action(
+        ctx,
+        tool="snooze_dose",
+        summary=f"{med['name']} snoozed to {_fmt_slot(until_hhmm)}",
+        entity_type="dose",
+        entity_id=med["id"],
+        changed_fields={"snoozed_until": {"before": before, "after": until_hhmm}},
+        name=med["name"],
+        slot=slot,
+    )
+    return (
+        f"Reminder for {med['name']}'s {_fmt_slot(slot)} dose snoozed to "
+        f"{_fmt_slot(until_hhmm)} — today only. The regular schedule is "
+        "unchanged."
+    )
+
+
+register(_SNOOZE_SCHEMA, snooze_dose)

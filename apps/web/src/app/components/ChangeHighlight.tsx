@@ -3,17 +3,31 @@ import type { AgentAction } from "../lib/hermes";
 import type { ElderlyTab } from "../screens/elderly/types";
 import type { Screen } from "../types";
 import { describeBatch, findEntityElement, highlightableEntities, targetFor, testIdFor } from "../lib/changeHighlight";
+import type { HighlightEntity } from "../lib/changeHighlight";
+import { PACING } from "../lib/walkthrough/pacing";
+import { recordPhase } from "../lib/walkthrough/phaseLog";
 import { HighlightCaption } from "./HighlightCaption";
 
 // How long to keep polling for the target element(s) after a write. The list
 // refetch that surfaces the new/changed records is async (a chat turn just
-// committed them), so the elements may not be in the DOM the instant we navigate.
+// committed them), so the elements may not be in the DOM the instant we
+// navigate. Engine-internal search budgets, NOT pacing — the visible dwell is
+// PACING.HIGHLIGHT_DWELL_MIN_MS (auto-dismiss at the minimum; no manual
+// control on this surface).
 const SEARCH_MS = 5000;
 const POLL_MS = 200;
-// How long the ring + caption stay up once the first element is found.
-const SHOW_MS = 3500;
 
 type Phase = "idle" | "searching" | "shown";
+
+// A discontinued record rings in the muted "stopped" variant, not success
+// emerald. Per-entity so a mixed bulk rings each record in its own state;
+// the single path is the 1-element case (its changed_fields ride the entity).
+function ringClass(e: HighlightEntity): string {
+  return e.changed_fields?.status?.after === "discontinued"
+    ? "change-highlight-stopped"
+    : "change-highlight";
+}
+const RING_CLASSES = ["change-highlight", "change-highlight-stopped"];
 
 // Guided Auto-Navigation's canonical "prove exactly what changed" layer. Given a
 // committed AgentAction that carries entity_type/entity_id/changed_fields — or a
@@ -44,6 +58,21 @@ export function ChangeHighlight({ change, mode, onNavigate, onDone }: {
   const elsRef = useRef<HTMLElement[]>([]);
   // Identity token so a new change cancels an in-flight highlight cleanly.
   const runRef = useRef(0);
+  // When the ring first showed (performance.now), for the DEV phase log. Nulled
+  // once its dwell entry is recorded so every dismissal path records exactly once.
+  const shownAtRef = useRef<number | null>(null);
+
+  const recordDwell = () => {
+    if (shownAtRef.current === null) return;
+    recordPhase({
+      surface: "highlight",
+      phase: "dwell",
+      minMs: PACING.HIGHLIGHT_DWELL_MIN_MS,
+      startedAt: shownAtRef.current,
+      endedAt: performance.now(),
+    });
+    shownAtRef.current = null;
+  };
 
   useEffect(() => {
     if (!change) return;
@@ -70,7 +99,7 @@ export function ChangeHighlight({ change, mode, onNavigate, onDone }: {
     let pending = entities.slice();
 
     const cleanupEls = () => {
-      for (const el of found) el.classList.remove("change-highlight");
+      for (const el of found) el.classList.remove(...RING_CLASSES);
     };
 
     // Entities that never resolved are a bug worth surfacing — the change
@@ -93,6 +122,7 @@ export function ChangeHighlight({ change, mode, onNavigate, onDone }: {
       window.clearTimeout(pollTimer);
       reportMissing();
       cleanupEls();
+      recordDwell();
       setPhase("idle");
       setRect(null);
       onDone();
@@ -119,9 +149,10 @@ export function ChangeHighlight({ change, mode, onNavigate, onDone }: {
           // not a flash.
           el.scrollIntoView({ block: "center", behavior: "smooth" });
           setPhase("shown");
-          showTimer = window.setTimeout(finish, SHOW_MS);
+          shownAtRef.current = performance.now();
+          showTimer = window.setTimeout(finish, PACING.HIGHLIGHT_DWELL_MIN_MS);
         }
-        el.classList.add("change-highlight");
+        el.classList.add(ringClass(e));
         found.push(el);
       }
       pending = still;
@@ -139,6 +170,7 @@ export function ChangeHighlight({ change, mode, onNavigate, onDone }: {
       window.clearTimeout(pollTimer);
       window.clearTimeout(showTimer);
       cleanupEls();
+      recordDwell(); // superseded/unmounted mid-show still closes its log entry
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [change]);
@@ -162,7 +194,8 @@ export function ChangeHighlight({ change, mode, onNavigate, onDone }: {
         // End the whole highlight: strip the ring from EVERY element (not just
         // the detached anchor) — the parent nulling `change` also re-runs the
         // effect cleanup, but don't depend on it for visual correctness.
-        for (const ringed of elsRef.current) ringed.classList.remove("change-highlight");
+        for (const ringed of elsRef.current) ringed.classList.remove(...RING_CLASSES);
+        recordDwell();
         setPhase("idle");
         setRect(null);
         onDone();

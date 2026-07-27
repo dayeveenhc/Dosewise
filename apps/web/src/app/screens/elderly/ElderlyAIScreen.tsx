@@ -10,6 +10,7 @@ import { fetchProfile, saveProfile, toProfileDetails, mergeProfileDetails } from
 import type { WalkthroughTaskName, WalkthroughParams } from "../../lib/walkthrough/types";
 import { firstRoutableAction, ACTION_TARGETS } from "../../lib/agentActions";
 import { emitWalkthroughEvent } from "../../lib/walkthrough/bus";
+import { PACING } from "../../lib/walkthrough/pacing";
 import { useLanguage } from "../../lib/languageContext";
 import { useAccessibility } from "../../accessibility.tsx";
 import { t, LANGUAGE_OPTIONS, speechLangFor } from "../../lib/language";
@@ -269,7 +270,8 @@ export function ElderlyAIScreen({ patient, elderId, onNavigate, onMedsChanged, o
           { id: LIVE_STEP_ID, role: "agent", text: t(language, "ai.openingYourLabel", { done, detail: "", label }), time: nowLabel(), isConfirmation: true },
         ]);
         scrollToBottom();
-        setTimeout(() => onNavigate(target.elderly), 600);
+        // Screen-transition settle shared with the walkthrough engine.
+        setTimeout(() => onNavigate(target.elderly), PACING.NAVIGATE_MS);
       }
     };
 

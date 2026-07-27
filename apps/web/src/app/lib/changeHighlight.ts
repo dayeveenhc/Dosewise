@@ -23,7 +23,39 @@ export const ENTITY_TARGETS: Record<string, EntityTarget> = {
   caregiver_message: { elderly: "notifications", caregiver: "messages" },
   caregiver_invite:  { elderly: "notifications", caregiver: "patient" },
   escalation:        { elderly: "ai",            caregiver: "notifications" },
+  allergy:           { elderly: "settings",      caregiver: "patient" },
+  symptom:           { elderly: "settings",      caregiver: "patient" },
+  care_note:         { elderly: "home",          caregiver: "messages" },
 };
+
+// Stable DOM id for an allergy entry — mirrors services/hermes/src/hermes/tools/
+// profile.py::_allergy_slug EXACTLY (never change one side alone): lowercase,
+// keep [a-z0-9], every run of any other characters becomes a single "-", then
+// trim leading/trailing "-". "Penicillin G" → "penicillin-g". Used to build
+// data-testid="allergy-{slug}" so set_allergy_severity highlights resolve.
+export function slugify(name: string): string {
+  return name.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, "");
+}
+
+// profiles.accessibility.allergies entries come in TWO shapes: legacy plain
+// strings, and {name, severity} objects once the backend's set_allergy_severity
+// promoted the list (tools/profile.py::_promote_allergies). Normalize both so
+// render/save code has one shape to deal with.
+export type AllergyEntry = string | { name?: unknown; severity?: unknown };
+
+export function normalizeAllergies(raw: unknown): { name: string; severity: string | null }[] {
+  if (!Array.isArray(raw)) return [];
+  return (raw as AllergyEntry[]).map(e => {
+    if (e !== null && typeof e === "object") {
+      const severity = (e as { severity?: unknown }).severity;
+      return {
+        name: String((e as { name?: unknown }).name ?? ""),
+        severity: typeof severity === "string" && severity ? severity : null,
+      };
+    }
+    return { name: String(e ?? ""), severity: null };
+  });
+}
 
 // One resolvable "point at this record" unit. A single action is its own
 // 1-element case; a BULK action (entities[] on the wire, no top-level
@@ -183,6 +215,36 @@ export function describeChange(a: AgentAction): { verb: string; text: string } {
   // field diff — the verb IS the change.
   if (a.tool === "log_dose" || a.changed_fields?.status?.after === "taken") {
     return { verb: "Taken", text: a.summary || a.name || "dose" };
+  }
+  // Undo: a mistaken tick flipped back — the verb IS the change.
+  if (a.changed_fields?.status?.before === "taken" && a.changed_fields?.status?.after === "pending") {
+    return { verb: "Unmarked", text: a.name || a.summary || "dose" };
+  }
+  // Discontinue: archived, never deleted — reads as "Stopped: <name>".
+  if (a.changed_fields?.status?.after === "discontinued") {
+    return { verb: "Stopped", text: a.name || a.summary || "medication" };
+  }
+  // Snooze: today's reminder moved (schedule unchanged). Before the all-new
+  // branch — a first snooze has before == null and must not read as "Added".
+  const snoozed = a.changed_fields?.snoozed_until;
+  if (snoozed) {
+    return { verb: "Snoozed", text: `reminder to ${hhmmTo12h(String(snoozed.after ?? ""))} today` };
+  }
+  // Allergy severity grade — "Updated: Penicillin allergy — unset → severe".
+  const severity = a.changed_fields?.severity;
+  if (severity) {
+    const name = a.name?.trim();
+    const before = severity.before == null ? "unset" : String(severity.before);
+    return {
+      verb: "Updated",
+      text: `${name ? `${name} allergy` : "allergy"} — ${before} → ${String(severity.after ?? "")}`,
+    };
+  }
+  // Symptom report — "Noted: dizzy after lunch"; also before the all-new branch
+  // (a new report is all-new by shape but must not read as a bare "Added").
+  const symptom = a.changed_fields?.symptom;
+  if (symptom || a.tool === "add_symptom") {
+    return { verb: "Noted", text: String(symptom?.after ?? "") || a.summary || "symptom" };
   }
   const allNew = entries.length > 0 && entries.every(([, f]) => f.before == null);
   if (allNew || a.tool === "add_prescription") {

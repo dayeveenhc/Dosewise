@@ -48,14 +48,15 @@ class FakeDB:
 
     async def insert(self, table, row, returning=True):
         self.inserted.append((table, row))
-        if not returning:
-            return []
-        # Mirror PostgREST: an INSERT with return=representation echoes the row
-        # including the DB-generated primary key. Synthesize a stable id when the
-        # payload didn't carry one, so tools that read the new id work offline.
+        # Mirror PostgREST: the row lands in the table (with a synthesized
+        # primary key when the payload didn't carry one), so an independent
+        # re-read (a later select) reflects the write — same as ``update``
+        # patching rows in place. With return=representation the stored row
+        # (including its id) is echoed back.
         stored = dict(row)
         stored.setdefault("id", f"fake-{table}-{len(self.inserted)}")
-        return [stored]
+        self.tables.setdefault(table, []).append(stored)
+        return [stored] if returning else []
 
     async def update(self, table, patch, *, filters, returning=True):
         self.updated.append((table, patch, filters))

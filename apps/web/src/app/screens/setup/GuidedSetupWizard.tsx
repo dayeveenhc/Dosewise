@@ -5,6 +5,7 @@ import { supabase } from "../../lib/supabase";
 import { saveProfile } from "../../lib/profile";
 import { addMedication, archiveMedication, to24h } from "../../lib/medications";
 import { extractProfile, fileToBase64 } from "../../lib/hermes";
+import { normalizeAllergies } from "../../lib/changeHighlight";
 import { MEDICATION_CATALOG, COMMON_CONDITIONS, COMMON_ALLERGIES, COMMON_DRUG_ALLERGIES } from "../../data/medications";
 import { TimeField, TimesPicker, defaultDoseTime } from "../../components/TimesPicker";
 import type { RoutineTimes } from "../../components/TimesPicker";
@@ -408,7 +409,9 @@ export function GuidedSetupWizard({ mode, hasSession, elderId: initialElderId, p
   const [heightCm, setHeightCm] = useState(prefill?.details.heightCm != null ? String(prefill.details.heightCm) : "");
   const [gender, setGender] = useState(prefill?.details.gender ?? "");
   const [conditions, setConditions] = useState<string[]>(prefill?.details.conditions ?? []);
-  const [allergies, setAllergies] = useState<string[]>(prefill?.details.allergies ?? []);
+  // Extraction prefill is always plain strings, but ProfileDetails.allergies
+  // may carry promoted {name, severity} entries — normalize to names here.
+  const [allergies, setAllergies] = useState<string[]>(() => normalizeAllergies(prefill?.details.allergies).map(a => a.name).filter(Boolean));
   const [drugAllergies, setDrugAllergies] = useState<string[]>(prefill?.details.drugAllergies ?? []);
   const [wakeTime, setWakeTime] = useState(prefill?.details.wakeTime ?? "07:00");
   // An extraction yields one time per med; the wizard's multi-select shape wraps

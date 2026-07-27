@@ -188,6 +188,23 @@ def match_pending(ctx: ToolContext, slot: str, key: str, value: Any) -> dict | N
     return pending
 
 
+def match_pending_bulk(ctx: ToolContext, tool: str) -> list | None:
+    """The pending bulk proposal's ``items`` for ``tool``, if one is stashed.
+
+    The bulk counterpart of ``match_pending``: multi-item propose→confirm tools
+    share ONE session slot, ``pending_bulk`` = ``{"tool": str, "items": list}``.
+    A commit is honored only when the stashed proposal belongs to the SAME tool,
+    so a ``confirmed=true`` call can never save a list that was never read back
+    and agreed to (or one proposed by a different tool). Returns the ``items``
+    list, else ``None`` — the caller refuses to save on ``None`` with its own
+    tool-specific wording.
+    """
+    pending = getattr(ctx.session, "pending_bulk", None) if ctx.session else None
+    if not isinstance(pending, dict) or pending.get("tool") != tool:
+        return None
+    return pending.get("items") or []
+
+
 def first_id(inserted: list[dict]) -> str:
     """The new row's id from a ``return=representation`` insert, or ``""``.
 
