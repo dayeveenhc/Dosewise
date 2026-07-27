@@ -170,7 +170,7 @@ export function AskMeiScreen({ patient, elderId, onUpdatePatient, onNavigate, on
           { id: LIVE_STEP_ID, role: "agent", text: t(language, "ai.workingOnLabel", { label }), time: nowLabel(), isConfirmation: true },
         ]);
         scrollToBottom();
-      } else if (event.type === "tool_end" && !event.is_error && !navigated) {
+      } else if (event.type === "tool_end" && !event.is_error && !navigated && !target.confirmFirst) {
         navigated = true;
         const done = t(language, target.doneKey);
         const label = t(language, target.labelKey);

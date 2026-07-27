@@ -11,20 +11,28 @@ interface ActionTarget {
   caregiver: Screen;
   doneKey: string; // t() key for the short confirmation shown in chat, e.g. "Added to your schedule"
   labelKey: string; // t() key for the page name used in "opening your {label}…"
+  // Whether this tool takes a `confirmed` param (propose→confirm) — the model
+  // calls it once to propose (writing nothing) and again to commit. A live
+  // `tool_end` SSE event fires for BOTH calls with no signal of which; only a
+  // tool with no confirm step (this false) can be trusted to have written on
+  // tool_end alone. Propose→confirm tools must wait for the turn's final
+  // `actions[]` (real committed_actions), or a propose turn falsely navigates
+  // as if it saved. Ground truth: grep each handler's signature for `confirmed`.
+  confirmFirst?: boolean;
 }
 
 export const ACTION_TARGETS: Record<string, ActionTarget> = {
-  add_prescription:        { elderly: "home",          caregiver: "patient",  doneKey: "ai.doneAddPrescription", labelKey: "ai.labelMedications" },
+  add_prescription:        { elderly: "home",          caregiver: "patient",  doneKey: "ai.doneAddPrescription", labelKey: "ai.labelMedications", confirmFirst: true },
   log_dose:                { elderly: "home",          caregiver: "timeline", doneKey: "ai.doneLogDose",         labelKey: "ai.labelSchedule" },
-  update_medical_profile:  { elderly: "settings",      caregiver: "patient",  doneKey: "ai.doneUpdateProfile",   labelKey: "ai.labelProfile" },
-  set_medication_reminder: { elderly: "prescriptions", caregiver: "patient",  doneKey: "ai.doneSetReminder",     labelKey: "ai.labelMedications" },
+  update_medical_profile:  { elderly: "settings",      caregiver: "patient",  doneKey: "ai.doneUpdateProfile",   labelKey: "ai.labelProfile", confirmFirst: true },
+  set_medication_reminder: { elderly: "prescriptions", caregiver: "patient",  doneKey: "ai.doneSetReminder",     labelKey: "ai.labelMedications", confirmFirst: true },
   log_refill:              { elderly: "prescriptions", caregiver: "patient",  doneKey: "ai.doneLogRefill",       labelKey: "ai.labelMedications" },
-  update_medication_dosage:{ elderly: "prescriptions", caregiver: "patient",  doneKey: "ai.doneUpdateDosage",    labelKey: "ai.labelMedications" },
-  log_doses:               { elderly: "home",          caregiver: "timeline", doneKey: "ai.doneLogDose",         labelKey: "ai.labelSchedule" },
+  update_medication_dosage:{ elderly: "prescriptions", caregiver: "patient",  doneKey: "ai.doneUpdateDosage",    labelKey: "ai.labelMedications", confirmFirst: true },
+  log_doses:               { elderly: "home",          caregiver: "timeline", doneKey: "ai.doneLogDose",         labelKey: "ai.labelSchedule", confirmFirst: true },
   undo_dose:               { elderly: "home",          caregiver: "timeline", doneKey: "ai.doneUndoDose",        labelKey: "ai.labelSchedule" },
   snooze_dose:             { elderly: "home",          caregiver: "timeline", doneKey: "ai.doneSnoozeDose",      labelKey: "ai.labelSchedule" },
-  discontinue_medication:  { elderly: "prescriptions", caregiver: "patient",  doneKey: "ai.doneDiscontinue",     labelKey: "ai.labelMedications" },
-  set_allergy_severity:    { elderly: "settings",      caregiver: "patient",  doneKey: "ai.doneAllergySeverity", labelKey: "ai.labelProfile" },
+  discontinue_medication:  { elderly: "prescriptions", caregiver: "patient",  doneKey: "ai.doneDiscontinue",     labelKey: "ai.labelMedications", confirmFirst: true },
+  set_allergy_severity:    { elderly: "settings",      caregiver: "patient",  doneKey: "ai.doneAllergySeverity", labelKey: "ai.labelProfile", confirmFirst: true },
   add_symptom:             { elderly: "settings",      caregiver: "patient",  doneKey: "ai.doneAddSymptom",      labelKey: "ai.labelProfile" },
   add_care_note:           { elderly: "home",          caregiver: "messages", doneKey: "ai.doneAddCareNote",     labelKey: "ai.labelMessages" },
 };
