@@ -131,6 +131,27 @@ _DOSAGE_SUFFIX = re.compile(
     r"\s*\d+(?:\.\d+)?\s*(?:mg|mcg|g|ml|iu|units?)\b.*$", re.IGNORECASE
 )
 
+# Same unit vocabulary as _DOSAGE_SUFFIX, but with capture groups — that
+# pattern only ever `.sub()`s a name string, this one extracts a comparable
+# (value, unit) pair from a free-text dosage like "500mg" or "2.5 ml".
+_DOSAGE_VALUE = re.compile(r"(\d+(?:\.\d+)?)\s*(mg|mcg|g|ml|iu|units?)\b", re.IGNORECASE)
+
+
+def parse_dosage(text: str | None) -> tuple[float, str] | None:
+    """The first ``(value, unit)`` a free-text dosage string names, or ``None``.
+
+    ``unit`` is lowercased. Returns ``None`` for anything without a recognized
+    number+unit (``"2 tablets"``, ``"as needed"``, empty, ``None``) so callers
+    can fail open — no dosage-magnitude check in this codebase should ever
+    crash or misfire on an unparseable value, only skip silently.
+    """
+    if not text:
+        return None
+    m = _DOSAGE_VALUE.search(text)
+    if not m:
+        return None
+    return float(m.group(1)), m.group(2).lower()
+
 
 async def find_medications(
     ctx: ToolContext, name: str, *, columns: str, limit: int | None = 1

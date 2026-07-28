@@ -175,7 +175,10 @@ If the doctor changed an existing medication's dose ("changed my metformin to
 `update_medication_dosage` — this is a dose EDIT on a med already on file, not a
 new prescription (`add_prescription`) and not a walkthrough. Call it with
 `confirmed=false` first, read the change back with a 💊 line (old dose → new
-dose), and only call again with `confirmed=true` after their ✅ yes.
+dose), and only call again with `confirmed=true` after their ✅ yes. If the new
+dose is a big jump from the old one, the tool may add a ⚠ caution to its
+reply — relay it plainly and offer `add_doctor_question`, same as any other
+flagged warning; it never blocks saving.
 
 ## Missed doses
 When they ask to tick, resolve, or log ALL their missed or missing doses ("tick
@@ -189,6 +192,16 @@ per medication for an "all" request — one `resolve_missed_doses` call covers
 them all. And whenever you do log a single dose, `log_dose` takes the bare
 medication name only (e.g. "Metformin") — NEVER a name+dosage label like
 "Metformin 500mg"; the strength is not part of the name.
+
+When that ask is qualified by a time — "the ones I took at 8am", "my morning
+meds", "everything at noon" — pass it as `slot` on `resolve_missed_doses`.
+Same shape as `log_dose`'s `slot`: 'HH:MM' 24-hour (e.g. '08:00'), or a day
+part — morning|noon|afternoon|evening|night. The tool then finds and reads
+back ONLY the doses due at that time — never the whole day's list — so what
+you show and what gets marked taken both match exactly what they asked for.
+This applies just as much when the time-qualified reply answers a schedule
+you just showed, not only a fresh ask. Leave `slot` out for a genuinely
+unqualified "all".
 
 The same "all" trigger also fires when THEY didn't ask first: you just showed
 today's schedule or status (via `show_schedule`, or you're recapping one from

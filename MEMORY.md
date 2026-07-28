@@ -9,6 +9,109 @@ letting this grow forever — it's a memory aid, not an audit log.
 
 ---
 
+## 2026-07-28 — Time-scoped bulk dose resolution + dosage-jump safety warning
+
+Two user-directed fixes, both scoped entirely to `services/hermes/` (no
+schema, no required frontend changes). User picked the confirm-step/warning
+design via explicit questions before any code — decisions below are locked
+in, not assumptions.
+
+**Bug: "label all the meds i took at 8 am as taken" did nothing.**
+Root-caused via a live repro on an **isolated local Supabase** (`npx
+supabase@latest start` + `db reset` + the standard baseline-GRANT workaround
+— chosen over the live hosted project after the auto-mode permission
+classifier correctly flagged that writing throwaway data to hosted infra
+needed explicit sign-off, even though earlier sessions had done exactly that;
+local was the safer, user-picked path this time). Pre-fix, 3 real turns with
+2 meds at 8am + 1 distractor at 6am showed the actual failure chain: turn 1
+hit `log_dose`'s no-name ambiguous path (asks "which one(s)?", writes
+nothing); turn 2 (repeating the ask) reached `resolve_missed_doses` but with
+**no time field to put "8am" into** — it proposed all 3 doses regardless of
+time; turn 3 (repeating again, not even literally "yes") committed, wrongly
+marking the 6am dose taken too — independently confirmed via direct DB
+re-read. `resolve_missed_doses`'s entire input schema was `{confirmed:
+boolean}`; `log_dose`'s `slot` is a nearest-neighbor tiebreaker *within one
+medication's own times*, not a cross-medication filter.
+
+**Fix** (`tools/doses.py`): new optional `slot` param on `resolve_missed_doses`
+— `_parse_slot_filter` returns `("exact", HH:MM)` for a literal time or
+`("window", anchor)` for a day-part word; `_slot_filter_matches` checks exact
+equality or a **±60min bounded window** (`_DAY_PART_WINDOW_MINUTES`) around
+the anchor — deliberately NOT `log_dose`'s unbounded nearest-neighbor (which
+would wrongly match a noon-only med to an "8am" query). Applied as a
+**post-pass** in `_missed_doses_today` after the existing earliest-first
+taken-attribution, so filtering never disturbs which slots count as missed at
+all. Unparseable `slot` **fails closed** (refuses, asks again) rather than
+silently falling back to unfiltered — the opposite direction from
+`_dosage_warning` below, because here a silent fallback would mean
+over-resolving (the dangerous direction), not just missing a caveat. New
+soul.md paragraph in "Missed doses" teaches passing `slot` when the ask names
+a time; kept channel-neutral (Telegram shares soul.md too). Confirm branch
+needed **zero changes** — it already re-intersects a fresh unfiltered
+recompute against the (already-filtered) stashed propose set.
+**Live-verified 5/5 post-fix** (fresh throwaway elder per trial): every trial
+correctly scoped the read-back to only the 8am doses and never touched the
+6am one. New tests: `test_resolve_missed_doses.py` (7 added) +
+`test_resolve_missed_doses_time_qualified.py` (new, agent-loop-level,
+scripted).
+
+**User-decided (not assumed): kept the one-confirm-step requirement** for
+bulk resolution — matches today's "I took all" flow and this project's
+already-documented stance that requiring one confirming reply before a bulk
+dose write is "an intentional safety property, not a residual bug." The
+literal "auto-tick" the user asked for was NOT built; they chose "keep one
+confirm step" when given the tradeoff explicitly.
+
+**Feature: dosage-jump safety warning.** Zero existing check on dosage
+*magnitude* anywhere — `_interaction_warning` is drug-drug only and dose-blind
+by signature; `update_medication_dosage` had no check of any kind.
+`medications.dosage` is free text (no numeric column), so per the
+grounded-facts rail this had to be arithmetic, not LLM judgment. User-decided
+scope: relative-jump only (no OpenFDA-text grounding), non-blocking FYI
+(mirrors `_interaction_warning`'s exact tone/never-blocks pattern), applied to
+both `update_medication_dosage` AND `add_prescription` (for the disguised-
+duplicate case — a same-name med already on file at a different dose).
+New `base.py::parse_dosage` (regex value+unit extraction, fails open on
+"2 tablets"/"as needed"/unparseable); `medications.py::_dosage_warning`
+(fires at `ratio >= 2.0`, normalizes mg/mcg/g, fails open on incomparable
+units like ml/iu) + `_existing_medication` (reuses `find_medications`'s
+existing matching tiers, not a raw query, so a name arriving with its own
+dosage suffix still resolves). Wired into both propose branches; no soul.md
+wiring *required* (the warning rides the same returned string Mei already
+relays verbatim, same as `_interaction_warning` today) but added one optional
+documentation sentence anyway. **Live-verified**: `update_medication_dosage`
+3/3 real turns showed the ⚠ in the actual reply; `add_prescription` 2/3 (the
+miss was Mei skipping straight to `start_walkthrough` without ever calling
+`add_prescription(confirmed=false)` — a **pre-existing** soul.md-adherence
+gap dating to 2026-07-23 that equally starves the existing interaction
+warning, not a regression from this change). 14 new tests in
+`test_dosage_warning.py`; the pre-existing
+`test_propose_time_warning_matches_brand_via_generic` regression-checked
+unmodified.
+
+**Gotcha rediscovered the hard way — prod `hermes` (:8000) reloads on every
+saved edit to `services/hermes/src`, live, no deploy step.** `HERMES_RELOAD=1`
+in `ecosystem.config.js` is intentional (its own comment: "edit directly on
+the VPS... no git push, no PM2 restart, no second process needed") — this
+box IS the VPS. Every edit this session was live in the production Telegram
+bot within seconds. Separately, **`pkill -f "hermes-serve"` is unsafe** — it
+matches prod `hermes`/`hermes-demo` too, not just a locally-started instance;
+kill by exact PID only, always (this repeats the port-8000 warning already in
+root CLAUDE.md, but the pattern-match failure mode hadn't been logged before).
+Both auto-recovered clean (`pm2 autorestart`), confirmed via `scripts/post.sh
+--quick` (read-only — the full POST's own service restart needs separate
+authorization when uncommitted changes are in the tree, since it would be
+deploying them).
+
+**Also fixed in passing:** MEMORY.md had a genuine ~160-line accidental
+duplicate (three 2026-07-19 entries re-pasted verbatim between the two
+2026-07-12 entries, chronologically nonsensical — a tell it was a paste
+accident, not intentional). Removed; the stale "`t`-shadow open bug" entry
+folded into a one-line "fixed, confirmed" note.
+
+Gate: hermes pytest **321** (+14 from 307), ruff clean. Uncommitted on
+`fix/ci-lint-node`.
+
 ## 2026-07-27 (later) — "I took all" after a schedule listing didn't log doses — root-caused, fixed, verified 12/12 live
 
 Real user report: Mei showed today's schedule (6 due-now meds + duplicate
@@ -905,20 +1008,14 @@ Key decisions / gotchas:
 - i18n: added ~28 `link.*` + `patientSwitcher.scanQr` keys to all 6 languages
   (parity gate: **372 keys × 6**, verified).
 
-## 2026-07-19 — ⚠️ OPEN BUG: `t` is shadowed in ElderlyAIScreen's `send()`
+## 2026-07-19 — `t`-shadow bug in ElderlyAIScreen's `send()` — fixed (confirmed 2026-07-28)
 
-**Found, not fixed — flagged to the user.** In
-`apps/web/src/app/screens/elderly/ElderlyAIScreen.tsx`, `send()` opens with
-`const t = text.trim()`, which shadows the imported `t()` translation function
-for the whole body. Three calls near the end of that function
-(`t(language, routed.target.doneKey)` and friends) therefore try to *call a
-string*. Any agent turn that commits a routable action — add prescription, log
-dose — throws `t is not a function` in the elder's chat, killing the
-confirm-and-redirect flow that CONTEXT.md lists as a headline feature.
-
-Fix is a rename (`const trimmed = text.trim()`). Untouched so far only because
-it's outside the scope of the UI pass it surfaced during. **This is invisible to
-`npm run build`** — see the typecheck note below.
+Was: `send()` opened with `const t = text.trim()`, shadowing the imported
+`t()` translation function, so any agent turn that committed a routable
+action threw `t is not a function`. Confirmed during the 2026-07-28
+dose-logging session that the code already uses `const trimmed = text.trim()`
+— fixed at some point without a MEMORY.md note. Not the cause of that
+session's "AI does nothing" report (see the 2026-07-28 entry).
 
 ## 2026-07-19 — Elderly UI pass: grouped prescriptions, quick-help popup
 
@@ -1064,72 +1161,6 @@ docker exec supabase_db_dosewise psql -U postgres -d postgres -c \
 ```
 This is local-dev-tooling-only — not an app bug, not something to add to the
 migrations (would be wrong/redundant on the hosted project).
-
-## 2026-07-19 — ⚠️ OPEN BUG: `t` is shadowed in ElderlyAIScreen's `send()`
-
-**Found, not fixed — flagged to the user.** In
-`apps/web/src/app/screens/elderly/ElderlyAIScreen.tsx`, `send()` opens with
-`const t = text.trim()`, which shadows the imported `t()` translation function
-for the whole body. Three calls near the end of that function
-(`t(language, routed.target.doneKey)` and friends) therefore try to *call a
-string*. Any agent turn that commits a routable action — add prescription, log
-dose — throws `t is not a function` in the elder's chat, killing the
-confirm-and-redirect flow that CONTEXT.md lists as a headline feature.
-
-Fix is a rename (`const trimmed = text.trim()`). Untouched so far only because
-it's outside the scope of the UI pass it surfaced during. **This is invisible to
-`npm run build`** — see the typecheck note below.
-
-## 2026-07-19 — Elderly UI pass: grouped prescriptions, quick-help popup
-
-`fetchElderMedications` deliberately emits **one `Medication` per (medication,
-time-slot)** — correct for the schedule, wrong for any "list of prescriptions"
-view, where a twice-daily pill was rendering as two identical cards.
-`ElderlyPrescriptionScreen` now regroups by `medicationId` (falling back to
-`name` for seed data) and shows the times as an indicator. **Any new list-style
-view of medications needs the same regrouping** — the caregiver's `PatientScreen`
-has not been checked for this.
-
-Quick help in the elder chat is a popup, not an inline expander, so it no longer
-pushes the conversation off-screen; `quickOpen` is therefore no longer persisted
-to sessionStorage (restoring a modal open on remount is wrong).
-
-## 2026-07-19 — One shared time picker; killed a silent "schedules at 8am" bug
-
-Medication timing was per-screen and one variant was actively wrong. Unified on
-`apps/web/src/app/components/TimesPicker.tsx` (`TimesPicker` for a med's dose
-times, `TimeField` for a single meal/bedtime).
-
-**The bug worth remembering:** `AddPrescriptionSheet` had a "Custom" free-text
-time box (`"e.g. 10:30 AM"`) whose value went straight to
-`lib/medications.ts::to24h`. That function returns `"08:00"` for anything not
-matching exactly `H:MM AM/PM` — so `10:30`, `10.30am` or `22:00` silently
-scheduled the medication at 8am, with no error anywhere. **`to24h` fails soft;
-never feed it unvalidated text.** The picker now only emits well-formed times.
-
-Two deliberate choices, so they don't get "fixed" back:
-
-- **No `<input type="time">` anywhere.** It renders as the big OS wheel only on
-  a real phone; in a desktop browser (how the phone-frame demo is actually
-  viewed and judged) it collapses to a cramped `--:-- --` spinner. Replaced with
-  a tap-only `∧`/`∨` stepper — also better than a slider/scroll-wheel for the
-  elderly target user, since there's nothing to drag onto a target.
-- **Wizard step order: `routine` before `current-meds`.** Meal/bedtime answers
-  are the frame people describe doses against — and the med step's quick chips
-  now show those answers back, which only works because routine is asked first.
-
-The chips (and a new med's default time) read the elder's own routine, falling
-back to `MEAL_TIMES` only when there's no profile. The wizard passes its live
-step state; `AddPrescriptionSheet` takes a `routine` prop that both `App.tsx`
-and `ElderlyApp.tsx` fill from `Patient` — **no extra fetch needed, `Patient`
-already carries `mealTimes` + `sleepTime`**, and `ElderlySettingsScreen`'s
-`onUpdatePatient` keeps them live after an edit. Note `sleepTime` sits *beside*
-`mealTimes` on `ProfileDetails`, not inside it — hence the
-`{ ...patient.mealTimes, sleepTime: patient.sleepTime }` spread at both sites.
-
-`PRESET_TIMES` in `data/medications.ts` is now unused (left in place). Note
-`apps/web` has no `typescript` installed and `vite build` uses esbuild, which
-strips types without checking — **`npm run build` passing is not a typecheck.**
 
 ## 2026-07-11 — i18n D2/D3 completed: full primary-flow translation, all 6 languages
 

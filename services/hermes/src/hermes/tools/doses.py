@@ -59,6 +59,12 @@ _DAY_PART_ANCHORS = {
     "night": time(21, 0),
 }
 
+# How wide a day-part word reaches when FILTERING (resolve_missed_doses), as
+# opposed to _parse_slot's nearest-neighbor TIEBREAKING (log_dose): a bounded
+# window, not "closest anchor wins" — a med scheduled only at noon must never
+# match a "morning" filter just because noon is the closest anchor to it.
+_DAY_PART_WINDOW_MINUTES = 60
+
 
 def _parse_slot(slot: str | None) -> time | None:
     if not slot:
@@ -67,8 +73,50 @@ def _parse_slot(slot: str | None) -> time | None:
     return _parse_hhmm(s) or _DAY_PART_ANCHORS.get(s)
 
 
+def _parse_slot_filter(slot: str | None) -> tuple[str, time] | None:
+    """Parse a resolve_missed_doses ``slot`` FILTER: ``("exact", HH:MM)`` or
+    ``("window", day-part anchor)``. Unlike ``_parse_slot`` (log_dose's
+    nearest-neighbor tiebreaker among one medication's own times), this has no
+    "closest wins" fallback — an unrecognized value returns ``None`` so the
+    caller can refuse and ask again rather than silently widening scope to
+    every missed dose today.
+    """
+    if not slot:
+        return None
+    s = slot.strip().lower()
+    exact = _parse_hhmm(s)
+    if exact is not None:
+        return ("exact", exact)
+    anchor = _DAY_PART_ANCHORS.get(s)
+    if anchor is not None:
+        return ("window", anchor)
+    return None
+
+
 def _minutes(t: time) -> int:
     return t.hour * 60 + t.minute
+
+
+def _slot_filter_matches(hhmm: str, filt: tuple[str, time] | None) -> bool:
+    """Whether a missed-dose slot ("HH:MM") is in scope for a resolve_missed_doses
+    filter. ``None`` always matches (today's existing unfiltered behavior);
+    ``"exact"`` requires equality; ``"window"`` requires being within
+    ``_DAY_PART_WINDOW_MINUTES`` of the day part's anchor (circular distance, so
+    a window near midnight still wraps correctly). Never nearest-neighbor: a
+    slot outside every window matches nothing rather than being forced onto the
+    closest anchor — under-matching is the safe direction here.
+    """
+    if filt is None:
+        return True
+    kind, anchor = filt
+    slot_time = _parse_hhmm(hhmm)
+    if slot_time is None:
+        return False
+    if kind == "exact":
+        return slot_time == anchor
+    diff = abs(_minutes(slot_time) - _minutes(anchor))
+    diff = min(diff, 1440 - diff)
+    return diff <= _DAY_PART_WINDOW_MINUTES
 
 
 def _local_hhmm(iso: str, zone: ZoneInfo) -> str:
@@ -311,11 +359,12 @@ register(_SCHEMA, log_dose)
 _RESOLVE_SCHEMA = {
     "name": "resolve_missed_doses",
     "description": (
-        "Find ALL of today's missed (past-due, not yet taken) doses across every "
-        "medication and, after the user confirms, mark them all as taken. Use when "
-        "the user asks to tick/resolve/log all missed or missing doses at once. "
-        "SAFETY: first call with confirmed=false to read the full list back, and "
-        "only call again with confirmed=true after the user's explicit yes."
+        "Find today's missed (past-due, not yet taken) doses and, after the user "
+        "confirms, mark them as taken. Use when the user asks to tick/resolve/log "
+        "all missed or missing doses at once — optionally scoped to one time with "
+        "`slot` (e.g. 'the ones I took at 8am'). SAFETY: first call with "
+        "confirmed=false to read the full list back, and only call again with "
+        "confirmed=true after the user's explicit yes."
     ),
     "input_schema": {
         "type": "object",
@@ -324,7 +373,18 @@ _RESOLVE_SCHEMA = {
                 "type": "boolean",
                 "description": "false = list the missed doses only (no write); true "
                 "= mark them all taken after the user confirmed the read-back.",
-            }
+            },
+            "slot": {
+                "type": "string",
+                "description": (
+                    "Only include doses at this time, when the user's ask names "
+                    "one: 'HH:MM' 24-hour (e.g. '08:00'), or a day part — "
+                    "morning|noon|afternoon|evening|night. Matches doses at "
+                    "exactly that time, or within an hour of the day part's "
+                    "usual time. Omit for every missed dose today (the default). "
+                    "Not needed on the confirmed=true call."
+                ),
+            },
         },
         "required": [],
     },
@@ -342,7 +402,19 @@ def _fmt_slot(hhmm: str) -> str:
     return t.strftime("%I:%M %p").lstrip("0") if t else hhmm
 
 
-async def _missed_doses_today(ctx: ToolContext) -> list[dict]:
+def _scope_phrase(filt: tuple[str, time] | None) -> str:
+    """``" at 8:00 AM"`` / ``" around 8:00 AM"`` / ``""`` for a resolve_missed_doses
+    read-back, so a filtered proposal always states exactly what's in scope."""
+    if filt is None:
+        return ""
+    kind, anchor = filt
+    formatted = _fmt_slot(anchor.strftime("%H:%M"))
+    return f" around {formatted}" if kind == "window" else f" at {formatted}"
+
+
+async def _missed_doses_today(
+    ctx: ToolContext, slot_filter: tuple[str, time] | None = None
+) -> list[dict]:
     """Every dose slot due earlier today with no taken dose to cover it.
 
     Mirrors show_schedule's approximation (doses aren't materialised per-slot):
@@ -350,6 +422,12 @@ async def _missed_doses_today(ctx: ToolContext) -> list[dict]:
     today's logged-taken count consumes the EARLIEST due slots first — whatever
     due slots remain are missed. Returns ``[{medication_id, name, slot}, ...]``
     with slots as ``HH:MM``, meds in select order, slots ascending.
+
+    ``slot_filter`` (from ``_parse_slot_filter``), when given, narrows the
+    result to slots matching it (``_slot_filter_matches``) — applied as a POST-
+    PASS after the full missed-slot computation below, so which slots count as
+    missed at all (the earliest-first taken-attribution) is unaffected by what
+    the caller asked to see.
     """
     tz = get_settings().hermes_tz
     now = _now_utc()
@@ -373,22 +451,36 @@ async def _missed_doses_today(ctx: ToolContext) -> list[dict]:
                 {"medication_id": med["id"], "name": med.get("name") or "your medicine",
                  "slot": hhmm}
             )
+    if slot_filter is not None:
+        missed = [m for m in missed if _slot_filter_matches(m["slot"], slot_filter)]
     return missed
 
 
-async def resolve_missed_doses(ctx: ToolContext, confirmed: bool = False) -> str:
+async def resolve_missed_doses(
+    ctx: ToolContext, confirmed: bool = False, slot: str | None = None
+) -> str:
     if not confirmed:
-        missed = await _missed_doses_today(ctx)
+        slot_filter = None
+        if slot:
+            slot_filter = _parse_slot_filter(slot)
+            if slot_filter is None:
+                return (
+                    "That time isn't clear. Ask the user for it as a clock time "
+                    "like 08:00, or morning/noon/afternoon/evening/night, and "
+                    "don't propose anything yet."
+                )
+        scope = _scope_phrase(slot_filter)
+        missed = await _missed_doses_today(ctx, slot_filter)
         if not missed:
-            return "No missed doses today — everything due so far is logged."
+            return f"No missed doses today{scope} — everything due so far is logged."
         if ctx.session is not None:
             ctx.session.pending_missed_doses = missed
             ctx.session.awaiting_confirmation = True
         listing = ", ".join(f"{m['name']} at {_fmt_slot(m['slot'])}" for m in missed)
         return (
-            "PROPOSED (not yet saved). These doses were due earlier today and are "
-            f"not logged yet: {listing} — ask the user to confirm marking ALL of "
-            "these as taken."
+            f"PROPOSED (not yet saved). These doses were due earlier today{scope} "
+            f"and are not logged yet: {listing} — ask the user to confirm marking "
+            "ALL of these as taken."
         )
 
     # confirmed=true: only honor a confirm when the list was proposed this session.

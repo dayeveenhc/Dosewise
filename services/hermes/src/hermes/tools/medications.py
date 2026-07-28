@@ -16,6 +16,7 @@ from .base import (
     first_id,
     match_pending,
     match_pending_bulk,
+    parse_dosage,
     record_action,
     register,
 )
@@ -144,6 +145,12 @@ async def add_prescription(
         if purpose:
             readback += f", for {purpose}"
         warning = await _interaction_warning(ctx, name)
+        # A same-name medication already on file at a different dose is really
+        # a disguised dose CHANGE, not a new prescription — flag it the same
+        # way update_medication_dosage does, even though this is add_prescription.
+        existing = await _existing_medication(ctx, name)
+        if existing:
+            warning += _dosage_warning(existing.get("dosage"), dosage)
         return (
             "PROPOSED (not yet saved). Read this back to the user and ask them to "
             f"confirm before saving: {readback}.{warning}"
@@ -256,6 +263,61 @@ async def _interaction_warning(ctx: ToolContext, new_name: str) -> str:
         )
     except Exception:
         return ""
+
+
+# Mass units this codebase can compare across (mg is the common unit); ml/iu/
+# units aren't a fixed mass so are left out — better to skip the check than
+# guess a wrong conversion. Fires at a DOUBLED dose or more: since this is a
+# non-blocking FYI (never stops a save), erring toward flagging more real
+# jumps outweighs the low cost of occasionally flagging a routine titration.
+_MG_PER_UNIT = {"mg": 1.0, "mcg": 0.001, "g": 1000.0}
+_DOSAGE_INCREASE_MULTIPLIER = 2.0
+
+
+def _as_mg(value: float, unit: str) -> float | None:
+    factor = _MG_PER_UNIT.get(unit)
+    return value * factor if factor is not None else None
+
+
+def _dosage_warning(old_dosage: str | None, new_dosage: str | None) -> str:
+    """Best-effort, non-blocking caution when a new dosage is a big jump above
+    the old one — pure arithmetic on the two free-text values, no medical
+    judgment. Mirrors ``_interaction_warning``'s shape: fails open (returns
+    "") on anything unparseable or incomparable, so it only ever adds a
+    caveat, never blocks or crashes the propose flow.
+    """
+    old = parse_dosage(old_dosage)
+    new = parse_dosage(new_dosage)
+    if old is None or new is None:
+        return ""
+    old_mg = _as_mg(*old)
+    new_mg = _as_mg(*new)
+    if old_mg is None or new_mg is None or old_mg <= 0:
+        return ""
+    ratio = new_mg / old_mg
+    if ratio < _DOSAGE_INCREASE_MULTIPLIER:
+        return ""
+    return (
+        f" ⚠ That's a big increase — {old_dosage} to {new_dosage} is "
+        f"{ratio:.3g}x the previous dose. This is not medical advice — tell "
+        "the patient to flag it with their doctor (offer add_doctor_question) "
+        "before starting the higher dose."
+    )
+
+
+async def _existing_medication(ctx: ToolContext, name: str) -> dict | None:
+    """The one non-archived medication already on file matching ``name``, or
+    ``None`` for a genuinely new drug. Reuses ``find_medications``'s existing
+    exact/suffix-stripped/wildcard matching tiers (the same lookup every other
+    tool uses) so a name that arrives with its own dosage suffix still
+    resolves. Fails open on any error — a lookup hiccup should never crash a
+    propose.
+    """
+    try:
+        meds = await find_medications(ctx, name, columns="name,dosage")
+        return meds[0] if meds else None
+    except Exception:
+        return None
 
 
 _REMINDER_SCHEMA = {
@@ -491,13 +553,16 @@ async def update_medication_dosage(
                 "first with add_prescription."
             )
         med = meds[0]
-        old = med.get("dosage") or "an unrecorded dose"
+        raw_old = med.get("dosage")
+        old = raw_old or "an unrecorded dose"
         if ctx.session is not None:
             ctx.session.pending_dosage = {"name": medication_name, "dosage": dosage}
             ctx.session.awaiting_confirmation = True
+        warning = _dosage_warning(raw_old, dosage)
         return (
             "PROPOSED (not yet saved). Read this back to the user and ask them to "
-            f"confirm before saving: change {med['name']} dose from {old} to {dosage}."
+            f"confirm before saving: change {med['name']} dose from {old} to "
+            f"{dosage}.{warning}"
         )
 
     # confirmed=true: guard that a matching proposal exists in this session.

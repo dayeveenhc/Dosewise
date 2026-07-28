@@ -252,3 +252,110 @@ async def test_partial_insert_failure_reported_honestly():
     assert len(ctx.committed_actions) == 1
     entities = ctx.committed_actions[0]["entities"]
     assert {e["entity_id"] for e in entities} == {"m1", "m3"}
+
+
+# ---------------------------------------------------------------------------
+# `slot` filter — "label all the meds i took at 8 am as taken" must narrow to
+# just that time, not resolve every missed dose today (the reported bug: with
+# no filter, a time-qualified "all" wrongly ticks doses at OTHER times too).
+# ---------------------------------------------------------------------------
+
+
+async def test_propose_with_exact_slot_filters_to_matching_medications():
+    tool = get_handler("resolve_missed_doses")
+    db = _db()  # m1 Metformin 08:00, m2 Amlodipine 09:00, m3 Atorvastatin 12:00
+    ctx = _ctx(db)
+    out = await tool(ctx, confirmed=False, slot="08:00")
+    assert "PROPOSED" in out
+    assert "Metformin at 8:00 AM" in out
+    assert "Amlodipine" not in out and "Atorvastatin" not in out
+    assert ctx.session.pending_missed_doses == [
+        {"medication_id": "m1", "name": "Metformin", "slot": "08:00"},
+    ]
+
+
+async def test_propose_with_day_part_slot_filters_within_window():
+    # A med at 07:15 -- near the "morning" anchor (08:00) but not exact --
+    # must still be included; a far-off noon med must not. A purpose-built
+    # fixture (not the shared _db(), whose m2@09:00 also falls in-window --
+    # see the dedicated boundary test below) keeps this a clean near/far case.
+    tool = get_handler("resolve_missed_doses")
+    db = FakeDB(
+        {
+            "medications": [
+                {"id": "m1", "name": "Metformin", "archived": False,
+                 "schedule": {"times": ["08:00"]}},
+                {"id": "m5", "name": "Aspirin", "archived": False,
+                 "schedule": {"times": ["07:15"]}},
+                {"id": "m3", "name": "Atorvastatin", "archived": False,
+                 "schedule": {"times": ["12:00"]}},
+            ],
+            "doses": [],
+        }
+    )
+    ctx = _ctx(db)
+    out = await tool(ctx, confirmed=False, slot="morning")
+    assert "Aspirin" in out and "Metformin" in out
+    assert "Atorvastatin" not in out
+    ids = {m["medication_id"] for m in ctx.session.pending_missed_doses}
+    assert ids == {"m1", "m5"}
+
+
+async def test_day_part_window_boundary_inclusive_and_exclusive():
+    # "morning" anchors at 08:00 with a +/-60min window: exactly 09:00 (60min
+    # away) is in bounds; 09:01 (61min away) is not. Locks in the tunable
+    # constant as a regression guard.
+    tool = get_handler("resolve_missed_doses")
+    db = _db()  # already has m2 Amlodipine at 09:00 -- the inclusive edge
+    db.tables["medications"].append(
+        {"id": "m6", "name": "Ibuprofen", "archived": False,
+         "schedule": {"times": ["09:01"]}}
+    )
+    ctx = _ctx(db)
+    out = await tool(ctx, confirmed=False, slot="morning")
+    assert "Amlodipine" in out  # 09:00, exactly +60min -- included
+    assert "Ibuprofen" not in out  # 09:01, +61min -- excluded
+
+
+async def test_propose_with_slot_and_no_matches_is_friendly_and_stashes_nothing():
+    tool = get_handler("resolve_missed_doses")
+    db = _db()
+    ctx = _ctx(db)
+    out = await tool(ctx, confirmed=False, slot="20:00")  # nothing scheduled then
+    assert "No missed doses today" in out
+    assert ctx.session.pending_missed_doses is None
+    assert ctx.session.awaiting_confirmation is False
+    assert not db.inserted
+
+
+async def test_propose_with_unparseable_slot_refuses_and_stashes_nothing():
+    tool = get_handler("resolve_missed_doses")
+    db = _db()
+    ctx = _ctx(db)
+    out = await tool(ctx, confirmed=False, slot="whenever i felt like it")
+    assert "isn't clear" in out.lower()
+    assert "PROPOSED" not in out
+    assert ctx.session.pending_missed_doses is None
+    assert ctx.session.awaiting_confirmation is False
+    assert not db.inserted
+
+
+async def test_confirm_after_slot_filtered_propose_only_marks_filtered_subset():
+    tool = get_handler("resolve_missed_doses")
+    db = _db()
+    ctx = _ctx(db)
+    await tool(ctx, confirmed=False, slot="08:00")
+    out = await tool(ctx, confirmed=True)
+    assert "Marked 1 missed doses as taken" in out or "Metformin" in out
+
+    rows = [row for table, row in db.inserted if table == "doses"]
+    assert {r["medication_id"] for r in rows} == {"m1"}  # Amlodipine/Atorvastatin untouched
+
+    # Independent re-read: only Metformin's dose landed as taken.
+    still_pending_meds = {"m2", "m3"}
+    logged_meds = {r["medication_id"] for r in rows if r["status"] == "taken"}
+    assert logged_meds.isdisjoint(still_pending_meds)
+
+    assert len(ctx.committed_actions) == 1
+    assert len(ctx.committed_actions[0]["entities"]) == 1
+    assert ctx.committed_actions[0]["entities"][0]["entity_id"] == "m1"

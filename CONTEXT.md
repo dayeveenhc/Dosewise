@@ -191,13 +191,26 @@ FastAPI service, `uv`-managed. Key files:
   `medications` registers five: `add_prescription`, `set_medication_reminder`,
   `update_medication_dosage` (propose→confirm dose EDIT), **`discontinue_medication`**
   (2026-07-27, propose→confirm, sets `archived=true` — never deletes), `list_medications`.
+  `add_prescription`/`update_medication_dosage` both run **`_dosage_warning`**
+  (2026-07-28, `medications.py`) at propose time — a non-blocking ⚠ caveat, same
+  tone as `_interaction_warning`, when a new dose is ≥2x the medication's own old
+  dose (parsed via `base.py::parse_dosage`, mg/mcg/g-normalized, fails open on
+  unparseable/incomparable values); `add_prescription` also runs it against a
+  same-name medication already on file at a different dose (a disguised
+  duplicate-as-dose-change), via `_existing_medication` (reuses `find_medications`,
+  not a new query).
   `doses` registers five: `log_dose` (single — takes optional `medication_name` AND
   `slot`; the selection engine `_dose_plan` picks earliest-first among today's
   pending doses, asks when genuinely ambiguous and writes nothing until answered,
   proceeds silently when only one dose is plausible — the 2026-07-27 root-cause fix
   for "marking one named medication taken" unreliability, see MEMORY.md),
   `resolve_missed_doses` (the "all" bulk resolver, server-side missed-slot
-  computation), **`log_doses`** (2026-07-27, EXPLICIT-list bulk — "I took my X and
+  computation; optional **`slot`** filter, 2026-07-28 — `HH:MM` exact match or a
+  day-part word within a bounded ±60min window, `_parse_slot_filter`/
+  `_slot_filter_matches`, deliberately NOT `log_dose`'s unbounded nearest-neighbor —
+  applied as a post-pass so the earliest-first missed-slot attribution is
+  unaffected; omitted `slot` resolves everything, unchanged), **`log_doses`**
+  (2026-07-27, EXPLICIT-list bulk — "I took my X and
   my Y", distinct from the "all" filter — propose→confirm via the generic
   `pending_bulk` slot), **`undo_dose`** (flips a mistaken tick back), **`snooze_dose`**
   (today-only reminder move into `accessibility.dose_snoozes`, never touches the
