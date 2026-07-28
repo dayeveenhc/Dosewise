@@ -11,6 +11,7 @@ type FakeVoice = { name: string; lang: string; voiceURI: string };
 class FakeUtterance {
   text: string;
   lang = "";
+  rate = 1;
   voice: FakeVoice | null = null;
   onstart: (() => void) | null = null;
   onend: (() => void) | null = null;
@@ -45,17 +46,29 @@ const VOICES: FakeVoice[] = [
 let speakSpy: ReturnType<typeof vi.fn>;
 let cancelSpy: ReturnType<typeof vi.fn>;
 let addListenerSpy: ReturnType<typeof vi.fn>;
+let pauseSpy: ReturnType<typeof vi.fn>;
+let resumeSpy: ReturnType<typeof vi.fn>;
+// Mutable so a test can flip .speaking/.paused to simulate the browser's
+// state machine around the keepalive's pause()/resume() nudge.
+let fakeSynth: { speaking: boolean; paused: boolean };
 
 function installSynth(voices: FakeVoice[]) {
   speakSpy = vi.fn();
   cancelSpy = vi.fn();
   addListenerSpy = vi.fn();
+  pauseSpy = vi.fn();
+  resumeSpy = vi.fn();
   const synth = {
     getVoices: () => voices,
     cancel: cancelSpy,
     speak: speakSpy,
     addEventListener: addListenerSpy,
+    speaking: false,
+    paused: false,
+    pause: pauseSpy,
+    resume: resumeSpy,
   };
+  fakeSynth = synth;
   vi.stubGlobal("speechSynthesis", synth);
   vi.stubGlobal("SpeechSynthesisUtterance", FakeUtterance);
 }
@@ -126,6 +139,91 @@ describe("speak — fallback languages (no female match)", () => {
     const utter = speakAndFlush("li ho", "nan");
     expect(speakSpy).toHaveBeenCalledTimes(1); // still speaks
     expect(utter?.voice).toBeNull(); // no voice assigned, no undefined-voice error
+  });
+});
+
+describe("speak — rate", () => {
+  it("defaults to a calmer 0.9 rate instead of the spec default", () => {
+    expect(speakAndFlush("hello", "en-SG")?.rate).toBe(0.9);
+  });
+});
+
+describe("speak — text cleanup before speaking", () => {
+  it("strips markdown bold for an English reply", () => {
+    expect(speakAndFlush("Take **2 tablets** now", "en-SG")?.text).toBe("Take 2 tablets now");
+  });
+
+  it("strips markdown bold for a non-English reply too", () => {
+    expect(speakAndFlush("**你好** 你好吗", "zh-CN")?.text).toBe("你好 你好吗");
+  });
+
+  it("expands mg/mL/Dr. for an English reply", () => {
+    expect(speakAndFlush("Take 500mg with 2mL, ask Dr. Tan", "en-SG")?.text).toBe(
+      "Take 500 milligrams with 2 milliliters, ask Doctor Tan"
+    );
+  });
+
+  it("does NOT expand mg for a non-English reply -- English words must not be injected into a zh-CN utterance", () => {
+    expect(speakAndFlush("请服用500mg", "zh-CN")?.text).toBe("请服用500mg");
+  });
+});
+
+describe("speak — quality-aware voice ranking", () => {
+  it("prefers a higher-quality voice over a plain one within the same gender tier", () => {
+    installSynth([
+      { name: "Aria", lang: "en-US", voiceURI: "com.apple.Aria" },
+      { name: "Aria (Enhanced)", lang: "en-US", voiceURI: "com.apple.Aria-Enhanced" },
+    ]);
+    expect(speakAndFlush("hello", "en-SG")?.voice?.name).toBe("Aria (Enhanced)");
+  });
+
+  it("never picks a known-robotic (compact) voice when a better match exists, even over a same-gender compact voice", () => {
+    installSynth([
+      { name: "Samantha", lang: "en-US", voiceURI: "com.apple.voice.compact.en-US.Samantha" },
+      { name: "Zira", lang: "en-US", voiceURI: "Microsoft Zira Desktop" },
+    ]);
+    expect(speakAndFlush("hello", "en-SG")?.voice?.name).toBe("Zira");
+  });
+});
+
+describe("speak — Chromium 15s keepalive (crbug.com/335907)", () => {
+  // Deliberately uses advanceTimersByTime, not runAllTimers: the keepalive is
+  // a repeating setInterval, and runAllTimers on an interval that's still
+  // "active" (paused/resumed each tick, never cleared until onend) would spin
+  // until Vitest's runaway-timer guard aborts the test.
+  it("nudges pause()/resume() every 12s while speaking, and stops once speech ends", () => {
+    const utter = speakAndFlush("a reasonably long reply", "en-SG");
+    expect(utter).toBeDefined();
+
+    // Simulate the browser actually starting speech.
+    fakeSynth.speaking = true;
+    utter?.onstart?.();
+
+    vi.advanceTimersByTime(12000);
+    expect(pauseSpy).toHaveBeenCalledTimes(1);
+    expect(resumeSpy).toHaveBeenCalledTimes(1);
+
+    vi.advanceTimersByTime(12000);
+    expect(pauseSpy).toHaveBeenCalledTimes(2);
+    expect(resumeSpy).toHaveBeenCalledTimes(2);
+
+    // Speech ends: the interval must be cleared, no further nudges.
+    fakeSynth.speaking = false;
+    utter?.onend?.();
+    vi.advanceTimersByTime(24000);
+    expect(pauseSpy).toHaveBeenCalledTimes(2);
+    expect(resumeSpy).toHaveBeenCalledTimes(2);
+  });
+
+  it("does not nudge while already paused (avoids re-entrant pause/resume)", () => {
+    const utter = speakAndFlush("a reasonably long reply", "en-SG");
+    fakeSynth.speaking = true;
+    utter?.onstart?.();
+
+    fakeSynth.paused = true;
+    vi.advanceTimersByTime(12000);
+    expect(pauseSpy).not.toHaveBeenCalled();
+    expect(resumeSpy).not.toHaveBeenCalled();
   });
 });
 
