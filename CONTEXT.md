@@ -165,7 +165,16 @@ Voice input/output is client-side (browser Web Speech API — `SpeechRecognition
 unsupported. Text-to-speech goes through the shared `lib/speech.ts::speak`
 (cancel→speak race fix + `voiceschanged` voice selection). `pickVoice` **prefers a
 softer female voice** per language (exported `isFemaleVoice` heuristic; falls back to
-first-available where the OS ships no female voice, e.g. Tamil/Hokkien). Whether Mei reads
+first-available where the OS ships no female voice, e.g. Tamil/Hokkien), then breaks
+ties toward a **higher-quality voice** (`HIGH_QUALITY_VOICE_TOKENS` —
+Enhanced/Premium/Natural/Neural — deprioritizing known-robotic "compact" voices;
+quality never overrides the gender preference). `speak()` sets `utter.rate = 0.9`
+(calmer pacing for the elderly audience) and runs replies through
+`cleanTextForSpeech` first — strips markdown bold, and for English-only replies
+expands `mg`/`mL`/`Dr.` (gated on the lang tag so non-English utterances never get
+English words injected). A periodic `pause()`/`resume()` nudge every 12s while
+speaking works around Chromium's crbug.com/335907 (long utterances silently stop
+mid-sentence), cleared on `onend`/`onerror`. Whether Mei reads
 replies aloud is one persisted setting — `voiceOutput` on `AccessibilityProvider`
 (`accessibility.tsx`, key `dosewise:accessibility`) — read/written by both
 Settings "Read Aloud" toggles, both chats, and the in-chat "Language & voice"

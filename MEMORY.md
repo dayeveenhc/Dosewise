@@ -9,6 +9,38 @@ letting this grow forever — it's a memory aid, not an audit log.
 
 ---
 
+## 2026-07-28 — TTS: calmer rate, markdown/unit cleanup, quality voice ranking, Chromium keepalive fix
+
+`lib/speech.ts` — four additive changes to `speak()`/`pickVoice`, found
+sitting uncommitted from a prior session and landed as-is (already complete
+and tested, just not committed/documented):
+
+1. **Rate 0.9** instead of the spec 1.0 default — reads calmer for the
+   elderly audience. Pitch deliberately left untouched (comment in code:
+   pitch-shifting is a naive DSP op on most engines, less predictable than
+   rate across voices).
+2. **`cleanTextForSpeech`** strips markdown `**bold**` before speaking
+   (mirrors the chat bubble's `renderWithBold()`) and, for English-only
+   replies, expands `mg`→milligrams, `mL`→milliliters, `Dr.`→Doctor — gated
+   on `lang.startsWith("en")` so it can't inject English words into a
+   zh/yue/ta/ms/hokkien utterance.
+3. **Quality-aware voice ranking** (`HIGH_QUALITY_VOICE_TOKENS`,
+   `voiceQualityTier`): prefers "Enhanced"/"Premium"/"Natural"/"Neural"
+   voices, deprioritizes known-robotic "compact" voices — layered strictly
+   under the existing female-voice preference (quality is never allowed to
+   flip the persona's gender).
+4. **Chromium 15s TTS keepalive** (`startKeepAlive`/`stopKeepAlive`):
+   crbug.com/335907 — Chromium silently stops long utterances mid-sentence
+   with no error/end event past ~15s. Periodic `pause()`+`resume()` nudge
+   every 12s while speaking, cleared on `onend`/`onerror`.
+
+Verified via `speech.test.ts` (20/20, incl. new keepalive-timer and
+voice-ranking cases using `vi.advanceTimersByTime` — deliberately not
+`runAllTimers`, which would spin forever against a repeating interval that's
+only cleared on `onend`), full web suite (112/112), `tsc --noEmit` clean,
+`npm run build` clean. Not live-driven through a browser TTS engine this
+pass — same caveat as prior TTS entries.
+
 ## 2026-07-28 — Time-scoped bulk dose resolution + dosage-jump safety warning
 
 Two user-directed fixes, both scoped entirely to `services/hermes/` (no
