@@ -75,11 +75,11 @@ function SectionCard({ icon: Icon, title, walk, children, onMore }: {
 }) {
   const { language } = useLanguage();
   return (
-    <div className="bg-card rounded-2xl border border-border overflow-hidden">
+    <div className="dw-surface dw-press overflow-hidden">
       <button
         onClick={onMore}
         data-walk={walk}
-        className="w-full flex items-center gap-3 px-4 py-3.5 text-left active:bg-secondary/60 transition-colors"
+        className="w-full flex items-center gap-3 px-4 py-3.5 text-left active:bg-secondary/50 transition-colors"
       >
         <div className="w-10 h-10 rounded-xl bg-secondary flex items-center justify-center shrink-0">
           <Icon size={20} className="text-primary" />
@@ -363,7 +363,7 @@ export function ElderlySettingsScreen({ patient, elderId, onUpdatePatient, onBac
   ) : null;
 
   const qrCard = elderId ? (
-    <div className="bg-card rounded-2xl border border-border p-4" data-tour="elder-qr-link">
+    <div className="dw-surface p-4" data-tour="elder-qr-link">
       <div className="flex items-center gap-2.5">
         <QrCode size={20} className="text-primary shrink-0" />
         <div className="flex-1 min-w-0">
@@ -408,7 +408,7 @@ export function ElderlySettingsScreen({ patient, elderId, onUpdatePatient, onBac
     if (section === "profile") {
       return (
         <SubScreen>
-          <div className="bg-card rounded-2xl border border-border p-4 space-y-4">
+          <div className="dw-surface p-4 space-y-4">
             <div className="flex gap-3">
               <div className="flex-1">
                 <div className="flex items-center justify-between mb-1.5">
@@ -456,13 +456,13 @@ export function ElderlySettingsScreen({ patient, elderId, onUpdatePatient, onBac
             </div>
           </div>
 
-          <div className="bg-card rounded-2xl border border-border p-4 space-y-4">
+          <div className="dw-surface p-4 space-y-4">
             <TagList data-walk="elder-conditions" label={t(language, "settings.medicalConditions")} placeholder={t(language, "wizard.conditionsPlaceholder")} items={conditionsDraft} suggestions={withCatalogLabels(COMMON_CONDITIONS, language)} onAdd={v => setConditionsDraft(p => [...p, v])} onRemove={i => setConditionsDraft(p => p.filter((_, j) => j !== i))} />
             <TagList label={t(language, "settings.generalAllergies")} placeholder={t(language, "wizard.allergiesPlaceholder")} items={allergiesDraft} suggestions={withCatalogLabels(COMMON_ALLERGIES, language)} onAdd={v => setAllergiesDraft(p => [...p, v])} onRemove={i => setAllergiesDraft(p => p.filter((_, j) => j !== i))} />
             <TagList label={t(language, "settings.medicationAllergies")} placeholder={t(language, "wizard.drugAllergiesPlaceholder")} items={drugAllergiesDraft} suggestions={withCatalogLabels(COMMON_DRUG_ALLERGIES, language)} onAdd={v => setDrugAllergiesDraft(p => [...p, v])} onRemove={i => setDrugAllergiesDraft(p => p.filter((_, j) => j !== i))} />
           </div>
 
-          <div className="bg-card rounded-2xl border border-border p-4">
+          <div className="dw-surface p-4">
             <p className="text-[15px] font-bold text-foreground mb-3">{t(language, "settings.mealsSleep")}</p>
             <div className="space-y-3">
               <TimeField label={t(language, "wizard.wakeUpTime")} icon={<Sunrise size={17} className="text-primary" />} value={wakeDraft} onChange={setWakeDraft} />
@@ -488,7 +488,7 @@ export function ElderlySettingsScreen({ patient, elderId, onUpdatePatient, onBac
     if (section === "accessibility") {
       return (
         <SubScreen>
-          <div className="bg-card rounded-2xl border border-border divide-y divide-border">
+          <div className="dw-surface divide-y divide-border">
             {textSizeControl}
             {contrastControl}
             {colourVisionControl}
@@ -499,7 +499,7 @@ export function ElderlySettingsScreen({ patient, elderId, onUpdatePatient, onBac
     if (section === "reminders") {
       return (
         <SubScreen>
-          <div className="bg-card rounded-2xl border border-border divide-y divide-border">
+          <div className="dw-surface divide-y divide-border">
             {notifOptions.map(o => (
               <SettingRow key={o.key} label={o.label}>
                 <Toggle
@@ -517,7 +517,7 @@ export function ElderlySettingsScreen({ patient, elderId, onUpdatePatient, onBac
     if (section === "voice") {
       return (
         <SubScreen>
-          <div className="bg-card rounded-2xl border border-border divide-y divide-border" data-tour="elder-language">
+          <div className="dw-surface divide-y divide-border" data-tour="elder-language">
             {readAloudControl}
             {languageControl}
           </div>
@@ -527,7 +527,7 @@ export function ElderlySettingsScreen({ patient, elderId, onUpdatePatient, onBac
     if (section === "emergency") {
       return (
         <SubScreen>
-          <div className="bg-card rounded-2xl border border-border">
+          <div className="dw-surface">
             {emergencyCard ?? <p className="px-4 py-6 text-[14px] text-muted-foreground text-center">{t(language, "notifications.empty")}</p>}
           </div>
           {showCallPrimary && primary && <CallMockup name={primary.name} role={primary.role} onEnd={() => setShowCallPrimary(false)} />}
@@ -539,7 +539,7 @@ export function ElderlySettingsScreen({ patient, elderId, onUpdatePatient, onBac
     }
     return (
       <SubScreen>
-        <div className="bg-card rounded-2xl border border-border p-4">
+        <div className="dw-surface p-4">
           <p className="text-[15px] text-foreground leading-relaxed">{t(language, "settings.aboutBody")}</p>
         </div>
         <button onClick={onBack} className="w-full h-13 py-3.5 rounded-2xl border border-border text-foreground text-[15px] font-bold flex items-center justify-center gap-2 active:bg-muted transition-colors">
@@ -558,11 +558,11 @@ export function ElderlySettingsScreen({ patient, elderId, onUpdatePatient, onBac
       <div className="px-4 pt-3 pb-28 space-y-3">
         {/* Profile card, with the edit button on the card itself rather than as
             a separate row further down the page. */}
-        <div className="bg-card rounded-2xl border border-border p-4" data-tour="elder-profile-section">
+        <div className="dw-surface p-4" data-tour="elder-profile-section">
           <div className="flex items-center gap-3.5">
             <img src={patient.photo} alt="" className="w-[60px] h-[60px] rounded-full object-cover bg-muted border-2 border-primary/20 shrink-0" />
             <div className="min-w-0">
-              <p className="font-bold text-foreground text-[20px] leading-tight break-words">{patient.nickname}</p>
+              <p className="dw-display font-semibold text-foreground text-[22px] leading-tight break-words">{patient.nickname}</p>
               <p className="text-[14px] text-muted-foreground break-words">{patient.name} · {patient.age}</p>
             </div>
           </div>
@@ -599,12 +599,12 @@ export function ElderlySettingsScreen({ patient, elderId, onUpdatePatient, onBac
         </div>
 
         {query.trim() ? (
-          <div className="bg-card rounded-2xl border border-border divide-y divide-border overflow-hidden">
+          <div className="dw-surface divide-y divide-border overflow-hidden">
             {matches.map(m => (
               <button
                 key={`${m.section}-${m.label}`}
                 onClick={() => { setSection(m.section); setQuery(""); }}
-                className="w-full flex items-center gap-3 px-4 py-3.5 text-left active:bg-secondary/60 transition-colors"
+                className="w-full flex items-center gap-3 px-4 py-3.5 text-left active:bg-secondary/50 transition-colors"
               >
                 <div className="flex-1 min-w-0">
                   <p className="text-[15px] font-semibold text-foreground leading-snug">{m.label}</p>

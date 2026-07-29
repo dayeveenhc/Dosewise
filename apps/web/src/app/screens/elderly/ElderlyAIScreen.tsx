@@ -67,7 +67,7 @@ function HelpRow({ icon: Icon, label, onClick, "data-walk": dataWalk }: {
     <button
       onClick={onClick}
       data-walk={dataWalk}
-      className="w-full flex items-center gap-3 px-4 py-3.5 text-left active:bg-secondary/60 transition-colors"
+      className="w-full flex items-center gap-3 px-4 py-3.5 text-left active:bg-secondary/50 transition-colors"
     >
       <div className="w-10 h-10 rounded-xl bg-secondary flex items-center justify-center shrink-0">
         <Icon size={20} className="text-primary" />
@@ -516,7 +516,7 @@ export function ElderlyAIScreen({ patient, elderId, onNavigate, onMedsChanged, o
     <div className="flex flex-col flex-1 min-h-0 overflow-hidden relative">
       {category ? (
         <div className="flex-1 overflow-y-auto scrollbar-none px-4 pt-3 pb-28 space-y-3">
-          <div className="bg-card rounded-2xl border border-border divide-y divide-border overflow-hidden">
+          <div className="dw-surface divide-y divide-border overflow-hidden">
             {CATEGORIES[category].items.map(item => (
               <HelpRow key={item.label} icon={item.icon} label={item.label} onClick={item.run} data-walk={item.walk} />
             ))}
@@ -526,14 +526,14 @@ export function ElderlyAIScreen({ patient, elderId, onNavigate, onMedsChanged, o
         <div className="flex-1 overflow-y-auto scrollbar-none px-4 pt-3 pb-28 space-y-4" data-tour="elder-quickhelp">
           <div className="px-1">
             <p className="text-[15px] text-muted-foreground leading-none">{t(language, "header.hello", { name: nick })}</p>
-            <h2 className="text-[22px] font-bold text-foreground leading-tight mt-1.5">{t(language, "ai.whatCanIHelp")}</h2>
+            <h2 className="dw-display text-[24px] font-semibold text-foreground leading-tight mt-1.5">{t(language, "ai.whatCanIHelp")}</h2>
           </div>
 
           {/* Chat leads: it's the one option that covers anything not on a tile. */}
           <button
             onClick={() => setChatOpen(true)}
             data-walk="elder-open-chat"
-            className="w-full bg-primary text-primary-foreground rounded-2xl px-4 py-4 flex items-center gap-3.5 shadow-sm active:scale-[0.99] transition-transform"
+            className="w-full text-primary-foreground rounded-[20px] px-4 py-4 flex items-center gap-3.5 dw-raised dw-press bg-gradient-to-br from-[#3E8477] to-[#2C6055]"
           >
             <div className="w-12 h-12 rounded-2xl bg-white/15 flex items-center justify-center shrink-0">
               <MessageCircle size={26} />
@@ -552,7 +552,7 @@ export function ElderlyAIScreen({ patient, elderId, onNavigate, onMedsChanged, o
                   key={id}
                   onClick={() => setCategory(id)}
                   data-walk={`elder-cat-${id}`}
-                  className="bg-card rounded-2xl border border-border p-4 min-h-[152px] flex flex-col items-start justify-between gap-3 text-left active:bg-secondary/60 transition-colors"
+                  className="dw-surface dw-press p-4 h-[158px] flex flex-col items-start justify-between gap-3 text-left"
                 >
                   <div className="w-12 h-12 rounded-2xl bg-secondary flex items-center justify-center">
                     <cat.icon size={24} className="text-primary" />

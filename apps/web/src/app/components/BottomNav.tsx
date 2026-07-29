@@ -12,7 +12,7 @@ export function BottomNav({ activeTab, onSelect }: { activeTab: string; onSelect
   // visible text used to say — an icon-only tab bar is otherwise silent to a
   // screen reader.
   return (
-    <div className="shrink-0 bg-card/95 backdrop-blur-md border-t border-border px-3 pt-4 pb-6">
+    <div className="shrink-0 bg-card/85 backdrop-blur-xl border-t border-border/60 px-3 pt-4 pb-6">
       {/* items-END so every control shares one baseline — see ElderlyApp's nav. */}
       <div className="flex items-end">
         {NAV_ITEMS.map(item => {

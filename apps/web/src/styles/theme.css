@@ -44,7 +44,15 @@
   --chart-3: #85B690;
   --chart-4: #C2410C;
   --chart-5: #B6B09A;
-  --radius: 1rem;
+  --radius: 1.125rem;
+
+  /* Elevation. Shadows are tinted with the brand's dark ink rather than pure
+     black — neutral-black shadows over a warm cream read grey and muddy. Two
+     layers each: a tight contact shadow plus a wide soft one. */
+  --shadow-xs: 0 1px 2px rgba(16, 48, 43, 0.05);
+  --shadow-sm: 0 1px 2px rgba(16, 48, 43, 0.04), 0 2px 8px rgba(16, 48, 43, 0.05);
+  --shadow-md: 0 2px 4px rgba(16, 48, 43, 0.05), 0 8px 20px rgba(16, 48, 43, 0.07);
+  --shadow-lg: 0 4px 10px rgba(16, 48, 43, 0.07), 0 18px 36px rgba(16, 48, 43, 0.10);
 
   /* Dose status semantics. Screens read these instead of hardcoding a
      Tailwind palette, so a status can never drift out of the brand ramp —
@@ -328,6 +336,47 @@
 }
 
 @layer utilities {
+  /* One card treatment for the whole app. Screens used to spell out
+     `bg-card rounded-2xl border border-border shadow-sm` by hand, which drifted
+     into several near-identical variants; this keeps every surface identical
+     and makes elevation a one-line change. */
+  .dw-surface {
+    background-color: var(--card);
+    border: 1px solid var(--border);
+    border-radius: 20px;
+    box-shadow: var(--shadow-sm);
+  }
+  .dw-raised {
+    box-shadow: var(--shadow-md);
+  }
+  /* For surfaces that need the shared elevation but keep their own border and
+     background — the status-coloured dose cards, mainly. */
+  .dw-shadow {
+    box-shadow: var(--shadow-sm);
+  }
+  .dw-float {
+    box-shadow: var(--shadow-lg);
+  }
+  /* Tappable surfaces settle slightly instead of just changing colour — the
+     easing is deliberately fast-out so it feels responsive, not floaty. */
+  .dw-press {
+    transition: transform 180ms cubic-bezier(0.2, 0.8, 0.2, 1), box-shadow 180ms ease;
+  }
+  .dw-press:active {
+    transform: scale(0.985);
+    box-shadow: var(--shadow-xs);
+  }
+  /* Fraunces, for screen-level titles only — it gives the app a voice without
+     costing legibility, since body copy stays on DM Sans. */
+  .dw-display {
+    font-family: "Fraunces", Georgia, serif;
+    letter-spacing: -0.015em;
+  }
+  /* A barely-there warm wash so the cream background has depth rather than
+     reading as flat paper. */
+  .dw-app-bg {
+    background-image: linear-gradient(180deg, #F8F6ED 0%, var(--background) 38%, #F1EDDF 100%);
+  }
   .scrollbar-none {
     scrollbar-width: none;
     -ms-overflow-style: none;

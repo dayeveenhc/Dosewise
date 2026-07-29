@@ -446,7 +446,7 @@ export default function App() {
     return (
       <LanguageProvider>
         <div className="min-h-screen bg-[#CBC7B8] flex items-center justify-center p-4" style={{ fontFamily: "'DM Sans', system-ui, sans-serif" }}>
-          <div className="w-[390px] h-[844px] bg-background relative overflow-hidden rounded-[3rem] shadow-2xl border-[6px] border-[#24504A] flex flex-col" />
+          <div className="w-[390px] h-[844px] bg-background dw-app-bg relative overflow-hidden rounded-[3rem] shadow-2xl border-[6px] border-[#24504A] flex flex-col" />
         </div>
       </LanguageProvider>
     );
@@ -456,7 +456,7 @@ export default function App() {
     return (
       <LanguageProvider>
         <div className="min-h-screen bg-[#CBC7B8] flex items-center justify-center p-4" style={{ fontFamily: "'DM Sans', system-ui, sans-serif" }}>
-          <div className="w-[390px] h-[844px] bg-background relative overflow-hidden rounded-[3rem] shadow-2xl border-[6px] border-[#24504A] flex flex-col">
+          <div className="w-[390px] h-[844px] bg-background dw-app-bg relative overflow-hidden rounded-[3rem] shadow-2xl border-[6px] border-[#24504A] flex flex-col">
             {preAuthStage === "welcome" && (
               <WelcomeScreen onSignIn={() => setPreAuthStage("signin")} onGetStarted={() => setPreAuthStage("mode")} />
             )}
@@ -503,7 +503,7 @@ export default function App() {
     return (
       <LanguageProvider>
         <div className="min-h-screen bg-[#CBC7B8] flex items-center justify-center p-4" style={{ fontFamily: "'DM Sans', system-ui, sans-serif" }}>
-          <div className="w-[390px] h-[844px] bg-background relative overflow-hidden rounded-[3rem] shadow-2xl border-[6px] border-[#24504A] flex flex-col">
+          <div className="w-[390px] h-[844px] bg-background dw-app-bg relative overflow-hidden rounded-[3rem] shadow-2xl border-[6px] border-[#24504A] flex flex-col">
             <AccessibilityProvider>
               <ElderlyApp
                 patient={patients[0]}
@@ -545,7 +545,7 @@ export default function App() {
     <LanguageProvider>
       <div className="min-h-screen bg-[#CBC7B8] flex items-center justify-center p-4" style={{ fontFamily: "'DM Sans', system-ui, sans-serif" }}>
         {/* Phone frame */}
-        <div className="w-[390px] h-[844px] bg-background relative overflow-hidden rounded-[3rem] shadow-2xl border-[6px] border-[#24504A] flex flex-col">
+        <div className="w-[390px] h-[844px] bg-background dw-app-bg relative overflow-hidden rounded-[3rem] shadow-2xl border-[6px] border-[#24504A] flex flex-col">
         <AccessibilityProvider>
           {/* Status bar */}
           <LiveStatusBar className="bg-background/80 backdrop-blur-sm" />
@@ -558,7 +558,7 @@ export default function App() {
               content" sibling below — later in the DOM, same default stacking
               level — paints on top of the whole header, dropdown included,
               whenever the dropdown is open and overlaps it. */}
-          <div className="relative z-30 px-4 pt-2 pb-3 bg-background/80 backdrop-blur-sm border-b border-border shrink-0">
+          <div className="relative z-30 px-4 pt-2 pb-3 bg-background/70 backdrop-blur-md border-b border-border/60 shrink-0">
             {showBack ? (
               <div className="flex items-center gap-2.5 mb-2">
                 <button onClick={() => setScreen("dashboard")} aria-label={t(uiLang, "common.back")} className="w-11 h-11 bg-card border border-border rounded-2xl flex items-center justify-center active:bg-muted transition-colors">

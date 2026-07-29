@@ -79,7 +79,7 @@ export function TimelineScreen({ patient, justAddedMed, onSendReminder }: { pati
       </div>
 
       {/* Week strip */}
-      <div className="bg-card rounded-2xl border border-border px-3 pt-3 pb-2 mb-4">
+      <div className="dw-surface px-3 pt-3 pb-2 mb-4">
         <div className="flex items-center justify-between mb-2">
           <div className="flex items-center gap-0.5">
             <button onClick={() => setWeekOffset(o => o - 1)} className="w-7 h-7 flex items-center justify-center active:opacity-60 transition-opacity">
@@ -216,7 +216,7 @@ export function TimelineScreen({ patient, justAddedMed, onSendReminder }: { pati
           })}
         </div>
       ) : (
-        <div className="bg-card rounded-2xl border border-border overflow-hidden">
+        <div className="dw-surface overflow-hidden">
           {/* Week header */}
           <div className="grid grid-cols-[1fr_repeat(7,28px)] gap-1 px-3 pt-3 pb-2 border-b border-border">
             <span />

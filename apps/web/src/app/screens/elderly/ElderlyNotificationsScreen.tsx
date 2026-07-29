@@ -127,14 +127,14 @@ export function ElderlyNotificationsScreen({ careMessages, elderId, doctorQuesti
           </div>
         )}
 
-        <div className="flex gap-1.5 bg-muted rounded-2xl p-1.5">
+        <div className="flex gap-1.5 bg-muted/70 rounded-2xl p-1.5">
           {([["messages", t(language, "notifications.tabMessages")], ["questions", t(language, "notifications.tabQuestions")]] as const).map(([id, label]) => (
             <button
               key={id}
               onClick={() => setTab(id)}
               data-walk={id === "questions" ? "elder-doctorq-tab" : undefined}
               aria-pressed={tab === id}
-              className={`flex-1 py-2.5 rounded-xl text-[15px] font-bold transition-colors ${tab === id ? "bg-card text-foreground shadow-sm" : "text-muted-foreground"}`}
+              className={`flex-1 py-2.5 rounded-xl text-[15px] font-bold transition-colors ${tab === id ? "bg-card text-foreground dw-shadow" : "text-muted-foreground"}`}
             >
               {label}
             </button>
@@ -143,7 +143,7 @@ export function ElderlyNotificationsScreen({ careMessages, elderId, doctorQuesti
 
 
         {tab === "messages" && (careMessages.length === 0 ? (
-          <div className="bg-card rounded-2xl border border-border p-6 text-center">
+          <div className="dw-surface p-6 text-center">
             <MessageSquare size={32} className="text-muted-foreground mx-auto mb-2" />
             <p className="text-[14px] text-muted-foreground">{t(language, "notifications.empty")}</p>
           </div>
@@ -218,7 +218,7 @@ export function ElderlyNotificationsScreen({ careMessages, elderId, doctorQuesti
           )}
 
           {manual.map(q => (
-            <div key={q.id} data-testid={`doctor_message-${q.id}`} className="bg-card rounded-2xl border border-border p-4">
+            <div key={q.id} data-testid={`doctor_message-${q.id}`} className="dw-surface p-4">
               <div className="flex items-start gap-3">
                 <div className="w-6 h-6 rounded-full border-2 border-primary/40 flex items-center justify-center shrink-0 mt-0.5">
                   <Circle size={9} className="text-primary fill-primary" />
@@ -233,7 +233,7 @@ export function ElderlyNotificationsScreen({ careMessages, elderId, doctorQuesti
           ))}
 
           {showQInput ? (
-            <div className="bg-card rounded-2xl border border-border p-4">
+            <div className="dw-surface p-4">
               <textarea
                 data-walk="elder-doctor-q-input"
                 value={newQ}

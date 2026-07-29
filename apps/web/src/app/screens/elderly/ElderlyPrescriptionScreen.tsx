@@ -199,7 +199,7 @@ export function ElderlyPrescriptionScreen({ patient, onAddRx, onRequestRefill, j
         </div>
 
         {pastMedications.length > 0 && (
-          <div className="bg-card rounded-2xl border border-border overflow-hidden">
+          <div className="dw-surface overflow-hidden">
             <button
               onClick={() => setPastOpen(v => !v)}
               className="w-full flex items-center gap-2.5 px-4 py-4 text-[15px] font-bold text-foreground"

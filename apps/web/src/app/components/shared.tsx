@@ -84,7 +84,7 @@ export function SectionHeader({ title, action, onAction }: { title: string; acti
 }
 
 export function Card({ children, className = "", "data-tour": dataTour }: { children: React.ReactNode; className?: string; "data-tour"?: string }) {
-  return <div className={`bg-card rounded-2xl shadow-sm border border-border ${className}`} data-tour={dataTour}>{children}</div>;
+  return <div className={`dw-surface ${className}`} data-tour={dataTour}>{children}</div>;
 }
 
 export function QuickAction({ icon, label, colour, onClick }: { icon: React.ReactNode; label: string; colour: string; onClick?: () => void }) {

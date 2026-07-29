@@ -295,7 +295,7 @@ export function ElderlyHomeScreen({ patient, onLogDose, onUnlogDose, onOpenTrave
           key={m.id}
           ref={registerCard(m.id)}
           data-testid={m.medicationId ? `medication-${m.medicationId}` : undefined}
-          className="rounded-2xl border border-taken-border bg-taken-bg/70 px-3.5 py-3"
+          className="rounded-[20px] border border-taken-border bg-taken-bg/70 px-3.5 py-3"
         >
           <div className="flex items-center gap-1.5 mb-2">
             <span className="text-[15px] font-bold tracking-tight text-taken-fg/70 whitespace-nowrap shrink-0">{clock}</span>
@@ -325,10 +325,10 @@ export function ElderlyHomeScreen({ patient, onLogDose, onUnlogDose, onOpenTrave
     }
 
     const justAdded = !!justAddedMed && m.name === justAddedMed;
-    const cardCls = justAdded ? "border-2 border-taken bg-taken-bg shadow-sm ring-2 ring-taken/40"
-                  : isNext ? "border-2 border-upcoming-border bg-upcoming-bg shadow-sm"
-                  : isMissed ? "border-2 border-missed-border bg-missed-bg shadow-sm"
-                  : "border border-border bg-card";
+    const cardCls = justAdded ? "border-2 border-taken bg-taken-bg dw-shadow ring-2 ring-taken/40"
+                  : isNext ? "border-2 border-upcoming-border bg-upcoming-bg dw-shadow"
+                  : isMissed ? "border-2 border-missed-border bg-missed-bg dw-shadow"
+                  : "border border-border bg-card dw-shadow";
     const timeCls = isNext ? "text-primary" : isMissed ? "text-missed-fg" : "text-muted-foreground";
 
     return (
@@ -336,7 +336,7 @@ export function ElderlyHomeScreen({ patient, onLogDose, onUnlogDose, onOpenTrave
         key={m.id}
         ref={registerCard(m.id)}
         data-testid={m.medicationId ? `medication-${m.medicationId}` : undefined}
-        className={`rounded-2xl overflow-hidden ${cardCls}`}
+        className={`rounded-[20px] overflow-hidden ${cardCls}`}
       >
         <div className="px-4 pt-3 pb-3.5">
           {/* Time and status badges get their own full-width strip. They used to
@@ -425,7 +425,7 @@ export function ElderlyHomeScreen({ patient, onLogDose, onUnlogDose, onOpenTrave
       <div className="px-4 pt-3 pb-3 shrink-0 relative z-20 bg-background" data-walk="elder-day-nav">
         <div className="flex items-center justify-between gap-3">
           <div className="flex items-baseline gap-2 min-w-0">
-            <h2 className={`text-[22px] font-bold leading-none tracking-tight whitespace-nowrap ${isSelectedToday ? "text-primary" : "text-foreground"}`}>
+            <h2 className={`dw-display text-[23px] font-semibold leading-none whitespace-nowrap ${isSelectedToday ? "text-primary" : "text-foreground"}`}>
               {selectedDay.toLocaleDateString("en-SG", { day: "numeric", month: "long" })}
             </h2>
             <p className="text-[14px] text-muted-foreground leading-none truncate">
@@ -515,7 +515,7 @@ export function ElderlyHomeScreen({ patient, onLogDose, onUnlogDose, onOpenTrave
           <button
             onClick={scrollToNextDose}
             data-testid={`next-dose-${nextOff}`}
-            className={`absolute ${nextOff === "up" ? "top-3" : "bottom-4"} left-4 z-30 flex items-center gap-2 bg-card border border-border text-foreground rounded-full pl-3 pr-4 py-2.5 shadow-lg active:scale-95 transition-transform`}
+            className={`absolute ${nextOff === "up" ? "top-3" : "bottom-4"} left-4 z-30 flex items-center gap-2 bg-card border border-border text-foreground rounded-full pl-3 pr-4 py-2.5 dw-float dw-press transition-transform`}
           >
             {nextOff === "up" ? <ArrowUp size={16} className="text-primary" /> : <ArrowDown size={16} className="text-primary" />}
             <span className="text-[14px] font-bold whitespace-nowrap">{t(language, "home.offscreenBelow", { clock: resolveDose(nextDose).clock })}</span>
@@ -524,7 +524,7 @@ export function ElderlyHomeScreen({ patient, onLogDose, onUnlogDose, onOpenTrave
         {isSelectedToday && showJump && (
           <button
             onClick={() => jumpToNow("smooth")}
-            className="absolute bottom-4 right-4 z-30 flex items-center gap-2 bg-primary text-primary-foreground rounded-full pl-3.5 pr-4 py-2.5 shadow-lg active:scale-95 transition-transform"
+            className="absolute bottom-4 right-4 z-30 flex items-center gap-2 bg-primary text-primary-foreground rounded-full pl-3.5 pr-4 py-2.5 dw-float dw-press transition-transform"
           >
             <LocateFixed size={19} />
             <span className="text-[16px] font-bold">{t(language, "home.now")}</span>
@@ -535,7 +535,7 @@ export function ElderlyHomeScreen({ patient, onLogDose, onUnlogDose, onOpenTrave
       {/* Confirmation toast — centred, fades out rather than vanishing abruptly */}
       {confirmedId !== null && (
         <div className={`absolute inset-0 z-40 flex items-center justify-center pointer-events-none transition-opacity duration-500 ${toastVisible ? "opacity-100" : "opacity-0"}`}>
-          <div className={`text-white rounded-2xl px-6 py-5 flex items-center gap-3 shadow-xl ${toastKind === "taken" ? "bg-primary" : "bg-accent"}`}>
+          <div className={`text-white rounded-[20px] px-6 py-5 flex items-center gap-3 dw-float ${toastKind === "taken" ? "bg-primary" : "bg-accent"}`}>
             {toastKind === "taken" ? <CheckCircle2 size={24} /> : <RotateCcw size={24} />}
             <p className="font-bold text-[16px]">{t(language, toastKind === "taken" ? "home.recorded" : "home.undone")}</p>
           </div>

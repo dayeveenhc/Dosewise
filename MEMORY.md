@@ -55,6 +55,20 @@ one screen, so a next dose within ~an hour of now is still visible at
 scrollTop 0 — `scratchpad/nextdose.spec.ts` places it at 7pm+ with fillers below
 and skips itself after 8pm.
 
+**Polish pass adds a small design system to `theme.css`, use it** — tinted
+elevation tokens (`--shadow-xs/sm/md/lg`, tinted with the brand ink because
+neutral-black shadows over warm cream read muddy) plus utilities `.dw-surface`
+(the one card treatment: card bg + hairline border + 20px radius + shadow-sm),
+`.dw-raised`, `.dw-shadow`, `.dw-float`, `.dw-press` (settle-on-tap), `.dw-display`
+(Fraunces, screen titles only) and `.dw-app-bg` (subtle warm wash). ~29 hand-rolled
+`bg-card rounded-2xl border border-border shadow-sm` variants were collapsed onto
+`.dw-surface`. **Add new cards with `.dw-surface`, not by respelling the chrome** —
+that drift is exactly what this replaced.
+
+**Restore point:** tag `ui-checkpoint-before-sleek` on branch `ui/sleek-revamp`
+(commit f7b67fc) is the whole revamp with every gate green, taken immediately
+before this polish pass. `main` still holds the pre-revamp state.
+
 **Ask Mei is category tiles, not a flat list (2nd revision).** Seventeen rows on
 one screen read as a wall; the same items now sit behind four tiles (My
 medicines / My details / How the app looks / My care team) with a short list
