@@ -1,31 +1,33 @@
 import { useEffect, useState } from "react";
-import { CheckCircle2, AlertTriangle, Circle, X, ChevronDown, Plus, Droplets, Pill, QrCode } from "lucide-react";
+import { CheckCircle2, AlertTriangle, Circle, X, ChevronDown, Plus, Droplets, QrCode } from "lucide-react";
 import type { MedStatus, Patient } from "../types";
-import { MED_PHOTOS, MED_COLOURS } from "../data/medications";
+import { MED_PHOTOS, MED_PHOTO_FALLBACKS } from "../data/medications";
 import { useLanguage } from "../lib/languageContext";
 import { t } from "../lib/language";
 
-// Deterministic colour per medication name — so a medicine with no bundled
-// photo (most of MEDICATION_CATALOG, or anything freeform) still gets a
-// distinct, stable look instead of every unphotographed med sharing one
-// generic fallback image.
-function medColour(name: string) {
+// Deterministic index per medication name, so a given medicine always draws the
+// same fallback photo instead of jittering between renders.
+function nameHash(name: string) {
   let hash = 0;
   for (let i = 0; i < name.length; i++) hash = (hash * 31 + name.charCodeAt(i)) | 0;
-  return MED_COLOURS[Math.abs(hash) % MED_COLOURS.length];
+  return Math.abs(hash);
+}
+
+// Every medicine shows a photo now — a bundled one where we have it, otherwise a
+// deterministic generic medicine photo. Both are illustrative stock imagery
+// rather than the real pill; MED_SHAPES is the accurate physical identifier.
+export function medPhoto(name: string): string {
+  return MED_PHOTOS[name] ?? MED_PHOTO_FALLBACKS[nameHash(name) % MED_PHOTO_FALLBACKS.length];
 }
 
 export function MedAvatar({ name, size, className = "" }: { name: string; size: number; className?: string }) {
-  const photo = MED_PHOTOS[name];
-  const style = { width: size, height: size };
-  if (photo) {
-    return <img src={photo} alt={name} style={style} className={`object-cover bg-muted ${className}`} />;
-  }
-  const colour = medColour(name);
   return (
-    <div style={{ ...style, backgroundColor: `${colour.hex}22` }} className={`flex items-center justify-center ${className}`}>
-      <Pill size={Math.round(size * 0.5)} style={{ color: colour.hex }} />
-    </div>
+    <img
+      src={medPhoto(name)}
+      alt=""
+      style={{ width: size, height: size }}
+      className={`object-cover bg-muted ${className}`}
+    />
   );
 }
 
@@ -55,11 +57,14 @@ export function LiveStatusBar({ className = "" }: { className?: string }) {
 
 export function StatusPill({ status, small = false }: { status: MedStatus; small?: boolean }) {
   const { language } = useLanguage();
+  // Status colours come from the shared tokens (styles/theme.css) so the
+  // caregiver's chips track the elder's cards — including under the contrast
+  // and colour-vision modes, which a hardcoded Tailwind palette would ignore.
   const map: Record<MedStatus, { label: string; icon: React.ReactNode; cls: string }> = {
-    taken: { label: t(language, "common.taken"), icon: <CheckCircle2 size={small ? 11 : 13} />, cls: "bg-emerald-50 text-emerald-700 border border-emerald-200" },
-    missed: { label: t(language, "common.missed"), icon: <AlertTriangle size={small ? 11 : 13} />, cls: "bg-orange-50 text-orange-700 border border-orange-200" },
-    upcoming: { label: t(language, "common.upcoming"), icon: <Circle size={small ? 11 : 13} />, cls: "bg-sky-50 text-sky-700 border border-sky-200" },
-    skipped: { label: t(language, "common.skipped"), icon: <X size={small ? 11 : 13} />, cls: "bg-stone-100 text-stone-500 border border-stone-200" },
+    taken: { label: t(language, "common.taken"), icon: <CheckCircle2 size={small ? 11 : 13} />, cls: "bg-taken-bg text-taken-fg border border-taken-border" },
+    missed: { label: t(language, "common.missed"), icon: <AlertTriangle size={small ? 11 : 13} />, cls: "bg-missed-bg text-missed-fg border border-missed-border" },
+    upcoming: { label: t(language, "common.upcoming"), icon: <Circle size={small ? 11 : 13} />, cls: "bg-upcoming-bg text-upcoming-fg border border-upcoming-border" },
+    skipped: { label: t(language, "common.skipped"), icon: <X size={small ? 11 : 13} />, cls: "bg-muted text-muted-foreground border border-border" },
   };
   const { label, icon, cls } = map[status];
   return (

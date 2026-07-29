@@ -114,19 +114,40 @@ export async function logDoseTaken(medicationId: string, elderId: string): Promi
     scheduled_at: nowIso, status: "taken", logged_at: nowIso, logged_by: elderId,
   });
   if (error) throw error;
-  await decrementSupply(medicationId);
+  await shiftSupply(medicationId, -1);
+}
+
+// Inverse of logDoseTaken: someone tapped "I took it" by mistake. Flips today's
+// most recently logged `taken` dose back to `pending` rather than deleting the
+// row, so the schedule slot survives and the dose simply becomes due again.
+// Scoped to today (the same window fetchElderMedications reads) so an undo can
+// never reach back and rewrite an earlier day's history.
+export async function unlogDoseTaken(medicationId: string, elderId: string): Promise<void> {
+  const { data } = await supabase
+    .from("doses").select("id")
+    .eq("medication_id", medicationId).eq("elder_id", elderId).eq("status", "taken")
+    .gte("scheduled_at", startOfLocalDayIso())
+    .order("logged_at", { ascending: false }).limit(1);
+  const row = data?.[0];
+  if (!row) return;
+  const { error } = await supabase.from("doses")
+    .update({ status: "pending", logged_at: null, logged_by: null })
+    .eq("id", row.id);
+  if (error) throw error;
+  await shiftSupply(medicationId, +1);
 }
 
 // Logging a dose taken uses up a day of supply — pull the refill forecast one
-// day closer so "days remaining" reflects actual consumption. No-op if this
-// medication has no refill row (refill tracking is optional).
-async function decrementSupply(medicationId: string): Promise<void> {
+// day closer so "days remaining" reflects actual consumption; undoing pushes it
+// back out by the same day. No-op if this medication has no refill row (refill
+// tracking is optional).
+async function shiftSupply(medicationId: string, days: number): Promise<void> {
   const { data } = await supabase.from("refills")
     .select("id,run_out_forecast").eq("medication_id", medicationId).limit(1);
   const refill = data?.[0];
   if (!refill?.run_out_forecast) return;
   const forecast = new Date(refill.run_out_forecast);
-  forecast.setDate(forecast.getDate() - 1);
+  forecast.setDate(forecast.getDate() + days);
   await supabase.from("refills").update({
     run_out_forecast: forecast.toISOString().slice(0, 10),
   }).eq("id", refill.id);

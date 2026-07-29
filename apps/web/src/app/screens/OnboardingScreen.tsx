@@ -29,8 +29,8 @@ export function OnboardingScreen({ onSelect, onBack }: { onSelect: (mode: "careg
               <Pill size={28} className="text-primary" />
             </div>
           </div>
-          <div className="absolute -top-1 -right-1 w-7 h-7 rounded-full bg-amber-100 border-2 border-background flex items-center justify-center">
-            <Heart size={13} className="text-amber-500" />
+          <div className="absolute -top-1 -right-1 w-7 h-7 rounded-full bg-secondary border-2 border-background flex items-center justify-center">
+            <Heart size={13} className="text-accent" />
           </div>
           <div className="absolute -bottom-1 -left-1 w-7 h-7 rounded-full bg-teal-100 border-2 border-background flex items-center justify-center">
             <Shield size={13} className="text-primary" />
@@ -66,8 +66,8 @@ export function OnboardingScreen({ onSelect, onBack }: { onSelect: (mode: "careg
           onClick={() => onSelect("elderly")}
           className="w-full text-left rounded-2xl bg-card shadow-sm p-5 flex items-start gap-4 active:scale-[0.98] transition-transform"
         >
-          <div className="w-11 h-11 rounded-xl bg-amber-100 flex items-center justify-center shrink-0 mt-0.5">
-            <User size={20} className="text-amber-600" />
+          <div className="w-11 h-11 rounded-xl bg-secondary flex items-center justify-center shrink-0 mt-0.5">
+            <User size={20} className="text-accent" />
           </div>
           <div>
             <p className="font-semibold text-foreground text-[15px] leading-snug mb-1">{t(language, "common.forMyself")}</p>

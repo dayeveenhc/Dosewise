@@ -49,15 +49,15 @@ export function DashboardScreen({ patient, onNavigate, onSendReminder }: { patie
           </div>
         )}
         <div className="flex gap-2 mt-2">
-          <span className="inline-flex items-center gap-1 text-[10px] font-medium text-emerald-700 bg-emerald-50 border border-emerald-200 rounded-full px-2 py-0.5 whitespace-nowrap">
+          <span className="inline-flex items-center gap-1 text-[10px] font-medium text-taken-fg bg-taken-bg border border-taken-border rounded-full px-2 py-0.5 whitespace-nowrap">
             <CheckCircle2 size={10} /> {taken} {t(language, "common.taken")}
           </span>
           {missed > 0 && (
-            <span className="inline-flex items-center gap-1 text-[10px] font-medium text-orange-700 bg-orange-50 border border-orange-200 rounded-full px-2 py-0.5 whitespace-nowrap">
+            <span className="inline-flex items-center gap-1 text-[10px] font-medium text-missed-fg bg-missed-bg border border-missed-border rounded-full px-2 py-0.5 whitespace-nowrap">
               <AlertTriangle size={10} /> {missed} {t(language, "common.missed")}
             </span>
           )}
-          <span className="inline-flex items-center gap-1 text-[10px] font-medium text-sky-700 bg-sky-50 border border-sky-200 rounded-full px-2 py-0.5 whitespace-nowrap">
+          <span className="inline-flex items-center gap-1 text-[10px] font-medium text-upcoming-fg bg-upcoming-bg border border-upcoming-border rounded-full px-2 py-0.5 whitespace-nowrap">
             <Circle size={10} /> {upcoming} {t(language, "common.upcoming")}
           </span>
         </div>
@@ -65,16 +65,16 @@ export function DashboardScreen({ patient, onNavigate, onSendReminder }: { patie
 
       {/* Missed medications alert */}
       {missed > 0 && (
-        <div className="bg-orange-50 border border-orange-200 rounded-2xl p-3.5">
+        <div className="bg-missed-bg border border-missed-border rounded-2xl p-3.5">
           <div className="flex items-start gap-3">
-            <AlertTriangle size={18} className="text-orange-600 shrink-0 mt-0.5" />
+            <AlertTriangle size={18} className="text-missed-fg shrink-0 mt-0.5" />
             <div className="flex-1 min-w-0">
-              <p className="text-sm font-semibold text-orange-800">{t(language, "dashboard.missedDoseAlert")}</p>
+              <p className="text-sm font-semibold text-missed-fg">{t(language, "dashboard.missedDoseAlert")}</p>
               {patient.medications.filter(m => m.status === "missed").map(m => (
-                <p key={m.id} className="text-xs text-orange-700 mt-0.5">{t(language, "dashboard.wasDueAt", { name: m.name, dose: m.dose, time: m.time })}</p>
+                <p key={m.id} className="text-xs text-missed-fg mt-0.5">{t(language, "dashboard.wasDueAt", { name: m.name, dose: m.dose, time: m.time })}</p>
               ))}
             </div>
-            <button onClick={() => onSendReminder(patient.medications.find(m => m.status === "missed")?.name)} className="shrink-0 bg-orange-600 text-white text-xs font-semibold rounded-xl px-3 py-1.5 flex items-center gap-1">
+            <button onClick={() => onSendReminder(patient.medications.find(m => m.status === "missed")?.name)} className="shrink-0 bg-missed-fg text-white text-xs font-semibold rounded-xl px-3 py-1.5 flex items-center gap-1">
               <Send size={11} /> {t(language, "dashboard.remind")}
             </button>
           </div>
@@ -87,13 +87,13 @@ export function DashboardScreen({ patient, onNavigate, onSendReminder }: { patie
           <SectionHeader title={t(language, "home.refillNeeded")} />
           <div className="space-y-2">
             {refillAlerts.map(m => (
-              <div key={m.id} className="bg-amber-50 border border-amber-200 rounded-2xl px-4 py-3 flex items-center gap-3">
-                <RefreshCw size={16} className="text-amber-700 shrink-0" />
+              <div key={m.id} className="bg-warn-bg border border-warn-border rounded-2xl px-4 py-3 flex items-center gap-3">
+                <RefreshCw size={16} className="text-warn-fg shrink-0" />
                 <div className="flex-1 min-w-0">
-                  <p className="text-sm font-semibold text-amber-900">{m.name}</p>
-                  <p className="text-xs text-amber-700">{t(language, "dashboard.daysRemainingOrderSoon", { days: m.refillDaysLeft })}</p>
+                  <p className="text-sm font-semibold text-warn-fg">{m.name}</p>
+                  <p className="text-xs text-warn-fg">{t(language, "dashboard.daysRemainingOrderSoon", { days: m.refillDaysLeft })}</p>
                 </div>
-                <span className="text-[10px] font-bold text-amber-800 bg-amber-100 border border-amber-300 rounded-full px-2 py-0.5">{m.refillDaysLeft}d</span>
+                <span className="text-[10px] font-bold text-warn-fg bg-warn-bg border border-warn-border rounded-full px-2 py-0.5">{m.refillDaysLeft}d</span>
               </div>
             ))}
           </div>
@@ -105,9 +105,9 @@ export function DashboardScreen({ patient, onNavigate, onSendReminder }: { patie
         <p className="text-[10px] text-muted-foreground uppercase tracking-widest font-medium mb-2">{t(language, "dashboard.quickActions")}</p>
         <div className="flex gap-2">
           <QuickAction
-            icon={<Clock size={20} className="text-emerald-700" />}
+            icon={<Clock size={20} className="text-taken-fg" />}
             label={t(language, "common.checkSchedule")}
-            colour="bg-emerald-50"
+            colour="bg-taken-bg"
             onClick={() => onNavigate("timeline")}
           />
           <QuickAction
@@ -119,7 +119,7 @@ export function DashboardScreen({ patient, onNavigate, onSendReminder }: { patie
           <QuickAction
             icon={<MessageSquare size={20} className="text-accent" />}
             label={t(language, "common.leaveNote")}
-            colour="bg-orange-50"
+            colour="bg-missed-bg"
             onClick={() => onNavigate("messages")}
           />
           <QuickAction

@@ -8,6 +8,11 @@ import { addConditionAutoSteps } from "./add_condition_auto";
 import { travelModeAutoSteps } from "./travel_mode_auto";
 import { editProfileAutoSteps } from "./edit_profile_auto";
 import { acceptCaregiverLinkSteps } from "./accept_caregiver_link";
+import { addDoctorQuestionAutoSteps } from "./add_doctor_question_auto";
+import {
+  checkScheduleSteps, logDoseSteps, undoDoseSteps, languageVoiceSteps,
+  reminderSettingsSteps, emergencyContactSteps, textSizeSteps,
+} from "./narrated";
 
 // The step library, keyed by task_name — the same names Hermes's
 // start_walkthrough tool accepts (services/hermes/src/hermes/tools/
@@ -38,7 +43,15 @@ export function resolveWalkthroughSteps(
     case "add_condition_auto": return addConditionAutoSteps(params);
     case "travel_mode_auto": return travelModeAutoSteps(params);
     case "edit_profile_auto": return editProfileAutoSteps(params);
+    case "add_doctor_question_auto": return addDoctorQuestionAutoSteps(params);
     case "accept_caregiver_link": return acceptCaregiverLinkSteps;
+    case "check_schedule": return checkScheduleSteps;
+    case "log_dose": return logDoseSteps;
+    case "undo_dose": return undoDoseSteps;
+    case "language_voice": return languageVoiceSteps;
+    case "reminder_settings": return reminderSettingsSteps;
+    case "emergency_contact": return emergencyContactSteps;
+    case "text_size": return textSizeSteps;
     default: return [];
   }
 }

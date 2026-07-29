@@ -20,11 +20,11 @@ export function travelModeAutoSteps(p: WalkthroughParams = {}): WalkthroughStep[
     id: "autoTravel.open",
     screen: ON_AI,
     onEnter: ON_AI,
-    // The data-tour anchor is a container; its first inner button is the one
-    // that opens Quick Help. A div .click() wouldn't fire the button's handler.
-    selector: '[data-tour="elder-quickhelp"] button',
+    // Ask Mei groups its actions into category tiles now — Travel Mode lives
+    // under "My medicines", so that tile has to be opened first.
+    selector: '[data-walk="elder-cat-medicines"]',
     instructionKey: "walk.autoTravel.open",
-    act: { kind: "click", selector: '[data-tour="elder-quickhelp"] button' },
+    act: { kind: "click", selector: '[data-walk="elder-cat-medicines"]' },
   },
   {
     id: "autoTravel.tile",

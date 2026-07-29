@@ -28,7 +28,7 @@ export function SettingsScreen({ patient, caregiverAccount, onSwitchMode, onSign
   onEditProfile: () => void;
 }) {
   const { language, setLanguage } = useLanguage();
-  const { fontSize, setFontSize, highContrast, setHighContrast, voiceOutput, setVoiceOutput } = useAccessibility();
+  const { fontSize, setFontSize, highContrast, setContrast, voiceOutput, setVoiceOutput } = useAccessibility();
   const [callTarget, setCallTarget] = useState<Contact | null>(null);
   const [notifMissed, setNotifMissed] = useState(true);
   const [notifRefill, setNotifRefill] = useState(true);
@@ -99,8 +99,8 @@ export function SettingsScreen({ patient, caregiverAccount, onSwitchMode, onSign
                 <p className="text-sm font-semibold text-foreground">{c.name}</p>
                 <p className="text-[11px] text-muted-foreground">{c.role}</p>
               </div>
-              <button onClick={() => setCallTarget(c)} className="w-8 h-8 bg-emerald-50 border border-emerald-200 rounded-full flex items-center justify-center active:scale-95 transition-transform">
-                <Phone size={13} className="text-emerald-700" />
+              <button onClick={() => setCallTarget(c)} className="w-8 h-8 bg-taken-bg border border-taken-border rounded-full flex items-center justify-center active:scale-95 transition-transform">
+                <Phone size={13} className="text-taken-fg" />
               </button>
             </div>
           ))}
@@ -133,7 +133,7 @@ export function SettingsScreen({ patient, caregiverAccount, onSwitchMode, onSign
               <p className="text-sm font-medium text-foreground">{t(language, "settings.highContrast")}</p>
               <p className="text-xs text-muted-foreground">{t(language, "settings.highContrastDesc")}</p>
             </div>
-            <Switch checked={highContrast} onCheckedChange={setHighContrast} />
+            <Switch checked={highContrast} onCheckedChange={on => setContrast(on ? "high" : "normal")} />
           </div>
         </Card>
       </div>
@@ -206,7 +206,7 @@ export function SettingsScreen({ patient, caregiverAccount, onSwitchMode, onSign
                 <p className="text-sm font-medium text-foreground">{m.name}</p>
                 <p className="text-xs text-muted-foreground">{m.role}</p>
               </div>
-              <div className={`w-2 h-2 rounded-full ${m.active ? "bg-emerald-500" : "bg-stone-300"}`} />
+              <div className={`w-2 h-2 rounded-full ${m.active ? "bg-taken-bg0" : "bg-stone-300"}`} />
             </div>
           ))}
           {showAddMember ? (
@@ -256,9 +256,9 @@ export function SettingsScreen({ patient, caregiverAccount, onSwitchMode, onSign
               <div className="w-7 h-7 bg-secondary rounded-xl flex items-center justify-center text-primary shrink-0">{icon}</div>
               <div>
                 <p className="text-sm font-medium text-foreground">{label}</p>
-                <p className="text-xs text-emerald-700 font-medium">{sub}</p>
+                <p className="text-xs text-taken-fg font-medium">{sub}</p>
               </div>
-              <CheckCircle2 size={15} className="ml-auto text-emerald-600" />
+              <CheckCircle2 size={15} className="ml-auto text-taken" />
             </div>
           ))}
         </Card>

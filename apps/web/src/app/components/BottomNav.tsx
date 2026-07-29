@@ -8,23 +8,28 @@ import { t } from "../lib/language";
 // itself owns the provider and would not re-render on a language change.
 export function BottomNav({ activeTab, onSelect }: { activeTab: string; onSelect: (s: Screen) => void }) {
   const { language } = useLanguage();
+  // Icon-only, matching the elder shell. aria-label carries what the removed
+  // visible text used to say — an icon-only tab bar is otherwise silent to a
+  // screen reader.
   return (
-    <div className="shrink-0 bg-card/95 backdrop-blur-md border-t border-border px-2 pb-6 pt-2">
+    <div className="shrink-0 bg-card/95 backdrop-blur-md border-t border-border px-3 pt-4 pb-6">
+      {/* items-END so every control shares one baseline — see ElderlyApp's nav. */}
       <div className="flex items-end">
         {NAV_ITEMS.map(item => {
           const isActive = activeTab === item.id;
           const label = t(language, item.labelKey);
           if (item.fab) {
             return (
-              <div key={item.id} className="flex-1 flex flex-col items-center">
+              <div key={item.id} className="flex-1 flex justify-center">
                 <button
                   onClick={() => onSelect(item.id)}
                   data-tour={`nav-${item.id}`}
-                  className={`w-14 h-14 rounded-full flex items-center justify-center -mt-7 shadow-lg active:scale-95 transition-transform bg-primary ${isActive ? "ring-4 ring-primary/25" : ""}`}
+                  aria-label={label}
+                  aria-current={isActive ? "page" : undefined}
+                  className={`w-16 h-16 rounded-full flex items-center justify-center -mt-6 shadow-lg active:scale-95 transition-transform bg-primary ${isActive ? "ring-4 ring-accent/40" : ""}`}
                 >
-                  <item.icon size={24} className="text-primary-foreground" />
+                  <item.icon size={30} className="text-primary-foreground" />
                 </button>
-                <span className={`text-[10px] font-medium mt-1 ${isActive ? "text-primary" : "text-muted-foreground"}`}>{label}</span>
               </div>
             );
           }
@@ -33,14 +38,15 @@ export function BottomNav({ activeTab, onSelect }: { activeTab: string; onSelect
               key={item.id}
               onClick={() => onSelect(item.id)}
               data-tour={`nav-${item.id}`}
-              className="flex-1 flex flex-col items-center gap-1 py-1 relative"
+              aria-label={label}
+              aria-current={isActive ? "page" : undefined}
+              className="flex-1 min-w-0 flex justify-center relative"
             >
-              <div className={`w-10 h-7 rounded-2xl flex items-center justify-center transition-colors ${isActive ? "bg-primary" : ""}`}>
-                <item.icon size={18} className={isActive ? "text-primary-foreground" : "text-muted-foreground"} />
+              {/* Coloured icon + dot rather than a filled pill — see ElderlyApp's nav. */}
+              <div className="w-16 h-12 flex flex-col items-center justify-end gap-1.5">
+                <item.icon size={26} className={`transition-colors ${isActive ? "text-primary" : "text-muted-foreground/70"}`} />
+                <span className={`h-1.5 w-1.5 rounded-full transition-colors ${isActive ? "bg-primary" : "bg-transparent"}`} />
               </div>
-              <span className={`text-[10px] font-medium transition-colors ${isActive ? "text-primary" : "text-muted-foreground"}`}>
-                {label}
-              </span>
             </button>
           );
         })}

@@ -26,7 +26,18 @@ TASK_NAMES = [
     "add_condition_auto",
     "travel_mode_auto",
     "edit_profile_auto",
+    "add_doctor_question_auto",
     "accept_caregiver_link",
+    # Spotlight-and-narrate only: the patient performs every step themselves.
+    # These cover settings and everyday actions rather than data entry, so
+    # there is nothing to fill in and nothing to verify afterwards.
+    "check_schedule",
+    "log_dose",
+    "undo_dose",
+    "language_voice",
+    "reminder_settings",
+    "emergency_contact",
+    "text_size",
 ]
 
 _SCHEMA = {

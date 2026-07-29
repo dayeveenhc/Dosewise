@@ -38,7 +38,7 @@ export function HighlightCaption({ rect, verb, text }: { rect: DOMRect; verb: st
       {/* Shift the centred pill to sit over the element's centre, clamped so it
           can't leave the frame. translateX is clamped to keep it on-screen. */}
       <div
-        className="inline-flex items-center gap-1.5 bg-emerald-600 text-white text-xs font-semibold px-3 py-1.5 rounded-full shadow-lg whitespace-nowrap"
+        className="inline-flex items-center gap-1.5 bg-accent text-white text-xs font-semibold px-3 py-1.5 rounded-full shadow-lg whitespace-nowrap"
         style={{ transform: `translateX(${clampShift(center, vw, MARGIN)}px)`, maxWidth: `calc(100% )` }}
       >
         <Check size={12} strokeWidth={3} className="shrink-0" />

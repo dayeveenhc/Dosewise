@@ -20,16 +20,16 @@ export function NotificationsScreen({ notifications, patient, onMarkAllRead, onD
   const dismiss = onDismiss;
 
   const iconFor = (type: Notification["type"]) => {
-    if (type === "missed") return <AlertTriangle size={16} className="text-orange-600" />;
-    if (type === "refill") return <RefreshCw size={16} className="text-amber-600" />;
+    if (type === "missed") return <AlertTriangle size={16} className="text-missed-fg" />;
+    if (type === "refill") return <RefreshCw size={16} className="text-warn" />;
     if (type === "info") return <Brain size={16} className="text-primary" />;
     if (type === "reminder") return <Send size={16} className="text-primary" />;
     return <Bell size={16} className="text-muted-foreground" />;
   };
 
   const bgFor = (type: Notification["type"]) => {
-    if (type === "missed") return "bg-orange-50 border-orange-200";
-    if (type === "refill") return "bg-amber-50 border-amber-200";
+    if (type === "missed") return "bg-missed-bg border-missed-border";
+    if (type === "refill") return "bg-warn-bg border-warn-border";
     if (type === "info") return "bg-secondary border-primary/20";
     if (type === "reminder") return "bg-secondary border-primary/20";
     return "bg-card border-border";
@@ -63,7 +63,7 @@ export function NotificationsScreen({ notifications, patient, onMarkAllRead, onD
             </div>
             <div className="flex gap-2 mt-3">
               {n.type === "missed" && (
-                <button onClick={() => setShowCallPatient(true)} className="flex-1 text-xs font-semibold bg-orange-600 text-white rounded-xl py-2 flex items-center justify-center gap-1.5">
+                <button onClick={() => setShowCallPatient(true)} className="flex-1 text-xs font-semibold bg-missed-fg text-white rounded-xl py-2 flex items-center justify-center gap-1.5">
                   <Phone size={11} /> {t(language, "common.callPatient")}
                 </button>
               )}
@@ -71,7 +71,7 @@ export function NotificationsScreen({ notifications, patient, onMarkAllRead, onD
                 <button
                   onClick={() => setRefillRequested(prev => new Set(prev).add(n.id))}
                   disabled={refillRequested.has(n.id)}
-                  className="flex-1 text-xs font-semibold bg-amber-600 text-white rounded-xl py-2 flex items-center justify-center gap-1.5 disabled:opacity-60"
+                  className="flex-1 text-xs font-semibold bg-warn text-white rounded-xl py-2 flex items-center justify-center gap-1.5 disabled:opacity-60"
                 >
                   {refillRequested.has(n.id) ? <Check size={11} /> : <RefreshCw size={11} />}
                   {refillRequested.has(n.id) ? t(language, "common.requested") : t(language, "common.orderRefill")}
@@ -87,7 +87,7 @@ export function NotificationsScreen({ notifications, patient, onMarkAllRead, onD
         {notifs.length === 0 && (
           <div className="flex flex-col items-center gap-3 py-16 text-center">
             <div className="w-16 h-16 bg-muted rounded-full flex items-center justify-center">
-              <CheckCircle2 size={28} className="text-emerald-600" />
+              <CheckCircle2 size={28} className="text-taken" />
             </div>
             <p className="font-['Fraunces'] text-lg text-foreground">{t(language, "common.allClear")}</p>
             <p className="text-sm text-muted-foreground">{t(language, "common.noPendingNotifications")}</p>

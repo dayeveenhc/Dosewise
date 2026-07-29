@@ -32,7 +32,7 @@ test("ChangeHighlight rings the exact medication card with a changed_fields capt
 
   // Step 3: drive the real UI, land on the medication list, then fire the change.
   await signIn(page, creds);
-  await page.getByRole("button", { name: "Medications" }).click().catch(() => {});
+  await page.locator('[data-tour="nav-prescriptions"]').click();
   await expect(page.locator(`[data-testid="medication-${medId}"]`)).toBeVisible({ timeout: 15_000 });
 
   await page.evaluate(([id]) => {

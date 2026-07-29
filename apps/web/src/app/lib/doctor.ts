@@ -28,6 +28,31 @@ export async function fetchDoctorQuestions(elderId: string): Promise<DoctorQ[]> 
     }));
 }
 
+// Persist a question the elder typed themselves. Previously the "add your own
+// question" box only pushed onto local component state, so the question vanished
+// on reload and could never be verified — which also made it impossible for an
+// autonomous walkthrough to prove it had really saved. `source: "elder"` is one
+// of the three values public.question_source allows (agent | elder | caregiver)
+// and keeps the thread's "Added by Mei" vs "Added" split intact — only 'agent'
+// reads as Mei (see fetchDoctorQuestions).
+export async function createDoctorQuestion(elderId: string, question: string): Promise<DoctorQ | null> {
+  const { data, error } = await supabase
+    .from("doctor_questions")
+    .insert({ elder_id: elderId, question, source: "elder", status: "open" })
+    .select("id,question,source,status,created_at")
+    .single();
+  if (error || !data) {
+    if (error) console.warn("[dosewise] createDoctorQuestion failed:", error.message);
+    return null;
+  }
+  return {
+    id: String(data.id),
+    question: String(data.question),
+    addedAt: `Added · ${formatWhen(String(data.created_at))}`,
+    answered: false,
+  };
+}
+
 function formatWhen(iso: string): string {
   const d = new Date(iso);
   if (Number.isNaN(d.getTime())) return "recently";

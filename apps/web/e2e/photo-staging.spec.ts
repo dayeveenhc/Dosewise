@@ -11,13 +11,17 @@ test("attaching a photo stages it for the user to type an instruction", async ({
   const creds = await createThrowawayElder();
   await signIn(page, creds);
 
-  // Go to the Ask Mei tab.
+  // Go to the Ask Mei tab, then open the chat sheet (the tab itself is now a
+  // list of things Mei can do; the chat is one option on it).
   await page.locator('[data-tour="nav-ai"]').click();
+  await page.locator('[data-walk="elder-open-chat"]').click();
 
   const composer = page.locator('textarea');
   await expect(composer).toBeVisible({ timeout: 15_000 });
+  // With nothing typed or attached the right-hand button is the mic; Send only
+  // appears once there is something to send.
   const sendBtn = page.locator('[data-walk="elder-ai-send-button"]');
-  await expect(sendBtn).toBeDisabled(); // nothing typed, nothing attached
+  await expect(sendBtn).toHaveCount(0);
 
   // Attach a photo via the (hidden) library input — a tiny 1x1 PNG.
   const pngBase64 = "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+M8AAAMBAQDJ/pLvAAAAAElFTkSuQmCC";
@@ -39,5 +43,5 @@ test("attaching a photo stages it for the user to type an instruction", async ({
   // Removing the staged photo returns the composer to its empty state.
   await page.getByRole("button", { name: "Cancel" }).click();
   await expect(page.getByText("tell me what to do with it", { exact: false })).toHaveCount(0);
-  await expect(sendBtn).toBeDisabled();
+  await expect(sendBtn).toHaveCount(0);
 });

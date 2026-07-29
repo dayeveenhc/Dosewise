@@ -184,7 +184,7 @@ export function ScanLinkSheet({ onClose, onLinked }: {
 
           {phase === "sent" && (
             <div className="flex flex-col items-center justify-center gap-3 py-8">
-              <div className="w-16 h-16 rounded-full bg-emerald-500 flex items-center justify-center animate-in zoom-in duration-300">
+              <div className="w-16 h-16 rounded-full bg-primary flex items-center justify-center animate-in zoom-in duration-300">
                 <Check size={30} className="text-white" strokeWidth={3} />
               </div>
               <p className="font-['Fraunces'] text-lg font-semibold text-foreground">{t(language, "link.sentTitle")}</p>
@@ -197,8 +197,8 @@ export function ScanLinkSheet({ onClose, onLinked }: {
 
           {phase === "error" && (
             <div className="flex flex-col items-center justify-center gap-3 py-8">
-              <div className="w-14 h-14 rounded-full bg-amber-100 flex items-center justify-center">
-                <AlertCircle size={26} className="text-amber-600" />
+              <div className="w-14 h-14 rounded-full bg-warn-bg flex items-center justify-center">
+                <AlertCircle size={26} className="text-warn" />
               </div>
               <p className="text-sm text-muted-foreground text-center max-w-[260px]">{message}</p>
               <button onClick={onClose} className="mt-1 w-full bg-muted text-foreground rounded-2xl py-3 text-sm font-semibold">

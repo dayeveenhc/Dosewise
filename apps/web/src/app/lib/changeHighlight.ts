@@ -19,7 +19,7 @@ export const ENTITY_TARGETS: Record<string, EntityTarget> = {
   dose:              { elderly: "home",          caregiver: "timeline" },
   profile_field:     { elderly: "settings",      caregiver: "patient" },
   travel_plan:       { elderly: "home",          caregiver: "patient" },
-  doctor_message:    { elderly: "ai",            caregiver: "messages" },
+  doctor_message:    { elderly: "notifications", caregiver: "messages" },
   caregiver_message: { elderly: "notifications", caregiver: "messages" },
   caregiver_invite:  { elderly: "notifications", caregiver: "patient" },
   escalation:        { elderly: "ai",            caregiver: "notifications" },

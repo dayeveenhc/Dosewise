@@ -39,10 +39,21 @@ _WALKTHROUGH_LABELS = {
         "updating a detail in their profile for them (Mei fills it in and saves it, "
         "then double-checks it saved)"
     ),
+    "add_doctor_question_auto": (
+        "saving a question for their doctor (Mei opens Reminders, types the question "
+        "in and adds it, then double-checks it saved)"
+    ),
     "accept_caregiver_link": (
         "accepting a pending caregiver link request (Mei opens it, the patient taps "
         "Accept themselves, then Mei confirms it linked)"
     ),
+    "check_schedule": "reading their daily medicine schedule on the Home screen",
+    "log_dose": "marking a medicine as taken",
+    "undo_dose": "undoing a medicine they ticked off by mistake",
+    "language_voice": "changing the app language and whether Mei reads replies aloud",
+    "reminder_settings": "turning medicine reminders and other alerts on or off",
+    "emergency_contact": "finding and calling their emergency contact",
+    "text_size": "making the text bigger and easier to read",
 }
 
 _FALLBACK_PROMPT = """\

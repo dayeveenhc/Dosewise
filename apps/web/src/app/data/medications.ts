@@ -38,6 +38,22 @@ export const MED_PHOTOS: Record<string, string> = {
   "Latanoprost Eye Drops": "https://images.unsplash.com/photo-1750125625145-7be950011e4c?w=120&h=120&fit=crop&auto=format",
 };
 
+// Generic medicine photography for anything not in MED_PHOTOS above, picked
+// deterministically by name so a given medicine always shows the same image.
+// These are ILLUSTRATIVE stock photos, not the real pill for that drug — the
+// same is already true of MED_PHOTOS. The accurate physical identifier is the
+// shape/marking text in MED_SHAPES, which colour-vision mode surfaces.
+export const MED_PHOTO_FALLBACKS: string[] = [
+  "https://images.unsplash.com/photo-1584308666744-24d5c474f2ae?w=160&h=160&fit=crop&auto=format",
+  "https://images.unsplash.com/photo-1471864190281-a93a3070b6de?w=160&h=160&fit=crop&auto=format",
+  "https://images.unsplash.com/photo-1587854692152-cbe660dbde88?w=160&h=160&fit=crop&auto=format",
+  "https://images.unsplash.com/photo-1550572017-26b5655c1e8c?w=160&h=160&fit=crop&auto=format",
+  "https://images.unsplash.com/photo-1512069772995-ec65ed45afd6?w=160&h=160&fit=crop&auto=format",
+  "https://images.unsplash.com/photo-1585435557343-3b092031a831?w=160&h=160&fit=crop&auto=format",
+  "https://images.unsplash.com/photo-1607619056574-7b8d3ee536b2?w=160&h=160&fit=crop&auto=format",
+  "https://images.unsplash.com/photo-1522335579687-9c718c5184d7?w=160&h=160&fit=crop&auto=format",
+];
+
 export const MED_FREQUENCY: Record<string, string> = {
   "Celecoxib": "Every other day",
 };

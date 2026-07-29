@@ -13,8 +13,19 @@ export type WalkthroughTaskName =
   | "add_condition_auto"
   | "travel_mode_auto"
   | "edit_profile_auto"
+  | "add_doctor_question_auto"
   // Consent flow: Mei navigates, the elder taps Accept themselves, then verify.
-  | "accept_caregiver_link";
+  | "accept_caregiver_link"
+  // Spotlight-and-narrate only: the elder performs every step. These cover
+  // settings and everyday actions rather than data entry, so they carry no
+  // `act` and nothing to verify.
+  | "check_schedule"
+  | "log_dose"
+  | "undo_dose"
+  | "language_voice"
+  | "reminder_settings"
+  | "emergency_contact"
+  | "text_size";
 
 // Where a step lives, so the Walkthrough overlay can ask the host to switch
 // there (onEnter) before it starts spotlighting. "onboarding" isn't a real
@@ -81,6 +92,7 @@ export type VerifyDirective =
   | { kind: "travel-plan-saved" }
   | { kind: "profile-field"; field: string; value: string }
   | { kind: "profile-list-includes"; field: string; value: string }
+  | { kind: "doctor-question-exists"; question: string }
   | { kind: "care-link-active" };
 
 // The Reveal phase: where the proof now lives and how to animate it in.
@@ -125,5 +137,13 @@ export const WALKTHROUGH_TASK_LABELS: Record<WalkthroughTaskName, string> = {
   add_condition_auto: "walk.taskLabel.addConditionAuto",
   travel_mode_auto: "walk.taskLabel.travelModeAuto",
   edit_profile_auto: "walk.taskLabel.editProfileAuto",
+  add_doctor_question_auto: "walk.taskLabel.addDoctorQuestionAuto",
   accept_caregiver_link: "walk.taskLabel.acceptCaregiverLink",
+  check_schedule: "walk.taskLabel.checkSchedule",
+  log_dose: "walk.taskLabel.logDose",
+  undo_dose: "walk.taskLabel.undoDose",
+  language_voice: "walk.taskLabel.languageVoice",
+  reminder_settings: "walk.taskLabel.reminderSettings",
+  emergency_contact: "walk.taskLabel.emergencyContact",
+  text_size: "walk.taskLabel.textSize",
 };

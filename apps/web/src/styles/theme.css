@@ -1,36 +1,71 @@
 @custom-variant dark (&:is(.dark *));
 
+/* Dosewise brand palette (the only five brand hues — everything below is
+   derived from them, except the deliberately off-ramp status colours further
+   down):
+     #357266  pine         — PRIMARY: nav, buttons, the current-dose card
+     #0E3B43  deep teal    — secondary accent: emphasis, headings, depth
+     #85B690  sage         — secondary accent: soft tints, the recessive
+                             "already taken" state
+     #E2DBBE  sand         — muted surfaces, inputs
+     #F5F2E7  cream        — app background
+   Missed doses stay orange on purpose: it is the one signal that must NOT
+   read as part of the calm brand ramp.
+   Note "taken" is deliberately the palest green and "upcoming" the most
+   saturated — with a green primary the two would otherwise collide, and a
+   taken dose should recede while the next one leads. */
 :root {
   --font-size: 15px;
-  --background: #F2EFE8;
-  --foreground: #1A1714;
+  --background: #F5F2E7;
+  --foreground: #10302B;
   --card: #FFFFFF;
-  --card-foreground: #1A1714;
+  --card-foreground: #10302B;
   --popover: #FFFFFF;
-  --popover-foreground: #1A1714;
-  --primary: #0D5C8A;
+  --popover-foreground: #10302B;
+  --primary: #357266;
   --primary-foreground: #FFFFFF;
-  --secondary: #E2EFF7;
-  --secondary-foreground: #0D5C8A;
-  --muted: #E6E2D8;
-  --muted-foreground: #6B6455;
-  --accent: #C05621;
+  --secondary: #DCE9E3;
+  --secondary-foreground: #1F4F45;
+  --muted: #E2DBBE;
+  --muted-foreground: #4A5F5A;
+  --accent: #0E3B43;
   --accent-foreground: #FFFFFF;
-  --destructive: #B91C1C;
-  --destructive-foreground: #ffffff;
-  --border: rgba(26, 23, 20, 0.10);
+  --destructive: #A93A22;
+  --destructive-foreground: #FFFFFF;
+  --border: rgba(16, 48, 43, 0.14);
   --input: transparent;
-  --input-background: #EDE9E0;
-  --switch-background: #B5AFA4;
+  --input-background: #EFEADA;
+  --switch-background: #B6B09A;
   --font-weight-medium: 500;
   --font-weight-normal: 400;
-  --ring: #0D5C8A;
-  --chart-1: #0D5C8A;
-  --chart-2: #2E7D32;
-  --chart-3: #C05621;
-  --chart-4: #7B3F9E;
-  --chart-5: #B91C1C;
+  --ring: #357266;
+  --chart-1: #357266;
+  --chart-2: #0E3B43;
+  --chart-3: #85B690;
+  --chart-4: #C2410C;
+  --chart-5: #B6B09A;
   --radius: 1rem;
+
+  /* Dose status semantics. Screens read these instead of hardcoding a
+     Tailwind palette, so a status can never drift out of the brand ramp —
+     and `missed` stays deliberately outside it. Every fg/bg pair below is
+     ≥ 7:1, i.e. WCAG AAA at body size. */
+  --taken: #85B690;
+  --taken-bg: #EDF4EE;
+  --taken-border: #B9D6C1;
+  --taken-fg: #2E5B48;
+  --upcoming: #357266;
+  --upcoming-bg: #E6F0EC;
+  --upcoming-border: #357266;
+  --upcoming-fg: #23554B;
+  --missed: #EA580C;
+  --missed-bg: #FFF1E6;
+  --missed-border: #FDBA74;
+  --missed-fg: #9A3412;
+  --warn: #B45309;
+  --warn-bg: #FBF1DF;
+  --warn-border: #E3C795;
+  --warn-fg: #7A4A11;
   --sidebar: oklch(0.985 0 0);
   --sidebar-foreground: oklch(0.145 0 0);
   --sidebar-primary: #030213;
@@ -117,18 +152,178 @@
   --color-sidebar-accent-foreground: var(--sidebar-accent-foreground);
   --color-sidebar-border: var(--sidebar-border);
   --color-sidebar-ring: var(--sidebar-ring);
+  --color-taken: var(--taken);
+  --color-taken-bg: var(--taken-bg);
+  --color-taken-border: var(--taken-border);
+  --color-taken-fg: var(--taken-fg);
+  --color-upcoming: var(--upcoming);
+  --color-upcoming-bg: var(--upcoming-bg);
+  --color-upcoming-border: var(--upcoming-border);
+  --color-upcoming-fg: var(--upcoming-fg);
+  --color-missed: var(--missed);
+  --color-missed-bg: var(--missed-bg);
+  --color-missed-border: var(--missed-border);
+  --color-missed-fg: var(--missed-fg);
+  --color-warn: var(--warn);
+  --color-warn-bg: var(--warn-bg);
+  --color-warn-border: var(--warn-border);
+  --color-warn-fg: var(--warn-fg);
 }
 
+/* --- Contrast tiers -------------------------------------------------------
+   Two levels rather than the old single boolean. `high` keeps the brand
+   palette but pushes every foreground/background pair to WCAG AAA and makes
+   borders actually visible; `max` abandons the palette for near-monochrome,
+   which is what genuinely low-vision users need — a tinted "high contrast"
+   mode is a compromise that helps neither group. `.high-contrast` is kept as
+   an alias so nothing that still toggles the old class silently loses it. */
+.contrast-high,
 .high-contrast {
-  --foreground: #000000;
-  --muted-foreground: #2b2820;
-  --border: rgba(0, 0, 0, 0.45);
-  --card: #FFFFFF;
   --background: #FFFFFF;
-  --primary: #063a52;
+  --foreground: #06201B;
+  --card: #FFFFFF;
+  --card-foreground: #06201B;
+  --popover: #FFFFFF;
+  --muted: #E7E1C9;
+  --muted-foreground: #24372F;
+  --secondary: #CFE0D6;
+  --secondary-foreground: #0B2E27;
+  --primary: #123B33;
+  --primary-foreground: #FFFFFF;
+  --accent: #062227;
+  --border: rgba(6, 32, 27, 0.55);
+  --input-background: #F1ECDB;
+  --ring: #123B33;
+  --taken-bg: #E4EFE6;
+  --taken-border: #2E5B48;
+  --taken-fg: #1E4737;
+  --upcoming-bg: #D6E7E0;
+  --upcoming-border: #123B33;
+  --upcoming-fg: #123B33;
+  --missed-bg: #FFE8D6;
+  --missed-border: #7C2D12;
+  --missed-fg: #7C2D12;
+  --warn-bg: #FBEDD3;
+  --warn-border: #6B3F0A;
+  --warn-fg: #5C360A;
 }
 
+.contrast-max {
+  --background: #FFFFFF;
+  --foreground: #000000;
+  --card: #FFFFFF;
+  --card-foreground: #000000;
+  --popover: #FFFFFF;
+  --popover-foreground: #000000;
+  --muted: #FFFFFF;
+  --muted-foreground: #000000;
+  --secondary: #FFFFFF;
+  --secondary-foreground: #000000;
+  --primary: #000000;
+  --primary-foreground: #FFFFFF;
+  --accent: #000000;
+  --accent-foreground: #FFFFFF;
+  --destructive: #8A0000;
+  --border: #000000;
+  --input-background: #FFFFFF;
+  --switch-background: #000000;
+  --ring: #000000;
+  --taken: #000000;
+  --taken-bg: #FFFFFF;
+  --taken-border: #000000;
+  --taken-fg: #000000;
+  --upcoming: #000000;
+  --upcoming-bg: #FFFFFF;
+  --upcoming-border: #000000;
+  --upcoming-fg: #000000;
+  --missed: #8A3B00;
+  --missed-bg: #FFFFFF;
+  --missed-border: #8A3B00;
+  --missed-fg: #7A3400;
+  --warn: #000000;
+  --warn-bg: #FFFFFF;
+  --warn-border: #000000;
+  --warn-fg: #000000;
+}
+
+.contrast-high [class*="border"],
 .high-contrast [class*="border"] {
+  border-width: 2px;
+}
+.contrast-max [class*="border"] {
+  border-width: 2px;
+}
+/* Tints and washes stop carrying meaning once the palette is monochrome, and
+   a 10%-opacity fill on white is invisible — flatten them so structure comes
+   from the (now solid black) borders instead. */
+.contrast-max [class*="/10"],
+.contrast-max [class*="/20"],
+.contrast-max [class*="/40"],
+.contrast-max [class*="/60"] {
+  background-color: var(--card);
+}
+.contrast-max .shadow-sm,
+.contrast-max .shadow-lg,
+.contrast-max .shadow-xl,
+.contrast-max .shadow-2xl {
+  box-shadow: none;
+}
+
+/* --- Colour-vision modes --------------------------------------------------
+   The app never relies on hue alone (every status also carries an icon and a
+   word, and medication cards gain shape/marking text), but the *default*
+   taken-green vs missed-orange pair is exactly the one red-green deficiencies
+   collapse. Each mode below re-picks the three status hues onto an axis that
+   deficiency preserves, and raises contrast at the same time — a colour-blind
+   user is usually also served by the extra legibility. */
+.cb-deuteranopia,
+.cb-protanopia {
+  /* Red-green collapses; blue↔orange stays maximally separable. */
+  --taken: #14496B;
+  --taken-bg: #E1EAF2;
+  --taken-border: #14496B;
+  --taken-fg: #0D3350;
+  --upcoming: #0E3B43;
+  --upcoming-bg: #E4EDEE;
+  --upcoming-border: #0E3B43;
+  --upcoming-fg: #0E3B43;
+  --missed: #B45309;
+  --missed-bg: #FCEFD8;
+  --missed-border: #8A4108;
+  --missed-fg: #7A3A07;
+  --warn: #8A4108;
+  --warn-bg: #FBF1DF;
+  --warn-border: #8A4108;
+  --warn-fg: #6B3306;
+  --border: rgba(10, 42, 48, 0.4);
+  --muted-foreground: #33453F;
+}
+
+.cb-tritanopia {
+  /* Blue-yellow collapses; red↔green is preserved, so use that axis. */
+  --taken: #1B6B3A;
+  --taken-bg: #E2F0E6;
+  --taken-border: #1B6B3A;
+  --taken-fg: #14522C;
+  --upcoming: #4A5F5A;
+  --upcoming-bg: #EAEDEB;
+  --upcoming-border: #3B4C48;
+  --upcoming-fg: #2C3A36;
+  --missed: #B3261E;
+  --missed-bg: #FBE6E4;
+  --missed-border: #8C1D17;
+  --missed-fg: #7C1913;
+  --warn: #8C1D17;
+  --warn-bg: #FBE6E4;
+  --warn-border: #8C1D17;
+  --warn-fg: #6E1410;
+  --border: rgba(10, 42, 48, 0.4);
+  --muted-foreground: #33453F;
+}
+
+.cb-deuteranopia [class*="border"],
+.cb-protanopia [class*="border"],
+.cb-tritanopia [class*="border"] {
   border-width: 2px;
 }
 
@@ -152,6 +347,14 @@
 
   body {
     @apply bg-background text-foreground;
+  }
+
+  /* Keyboard/switch-control users need to see where they are. Scoped to
+     :focus-visible so it never fires on a touch tap. */
+  :focus-visible {
+    outline: 3px solid var(--ring);
+    outline-offset: 2px;
+    border-radius: 4px;
   }
 
   /**
@@ -210,9 +413,9 @@
    to the element where a change just landed (ElderlyApp handleWalkthroughReveal),
    so it's unmistakable. ~2.6s = two 1.3s cycles, matching the JS cleanup timer. */
 @keyframes walk-reveal-pulse {
-  0%, 100% { box-shadow: 0 0 0 0 rgba(16, 185, 129, 0); }
-  25% { box-shadow: 0 0 0 4px rgba(16, 185, 129, 0.55); }
-  60% { box-shadow: 0 0 0 7px rgba(16, 185, 129, 0.22); }
+  0%, 100% { box-shadow: 0 0 0 0 rgba(53, 114, 102, 0); }
+  25% { box-shadow: 0 0 0 4px rgba(53, 114, 102, 0.55); }
+  60% { box-shadow: 0 0 0 7px rgba(53, 114, 102, 0.22); }
 }
 .walk-reveal-pulse {
   animation: walk-reveal-pulse 1.3s ease-in-out 2;
@@ -230,6 +433,6 @@
   z-index: 55;
 }
 @keyframes change-highlight-glow {
-  0%, 100% { box-shadow: 0 0 0 2px rgba(16, 185, 129, 0.7), 0 0 0 5px rgba(16, 185, 129, 0.16); }
-  50% { box-shadow: 0 0 0 2px rgba(16, 185, 129, 0.5), 0 0 0 8px rgba(16, 185, 129, 0.08); }
+  0%, 100% { box-shadow: 0 0 0 2px rgba(53, 114, 102, 0.7), 0 0 0 5px rgba(53, 114, 102, 0.16); }
+  50% { box-shadow: 0 0 0 2px rgba(53, 114, 102, 0.5), 0 0 0 8px rgba(53, 114, 102, 0.08); }
 }

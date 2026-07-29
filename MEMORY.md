@@ -9,6 +9,145 @@ letting this grow forever — it's a memory aid, not an audit log.
 
 ---
 
+## 2026-07-29 — Elderly UI revamp: brand palette as tokens, help-list Ask Mei, Settings hub, 8 new walkthroughs
+
+Full visual + structural pass over the elderly interface (caregiver brought
+along), user-directed and staged phase-by-phase with screenshot review between
+phases. Crossing into `services/hermes/` was explicitly approved this task.
+
+**Palette is now tokens, not per-screen classes** (`styles/theme.css`). The five
+brand hues: `357266` pine = `--primary` (nav, buttons, current-dose card),
+`0E3B43` = `--accent`, `85B690` = tints, `E2DBBE` = `--muted`, `F5F2E7` =
+`--background`. First attempt made `0E3B43` primary; the user rejected it as
+**too dark** — pine leads, deep teal recedes. New **status tokens**
+(`--taken-*`, `--upcoming-*`, `--missed-*`, `--warn-*`) replaced hardcoded
+`emerald-/sky-/amber-/orange-` classes app-wide. **Non-obvious:** with a green
+primary, "taken" and "next dose" collide, so `--taken` is deliberately the
+PALEST green (a taken dose should recede) and `--upcoming` the most saturated.
+Missed stays orange, deliberately outside the brand ramp. Every fg/bg pair ≥7:1.
+Only `CallMockup` keeps a non-brand gradient (it imitates a native call screen).
+
+**Accessibility model replaced two booleans with real modes**
+(`accessibility.tsx`): `contrast: normal|high|max` (`max` = near-monochrome,
+flattens tints/shadows since a 10%-opacity fill is invisible on white) and
+`colourVision: off|deuteranopia|protanopia|tritanopia` — each remaps the status
+hues onto an axis that deficiency preserves (blue↔orange for red-green,
+red↔green for blue-yellow) AND raises contrast. `loadInitial` migrates the old
+`{highContrast, colourBlind}` shape; `highContrast`/`colourBlind` stay exposed as
+derived booleans so existing screens didn't need touching. Notification prefs
+live in the same provider (documented why: no server-side notification infra to
+sync a second provider to) and now actually gate the dose notification.
+
+**The day-status banner was built, then removed at the user's request** — on
+Home only the low-supply refill strip remains above the timeline. The
+`home.doneTitle`/`restingTitle`/`toTakeTitle`/... keys are left in
+`language.ts` (unused, gate-clean) since the feature has already been asked for
+once and reversed once.
+
+**The floating next-dose pill tracks ONE specific card**, not "the first
+outstanding thing off-screen": `nextDose` is the earliest *upcoming* dose by
+resolved minutes (`nextMedId` follows the medication list's own order, which is
+only incidentally chronological — don't reuse it here). Hidden while that card
+is on screen, bottom-left pointing down while it is below, top-left pointing up
+once scrolled past. `data-testid="next-dose-up|down"` exists so this is
+testable. **Test-fixture gotcha:** the empty-hour rows from 6am to ~5pm fit on
+one screen, so a next dose within ~an hour of now is still visible at
+scrollTop 0 — `scratchpad/nextdose.spec.ts` places it at 7pm+ with fillers below
+and skips itself after 8pm.
+
+**Ask Mei is category tiles, not a flat list (2nd revision).** Seventeen rows on
+one screen read as a wall; the same items now sit behind four tiles (My
+medicines / My details / How the app looks / My care team) with a short list
+per tile. **This breaks any walkthrough whose first step reached a quick-help
+tile directly** — `travel_mode_auto` and `travel_mode_setup` had to be
+repointed at `[data-walk="elder-cat-medicines"]` first, and
+`add_doctor_question_auto` gained a step to click the new doctor tab. If you
+move an item between categories, check `steps/` for a selector pointing at it.
+
+**Sub-views REPLACE the app header** rather than stacking a second one under it:
+`ElderlyApp` owns a `headerOverride` ({title, onBack, action?}) that
+`ElderlyAIScreen` (chat + categories) and `ElderlySettingsScreen` (sub-pages)
+set from an effect and clear on unmount. Don't reset it from the parent on tab
+change — child effects run before parent effects, so a parent reset clobbers the
+newly-mounted screen's value.
+
+**Chat sheet sits at `z-20`, deliberately BELOW the bottom nav (`z-40`)** — at
+z-130 it painted over the Ask Mei FAB's overhang and the button looked clipped.
+The modal sheets (photo source, language, confirm) stay at z-140/150 because
+they *should* cover the nav. Composer is two side buttons, not three: camera
+left, and the right one swaps Mic→Send once there's something to send (three
+buttons left the text box barely wider than the buttons).
+
+**Nav is icon-only**, and the active tab is a coloured icon + dot rather than a
+filled pill — with labels gone, a filled active tab was visually identical to
+the filled Ask Mei circle. Row is `items-end` so all five share one baseline
+(measured: bottoms identical, centre gaps 71/70/71/70).
+
+**Every medicine now shows a photo** (`shared.tsx::medPhoto`): a bundled one
+from `MED_PHOTOS`, else a deterministic pick from `MED_PHOTO_FALLBACKS`. Both
+are ILLUSTRATIVE stock images, not the real pill — `MED_SHAPES` remains the
+accurate physical identifier, which is what colour-vision mode surfaces.
+
+**Sizing was overshot on the first pass** and the user pushed back ("TOO BIG").
+Landed scale for the elderly screens: card/row titles 15–18px, body 13–15px,
+section labels 14px. The **bottom nav and header stay oversized** (26px icons,
+13px bold labels, 26px wordmark) — that part was the explicit ask and is not
+part of the step-down. Home's day header is date + weekday side by side at the
+top-left with the day controls opposite at the top-right ("Today" beside the
+arrows, only when off today); medicine names `truncate` to one line, and the
+timeline's hour gutter is `w-12` + `whitespace-nowrap` so "10 AM" can't split
+across two lines.
+
+**Layout gotcha worth remembering:** on Home, the timeline's hour gutter +
+padding leave a dose card only ~180px of inner width. Putting the medicine name
+on the same row as the time badge left it ~70px and broke "Amlodipine" across
+three lines. Both Home and Medications cards now give badges/time their own
+full-width strip above the name. Any new card in that column has the same budget.
+
+**Ask Mei is a help list, not a chat** (user's call): one big "Ask me anything"
+card opens the chat as a full sheet; below it two grouped sections — "I can do
+this for you" (photo scan, report scan, travel sheet, chat-prefill for the ones
+needing real values) and "I can show you how" (10 narrated walkthroughs). The
+chat sheet auto-closes on a walkthrough start / ChangeHighlight / routed nav, or
+it would cover the thing being spotlighted. Tab switcher gone; doctor questions
+moved to the **Reminders** tab (renamed from Notifications), which also gained
+per-message Dismiss and Reply.
+
+**8 new walkthrough task names** — added to BOTH `tools/walkthrough.py::TASK_NAMES`
+and `prompts.py::_WALKTHROUGH_LABELS` (a name without a label KeyErrors
+`test_walkthrough.py`), plus `types.ts`. One autonomous
+(`add_doctor_question_auto`) and seven narrate-only (`check_schedule`,
+`log_dose`, `undo_dose`, `language_voice`, `reminder_settings`,
+`emergency_contact`, `text_size`) living in one shared `steps/narrated.ts`.
+
+**Two real bugs the live drives caught (both would have shipped silently):**
+1. `createDoctorQuestion` inserted `source: "patient"` — `public.question_source`
+   is the enum `('agent','elder','caregiver')`, so the insert was rejected, the
+   code fell back to a local-only row, and the UI *looked* correct while nothing
+   persisted. Fixed to `"elder"`. **Check the enum, not just the column.**
+2. The "add your own question" box had never written to the DB at all (local
+   state only) — which is also why an autonomous walkthrough couldn't Verify it.
+
+**Undo a dose** is new (`medications.ts::unlogDoseTaken`): flips today's most
+recent `taken` row back to `pending` rather than deleting it (the slot survives,
+the dose becomes due again), scoped to today so an undo can't rewrite history.
+`decrementSupply` generalised to `shiftSupply(id, ±1)`. Always confirmed.
+
+**e2e fallout from intentional changes** (both fixed): `change-highlight.spec.ts`
+clicked the nav by the label `"Medications"` (now "Medicines") — repointed at the
+stable `[data-tour="nav-prescriptions"]` anchor so copy changes can't break it
+again; `photo-staging.spec.ts` needed to open the chat sheet first.
+`walkthrough-design.spec.ts::film travel_mode_auto` is **flaky under full-suite
+load** (a no-assertion 22-frame filming spec) — passes in isolation.
+
+**Tooling gotchas found:** `apps/web` had no dev deps installed (`tsc`, vitest,
+playwright all missing) — `npm install` fixes it. `e2e/helpers.ts` reads `.env`
+but only `.env.local` exists, so the whole Playwright suite failed at import;
+symlinked `.env -> .env.local`. `scratchpad/i18n-check.mjs` crashes on this
+repo's path (spaces get percent-encoded by `import.meta.url`) — run an inline
+equivalent instead. i18n: screen copy added to all 6 languages; `walk.*` copy is
+`en`-only per the standing convention.
+
 ## 2026-07-24 — Conservative refactor pass (branch `refactor/conservative-tidy`)
 
 A behavior-preserving tidy pass, done on a branch AFTER committing the whole

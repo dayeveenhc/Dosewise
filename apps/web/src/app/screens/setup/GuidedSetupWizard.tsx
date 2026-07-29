@@ -45,7 +45,7 @@ export function GenderPicker({ value, onChange, size = "base" }: { value: string
 
 const fieldBase = "w-full bg-input-background rounded-xl px-4 py-3.5 text-base text-foreground placeholder:text-muted-foreground outline-none transition-colors border";
 export const fieldCls = `${fieldBase} border-border focus:border-primary`;
-const fieldClsValid = `${fieldBase} border-emerald-500 focus:border-emerald-500`;
+const fieldClsValid = `${fieldBase} border-taken focus:border-taken`;
 // Swaps the border to green once a field's value satisfies its own validity check
 // (e.g. password long enough, a real-looking email) — leaves it neutral otherwise.
 export const cls = (valid: boolean) => valid ? fieldClsValid : fieldCls;
@@ -82,9 +82,9 @@ function WizardChrome({ step, total, onBack, showBack = true, children }: { step
 function ReviewBadge() {
   const { language } = useLanguage();
   return (
-    <div className="mb-4 flex items-start gap-2 rounded-xl border border-emerald-300/60 bg-emerald-50 px-3 py-2.5">
-      <Sparkles size={14} className="text-emerald-600 mt-0.5 shrink-0" />
-      <p className="text-xs text-emerald-800 leading-relaxed">{t(language, "setup.autofilledReview")}</p>
+    <div className="mb-4 flex items-start gap-2 rounded-xl border border-taken-border bg-taken-bg px-3 py-2.5">
+      <Sparkles size={14} className="text-taken-fg mt-0.5 shrink-0" />
+      <p className="text-xs text-taken-fg leading-relaxed">{t(language, "setup.autofilledReview")}</p>
     </div>
   );
 }

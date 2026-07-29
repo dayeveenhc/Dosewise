@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import type { Session } from "@supabase/supabase-js";
-import { ArrowLeft, Bell, MessageSquare, HelpCircle, UserRound } from "lucide-react";
+import { ArrowLeft, Bell, HelpCircle, UserRound } from "lucide-react";
 import type { AppMode, Screen, Patient, Medication, Notification, Message } from "./types";
 import { PATIENTS, NOTIFICATIONS } from "./data/patients";
 import { BottomNav } from "./components/BottomNav";
@@ -445,8 +445,8 @@ export default function App() {
   if (authLoading) {
     return (
       <LanguageProvider>
-        <div className="min-h-screen bg-stone-300 flex items-center justify-center p-4" style={{ fontFamily: "'DM Sans', system-ui, sans-serif" }}>
-          <div className="w-[390px] h-[844px] bg-background relative overflow-hidden rounded-[3rem] shadow-2xl border-[6px] border-stone-800 flex flex-col" />
+        <div className="min-h-screen bg-[#CBC7B8] flex items-center justify-center p-4" style={{ fontFamily: "'DM Sans', system-ui, sans-serif" }}>
+          <div className="w-[390px] h-[844px] bg-background relative overflow-hidden rounded-[3rem] shadow-2xl border-[6px] border-[#24504A] flex flex-col" />
         </div>
       </LanguageProvider>
     );
@@ -455,8 +455,8 @@ export default function App() {
   if (appMode === "onboarding") {
     return (
       <LanguageProvider>
-        <div className="min-h-screen bg-stone-300 flex items-center justify-center p-4" style={{ fontFamily: "'DM Sans', system-ui, sans-serif" }}>
-          <div className="w-[390px] h-[844px] bg-background relative overflow-hidden rounded-[3rem] shadow-2xl border-[6px] border-stone-800 flex flex-col">
+        <div className="min-h-screen bg-[#CBC7B8] flex items-center justify-center p-4" style={{ fontFamily: "'DM Sans', system-ui, sans-serif" }}>
+          <div className="w-[390px] h-[844px] bg-background relative overflow-hidden rounded-[3rem] shadow-2xl border-[6px] border-[#24504A] flex flex-col">
             {preAuthStage === "welcome" && (
               <WelcomeScreen onSignIn={() => setPreAuthStage("signin")} onGetStarted={() => setPreAuthStage("mode")} />
             )}
@@ -502,8 +502,8 @@ export default function App() {
   if (appMode === "elderly") {
     return (
       <LanguageProvider>
-        <div className="min-h-screen bg-stone-300 flex items-center justify-center p-4" style={{ fontFamily: "'DM Sans', system-ui, sans-serif" }}>
-          <div className="w-[390px] h-[844px] bg-background relative overflow-hidden rounded-[3rem] shadow-2xl border-[6px] border-stone-800 flex flex-col">
+        <div className="min-h-screen bg-[#CBC7B8] flex items-center justify-center p-4" style={{ fontFamily: "'DM Sans', system-ui, sans-serif" }}>
+          <div className="w-[390px] h-[844px] bg-background relative overflow-hidden rounded-[3rem] shadow-2xl border-[6px] border-[#24504A] flex flex-col">
             <AccessibilityProvider>
               <ElderlyApp
                 patient={patients[0]}
@@ -513,6 +513,22 @@ export default function App() {
                 onSignOut={() => supabase.auth.signOut()}
                 startTour={justOnboarded}
                 careMessages={careMessages}
+                onDismissCareMessage={id => setCareMessages(prev => prev.filter(m => m.id !== id))}
+                // The care-message thread is local state on both sides (there is
+                // no elder<->caregiver messages table yet — see MEMORY.md), so a
+                // reply joins the same in-memory thread rather than pretending to
+                // send anywhere.
+                onReplyCareMessage={(id, text) => setCareMessages(prev => {
+                  const target = prev.find(m => m.id === id);
+                  return [...prev, {
+                    id: Date.now(),
+                    author: patients[0].nickname || patients[0].name,
+                    role: target ? `→ ${target.author}` : "",
+                    body: text,
+                    time: new Date().toLocaleTimeString("en-SG", { hour: "2-digit", minute: "2-digit" }),
+                    isMe: true,
+                  }];
+                })}
               />
             </AccessibilityProvider>
             <ToastStack
@@ -527,9 +543,9 @@ export default function App() {
 
   return (
     <LanguageProvider>
-      <div className="min-h-screen bg-stone-300 flex items-center justify-center p-4" style={{ fontFamily: "'DM Sans', system-ui, sans-serif" }}>
+      <div className="min-h-screen bg-[#CBC7B8] flex items-center justify-center p-4" style={{ fontFamily: "'DM Sans', system-ui, sans-serif" }}>
         {/* Phone frame */}
-        <div className="w-[390px] h-[844px] bg-background relative overflow-hidden rounded-[3rem] shadow-2xl border-[6px] border-stone-800 flex flex-col">
+        <div className="w-[390px] h-[844px] bg-background relative overflow-hidden rounded-[3rem] shadow-2xl border-[6px] border-[#24504A] flex flex-col">
         <AccessibilityProvider>
           {/* Status bar */}
           <LiveStatusBar className="bg-background/80 backdrop-blur-sm" />
@@ -544,35 +560,29 @@ export default function App() {
               whenever the dropdown is open and overlaps it. */}
           <div className="relative z-30 px-4 pt-2 pb-3 bg-background/80 backdrop-blur-sm border-b border-border shrink-0">
             {showBack ? (
-              <div className="flex items-center gap-2 mb-2">
-                <button onClick={() => setScreen("dashboard")} className="w-8 h-8 bg-card border border-border rounded-xl flex items-center justify-center">
-                  <ArrowLeft size={14} className="text-foreground" />
+              <div className="flex items-center gap-2.5 mb-2">
+                <button onClick={() => setScreen("dashboard")} aria-label={t(uiLang, "common.back")} className="w-11 h-11 bg-card border border-border rounded-2xl flex items-center justify-center active:bg-muted transition-colors">
+                  <ArrowLeft size={20} className="text-foreground" />
                 </button>
-                <span className="text-sm font-medium text-muted-foreground">{t(uiLang, "common.careTeamNotes")}</span>
+                <span className="text-base font-semibold text-foreground">{t(uiLang, "common.careTeamNotes")}</span>
               </div>
             ) : (
-              <div className="flex items-center justify-between mb-2">
-                <div>
-                  <p className="text-[10px] text-muted-foreground uppercase tracking-widest font-medium tracking-[0.2em]">DOSEWISE</p>
-                  <h1 className="font-['Fraunces'] text-lg font-semibold text-foreground leading-tight">
-                    {screen === "dashboard" ? "Dashboard" : screen === "patient" ? "Patient" : screen === "timeline" ? "Schedule" : screen === "ai" ? "Ask Mei" : screen === "settings" ? "Settings" : "Notifications"}
-                  </h1>
-                </div>
-                <div className="flex items-center gap-2">
-                  <button onClick={() => setShowCaregiverTourConfirm(true)} className="w-8 h-8 bg-card border border-border rounded-xl flex items-center justify-center">
-                    <HelpCircle size={15} className="text-muted-foreground" />
-                  </button>
-                  <button onClick={() => setScreen("settings")} className="w-8 h-8 bg-card border border-border rounded-xl flex items-center justify-center" title={t(uiLang, "common.openSettings")}>
-                    <UserRound size={15} className="text-primary" />
-                  </button>
-                  <button onClick={() => setScreen("messages")} className="w-8 h-8 bg-card border border-border rounded-xl flex items-center justify-center">
-                    <MessageSquare size={15} className="text-accent" />
-                  </button>
-                  <button onClick={() => setScreen("notifications")} className="w-8 h-8 bg-card border border-border rounded-xl flex items-center justify-center relative">
-                    <Bell size={15} className="text-primary" />
+              /* Mirrors the elder header: app name centred, help left, profile
+                 right. Messages moved out — the dashboard already links to it. */
+              <div className="flex items-center justify-between gap-2 mb-2">
+                <button onClick={() => setShowCaregiverTourConfirm(true)} aria-label={t(uiLang, "header.help")} className="w-11 h-11 bg-card border border-border rounded-2xl flex items-center justify-center active:bg-muted transition-colors">
+                  <HelpCircle size={22} className="text-primary" />
+                </button>
+                <h1 className="font-['Fraunces'] text-[24px] font-semibold tracking-tight text-primary leading-none">Dosewise</h1>
+                <div className="flex items-center gap-1.5">
+                  <button onClick={() => setScreen("notifications")} aria-label={t(uiLang, "nav.notifications")} className="w-11 h-11 bg-card border border-border rounded-2xl flex items-center justify-center relative active:bg-muted transition-colors">
+                    <Bell size={22} className="text-primary" />
                     {unreadCount > 0 && (
-                      <div className="absolute -top-1 -right-1 w-4 h-4 bg-destructive rounded-full flex items-center justify-center text-[9px] font-bold text-white">{unreadCount}</div>
+                      <div className="absolute -top-1 -right-1 min-w-5 h-5 px-1 bg-destructive rounded-full flex items-center justify-center text-[11px] font-bold text-white">{unreadCount}</div>
                     )}
+                  </button>
+                  <button onClick={() => setScreen("settings")} aria-label={t(uiLang, "header.profile")} className="w-11 h-11 bg-card border border-border rounded-2xl flex items-center justify-center active:bg-muted transition-colors" title={t(uiLang, "common.openSettings")}>
+                    <UserRound size={22} className="text-primary" />
                   </button>
                 </div>
               </div>

@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { Plus, BookOpen, ChevronDown, Play, Eye, History, Check, Clock, RefreshCw } from "lucide-react";
+import { Plus, BookOpen, ChevronDown, Eye, History, Check, Clock, RefreshCw, ShieldAlert } from "lucide-react";
 import { useAccessibility } from "../../accessibility.tsx";
 import type { Medication, Patient } from "../../types";
 import { to24h } from "../../lib/medications";
@@ -30,13 +30,12 @@ function groupByMedication(meds: Medication[]): GroupedMed[] {
   return out;
 }
 
-export function ElderlyPrescriptionScreen({ patient, onOpenAI, onAddRx, onRequestRefill, justAddedMed }: {
+export function ElderlyPrescriptionScreen({ patient, onAddRx, onRequestRefill, justAddedMed }: {
   patient: Patient;
-  onOpenAI: (msg?: string) => void;
   onAddRx: () => void;
   // Opens Ask Mei with a refill message PRE-FILLED (never auto-sent — the
-  // elder still taps Send themselves), distinct from onOpenAI's send-on-open
-  // quick-help messages.
+  // elder still taps Send themselves), so nothing is sent on their behalf.
+
   onRequestRefill: (medName: string) => void;
   justAddedMed?: string | null;
 }) {
@@ -52,17 +51,19 @@ export function ElderlyPrescriptionScreen({ patient, onOpenAI, onAddRx, onReques
 
   return (
     <div className="flex-1 overflow-y-auto scrollbar-none">
-      <div className="px-4 pt-2 pb-28 space-y-3">
+      <div className="px-4 pt-3 pb-28 space-y-3">
 
-        {/* Header */}
-        <div className="flex items-center justify-between pt-1">
-          <p className="text-sm text-muted-foreground">{t(language, "prescription.count", { count: prescriptions.length })}</p>
+        {/* Count and the add action share one row, so the button sits in the
+            corner opposite the title rather than eating a full-width band. */}
+        <div className="flex items-center justify-between gap-3">
+          <h2 className="text-[17px] font-bold text-foreground min-w-0 truncate">{t(language, "prescription.count", { count: prescriptions.length })}</h2>
           <button
             onClick={onAddRx}
             data-tour="elder-add-prescription"
-            className="h-9 px-3 bg-primary text-primary-foreground rounded-xl text-xs font-semibold flex items-center gap-1 whitespace-nowrap active:scale-95 transition-transform"
+            aria-label={t(language, "prescription.add")}
+            className="h-12 px-5 bg-primary text-primary-foreground rounded-2xl text-[16px] font-bold flex items-center gap-2 shrink-0 active:scale-95 transition-transform"
           >
-            <Plus size={13} className="shrink-0" />{t(language, "prescription.add")}
+            <Plus size={22} strokeWidth={3} className="shrink-0" />{t(language, "prescription.addShort")}
           </button>
         </div>
 
@@ -70,7 +71,7 @@ export function ElderlyPrescriptionScreen({ patient, onOpenAI, onAddRx, onReques
         <div data-tour="elder-medlist" className="space-y-3">
         {prescriptions.length === 0 && (
           <div className="bg-muted/40 rounded-2xl p-6 text-center">
-            <p className="text-sm text-muted-foreground">{t(language, "prescription.empty")}</p>
+            <p className="text-[14px] text-muted-foreground">{t(language, "prescription.empty")}</p>
           </div>
         )}
         {prescriptions.map(m => {
@@ -85,126 +86,103 @@ export function ElderlyPrescriptionScreen({ patient, onOpenAI, onAddRx, onReques
           const justAdded   = !!justAddedMed && m.name === justAddedMed;
 
           return (
-            <div key={m.id} data-testid={m.medicationId ? `medication-${m.medicationId}` : undefined} className={`bg-card rounded-2xl border overflow-hidden shadow-sm ${justAdded ? "border-2 border-emerald-400 ring-2 ring-emerald-300/50" : "border-border"}`}>
-              <div className="p-4">
+            <div key={m.id} data-testid={m.medicationId ? `medication-${m.medicationId}` : undefined} className={`bg-card rounded-2xl border overflow-hidden shadow-sm ${justAdded ? "border-2 border-taken ring-2 ring-taken/40" : "border-border"}`}>
+              <div className="p-3.5">
+                {/* Badges get their own strip so a long medicine name keeps the
+                    full column width (same reason as the Home card). */}
+                {justAdded && (
+                  <div className="flex items-center gap-1.5 flex-wrap mb-2">
+                    <span className="flex items-center gap-1 bg-taken-bg text-taken-fg border border-taken-border text-[12px] font-bold px-2 py-0.5 rounded-full">
+                      <Check size={11} strokeWidth={3} />{t(language, "prescription.justAdded")}
+                    </span>
+                  </div>
+                )}
                 <div className="flex items-start gap-3">
-                  <MedAvatar name={m.name} size={62} className="rounded-xl shrink-0" />
+                  <MedAvatar name={m.name} size={48} className="rounded-xl shrink-0" />
                   <div className="flex-1 min-w-0">
-                    <div className="flex items-start justify-between gap-2">
-                      <div className="flex items-center gap-1.5 flex-wrap min-w-0">
-                        <p className="font-bold text-[17px] text-foreground leading-snug">{m.name}</p>
-                        {justAdded && (
-                          <span className="flex items-center gap-1 bg-emerald-100 text-emerald-700 text-[10px] font-bold px-2 py-0.5 rounded-full">
-                            <Check size={9} strokeWidth={3} />{t(language, "prescription.justAdded")}
-                          </span>
-                        )}
-                      </div>
-                      {lowRefill && (
-                        <span className="shrink-0 text-xs font-bold text-red-600 bg-red-100 px-2.5 py-1 rounded-full whitespace-nowrap">
-                          {t(language, "prescription.daysLeftBadge", { days: m.refillDaysLeft ?? 0 })}
-                        </span>
-                      )}
-                    </div>
+                    <p className="font-bold text-[17px] text-foreground leading-tight break-words">{m.name}</p>
                     {/* Instructions first — most actionable */}
-                    <div className="flex items-center gap-1.5 mt-1">
+                    <div className="flex items-start gap-2 mt-1.5">
                       {colourBlind ? (
-                        <Eye size={11} className="shrink-0 text-primary" />
+                        <Eye size={14} className="shrink-0 text-primary mt-1" />
                       ) : (
-                        <div className="w-1.5 h-1.5 rounded-full shrink-0" style={{ backgroundColor: m.colour }} />
+                        <div className="w-2 h-2 rounded-full shrink-0 mt-2" style={{ backgroundColor: m.colour }} />
                       )}
-                      <p className="text-sm font-semibold text-foreground">{direction}</p>
+                      <p className="text-[14px] font-semibold text-foreground leading-snug">{direction}</p>
                     </div>
                     {/* Purpose second — context */}
-                    <p className="text-xs text-muted-foreground mt-1 pl-3">
+                    <p className="text-[13px] text-muted-foreground mt-1 pl-4 leading-snug">
                       {plain?.why ?? t(language, "prescription.forPurpose", { purpose: m.purpose.toLowerCase() })}
                     </p>
                     {colourBlind && shape && (
-                      <p className="text-xs text-muted-foreground mt-1 pl-3">{shape.shape} · {shape.marking}</p>
+                      <p className="text-[13px] text-muted-foreground mt-1 pl-4">{shape.shape} · {shape.marking}</p>
                     )}
                   </div>
                 </div>
 
-                {/* Eye drop help button */}
-                {isEyeDrop && (
-                  <button
-                    onClick={() => setHelpOpen(isHelpOpen ? null : m.id)}
-                    className={`mt-3 w-full flex items-center gap-2 px-4 py-2.5 rounded-xl text-sm font-semibold border transition-colors ${
-                      isHelpOpen ? "bg-primary text-primary-foreground border-primary" : "bg-muted/50 text-foreground border-border"
-                    }`}
-                  >
-                    <BookOpen size={14} className="shrink-0" />
-                    <span>{t(language, "prescription.howToUseEyeDrops")}</span>
-                    <ChevronDown size={13} className={`ml-auto shrink-0 transition-transform ${isHelpOpen ? "rotate-180" : ""}`} />
-                  </button>
-                )}
-
-                {/* Schedule — one card covers every time this medicine is taken */}
-                <div className="mt-3">
-                  <div className="flex items-center gap-1.5 mb-1.5">
-                    <Clock size={12} className="text-primary shrink-0" />
-                    <p className="text-xs font-semibold text-foreground">
-                      {m.times.length === 1
-                        ? t(language, "prescription.onceADay")
-                        : t(language, "prescription.timesADay", { count: m.times.length })}
-                    </p>
-                  </div>
-                  <div className="flex flex-wrap gap-1.5">
-                    {m.times.map(time => (
-                      <span key={time} className="text-xs font-semibold text-primary bg-secondary border border-primary/20 rounded-lg px-2 py-1 whitespace-nowrap">
-                        {time}
-                      </span>
-                    ))}
-                  </div>
+                {/* The times speak for themselves — the clock icon carries the
+                    meaning the removed label used to. */}
+                <div className="mt-3 flex flex-wrap items-center gap-2">
+                  <Clock size={15} className="text-primary shrink-0" />
+                  {m.times.map(time => (
+                    <span key={time} className="text-[15px] font-bold text-secondary-foreground bg-secondary border border-primary/20 rounded-lg px-2.5 py-1.5 whitespace-nowrap">
+                      {time}
+                    </span>
+                  ))}
                 </div>
 
                 {/* Supply bar — always shown */}
-                <div className="mt-3">
-                  <div className="flex items-center justify-between mb-1">
-                    <p className="text-xs text-muted-foreground">{t(language, "prescription.supply")}</p>
-                    <p className={`text-xs font-bold ${lowRefill ? "text-red-600" : "text-foreground"}`}>{t(language, "prescription.supplyOfTotal", { days: supplyDays })}</p>
+                <div className="mt-3.5">
+                  <div className="flex items-center justify-between mb-1.5">
+                    <p className="text-[13px] text-muted-foreground">{t(language, "prescription.supply")}</p>
+                    <p className={`text-[13px] font-bold ${lowRefill ? "text-missed-fg" : "text-foreground"}`}>{t(language, "prescription.supplyOfTotal", { days: supplyDays })}</p>
                   </div>
                   <div className="w-full h-2 bg-muted rounded-full overflow-hidden">
                     <div
-                      className={`h-full rounded-full ${lowRefill ? "bg-red-400" : "bg-primary"}`}
+                      className={`h-full rounded-full ${lowRefill ? "bg-missed" : "bg-primary"}`}
                       style={{ width: `${supplyPct}%` }}
                     />
                   </div>
-                  <button
-                    onClick={() => onRequestRefill(m.name)}
-                    data-walk="med-request-refill-btn"
-                    className="mt-2 w-full flex items-center justify-center gap-1.5 h-9 rounded-xl border border-border text-xs font-semibold text-foreground active:bg-muted transition-colors"
-                  >
-                    <RefreshCw size={12} className="shrink-0" />{t(language, "prescription.requestRefill")}
-                  </button>
                 </div>
+
+                {/* How to take it sits above Request refill — using it correctly
+                    matters before whether more is needed. */}
+                {isEyeDrop && (
+                  <button
+                    onClick={() => setHelpOpen(isHelpOpen ? null : m.id)}
+                    className={`mt-3 w-full flex items-center gap-2.5 px-3.5 h-11 rounded-xl text-[14px] font-bold border transition-colors ${
+                      isHelpOpen ? "bg-primary text-primary-foreground border-primary" : "bg-secondary text-secondary-foreground border-primary/20"
+                    }`}
+                  >
+                    <BookOpen size={17} className="shrink-0" />
+                    <span className="text-left leading-tight">{t(language, "prescription.howToUseEyeDrops")}</span>
+                    <ChevronDown size={17} className={`ml-auto shrink-0 transition-transform ${isHelpOpen ? "rotate-180" : ""}`} />
+                  </button>
+                )}
+
+                <button
+                  onClick={() => onRequestRefill(m.name)}
+                  data-walk="med-request-refill-btn"
+                  className="mt-2.5 w-full flex items-center justify-center gap-2 h-11 rounded-xl border border-border text-[14px] font-bold text-foreground active:bg-muted transition-colors"
+                >
+                  <RefreshCw size={17} className="shrink-0" />{t(language, "prescription.requestRefill")}
+                </button>
               </div>
 
               {/* Eye drop detailed instructions */}
               {isEyeDrop && isHelpOpen && (
-                <div className="px-4 pb-4 pt-3 border-t border-border/40 space-y-2">
-                  <p className="text-xs font-bold text-primary uppercase tracking-wider mb-1">{t(language, "prescription.stepByStepGuide")}</p>
+                <div className="px-4 pb-4 pt-3 border-t border-border/40 space-y-2.5 bg-secondary/30">
+                  <p className="text-[14px] font-bold text-primary uppercase tracking-wider mb-1">{t(language, "prescription.stepByStepGuide")}</p>
                   {EYEDROP_STEPS.map((step, i) => (
                     <div key={i} className="flex items-start gap-3">
-                      <div className="w-7 h-7 rounded-full bg-primary flex items-center justify-center shrink-0 mt-0.5">
-                        <span className="text-xs font-bold text-primary-foreground">{i + 1}</span>
+                      <div className="w-6 h-6 rounded-full bg-primary flex items-center justify-center shrink-0">
+                        <span className="text-[14px] font-bold text-primary-foreground">{i + 1}</span>
                       </div>
-                      <p className="text-sm text-foreground leading-snug pt-1">
-                        <span className="mr-1">{step.icon}</span>{step.text}
+                      <p className="text-[14px] text-foreground leading-snug pt-0.5">
+                        <span className="mr-1.5">{step.icon}</span>{step.text}
                       </p>
                     </div>
                   ))}
-                  <div className="rounded-xl overflow-hidden border border-border mt-3">
-                    <div className="h-24 relative bg-stone-800 flex items-center justify-center">
-                      <img src="https://images.unsplash.com/photo-1750125625145-7be950011e4c?w=400&h=200&fit=crop&auto=format" alt={t(language, "prescription.eyeDropsAlt")} className="absolute inset-0 w-full h-full object-cover opacity-60" />
-                      <div className="relative z-10 w-11 h-11 bg-white rounded-full flex items-center justify-center shadow-lg">
-                        <Play size={14} className="text-foreground ml-0.5" fill="currentColor" />
-                      </div>
-                    </div>
-                    <div className="p-2.5">
-                      <p className="text-sm font-semibold text-foreground">{t(language, "prescription.watchHowToUse")}</p>
-                      <p className="text-xs text-muted-foreground">{t(language, "prescription.videoGuideLength")}</p>
-                    </div>
-                  </div>
                 </div>
               )}
             </div>
@@ -212,33 +190,37 @@ export function ElderlyPrescriptionScreen({ patient, onOpenAI, onAddRx, onReques
         })}
         </div>
 
+        <div className="bg-warn-bg border border-warn-border rounded-2xl p-3.5 flex items-start gap-2.5">
+          <ShieldAlert size={19} className="text-warn shrink-0 mt-0.5" />
+          <div className="min-w-0">
+            <p className="text-[14px] font-bold text-warn-fg leading-tight mb-0.5">{t(language, "prescription.safetyTitle")}</p>
+            <p className="text-[13px] text-warn-fg/90 leading-relaxed">{t(language, "prescription.disclaimer")}</p>
+          </div>
+        </div>
+
         {pastMedications.length > 0 && (
           <div className="bg-card rounded-2xl border border-border overflow-hidden">
             <button
               onClick={() => setPastOpen(v => !v)}
-              className="w-full flex items-center gap-2 px-4 py-3.5 text-sm font-semibold text-foreground"
+              className="w-full flex items-center gap-2.5 px-4 py-4 text-[15px] font-bold text-foreground"
             >
-              <History size={15} className="text-muted-foreground" />
+              <History size={19} className="text-muted-foreground shrink-0" />
               {t(language, "prescription.past")}
-              <span className="text-xs font-bold text-muted-foreground bg-muted rounded-full px-2 py-0.5">{pastMedications.length}</span>
-              <ChevronDown size={14} className={`ml-auto text-muted-foreground transition-transform ${pastOpen ? "rotate-180" : ""}`} />
+              <span className="text-[14px] font-bold text-muted-foreground bg-muted rounded-full px-2.5 py-0.5">{pastMedications.length}</span>
+              <ChevronDown size={18} className={`ml-auto text-muted-foreground transition-transform ${pastOpen ? "rotate-180" : ""}`} />
             </button>
             {pastOpen && (
               <div className="divide-y divide-border border-t border-border">
                 {pastMedications.map(m => (
-                  <div key={m.id} className="px-4 py-3">
-                    <p className="text-sm font-semibold text-muted-foreground">{m.name} <span className="text-xs font-normal">{m.dose}</span></p>
-                    <p className="text-xs text-muted-foreground/80">{m.purpose}</p>
+                  <div key={m.id} className="px-4 py-3.5">
+                    <p className="text-[15px] font-bold text-muted-foreground">{m.name} <span className="text-[14px] font-normal">{m.dose}</span></p>
+                    <p className="text-[14px] text-muted-foreground/80">{m.purpose}</p>
                   </div>
                 ))}
               </div>
             )}
           </div>
         )}
-
-        <div className="bg-muted/40 rounded-2xl p-4 text-center">
-          <p className="text-xs text-muted-foreground leading-relaxed">{t(language, "prescription.disclaimer")}</p>
-        </div>
       </div>
     </div>
   );

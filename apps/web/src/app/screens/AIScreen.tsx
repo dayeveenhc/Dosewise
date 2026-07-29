@@ -114,17 +114,17 @@ export function AIScreen({ patient }: { patient: Patient }) {
       {/* Adherence overview */}
       <Card className="p-4">
         <div className="grid grid-cols-3 gap-3 text-center">
-          <div className="bg-emerald-50 border border-emerald-200 rounded-xl p-3">
-            <p className="font-['Fraunces'] text-2xl font-semibold text-emerald-800">{patient.adherenceWeek}%</p>
-            <p className="text-[10px] text-emerald-700 font-medium mt-0.5">{t(language, "summary.adherence")}</p>
+          <div className="bg-taken-bg border border-taken-border rounded-xl p-3">
+            <p className="font-['Fraunces'] text-2xl font-semibold text-taken-fg">{patient.adherenceWeek}%</p>
+            <p className="text-[10px] text-taken-fg font-medium mt-0.5">{t(language, "summary.adherence")}</p>
           </div>
-          <div className="bg-orange-50 border border-orange-200 rounded-xl p-3">
-            <p className="font-['Fraunces'] text-2xl font-semibold text-orange-800">3</p>
-            <p className="text-[10px] text-orange-700 font-medium mt-0.5">{t(language, "summary.missedDoses")}</p>
+          <div className="bg-missed-bg border border-missed-border rounded-xl p-3">
+            <p className="font-['Fraunces'] text-2xl font-semibold text-missed-fg">3</p>
+            <p className="text-[10px] text-missed-fg font-medium mt-0.5">{t(language, "summary.missedDoses")}</p>
           </div>
-          <div className="bg-sky-50 border border-sky-200 rounded-xl p-3">
-            <p className="font-['Fraunces'] text-2xl font-semibold text-sky-800">29</p>
-            <p className="text-[10px] text-sky-700 font-medium mt-0.5">{t(language, "summary.dosesTaken")}</p>
+          <div className="bg-upcoming-bg border border-upcoming-border rounded-xl p-3">
+            <p className="font-['Fraunces'] text-2xl font-semibold text-upcoming-fg">29</p>
+            <p className="text-[10px] text-upcoming-fg font-medium mt-0.5">{t(language, "summary.dosesTaken")}</p>
           </div>
         </div>
 
@@ -143,7 +143,7 @@ export function AIScreen({ patient }: { patient: Patient }) {
         <Card className="divide-y divide-border">
           <div className="px-4 py-3">
             <div className="flex items-start gap-3">
-              <AlertTriangle size={15} className="text-orange-600 shrink-0 mt-0.5" />
+              <AlertTriangle size={15} className="text-missed-fg shrink-0 mt-0.5" />
               <div>
                 <p className="text-sm font-semibold text-foreground">Celecoxib frequently missed at noon</p>
                 <p className="text-xs text-muted-foreground mt-0.5 leading-relaxed">The 12:00 PM dose of Celecoxib was missed on 3 out of 7 days this week. This is the most frequently missed medication and may be linked to lunchtime routine disruption.</p>
@@ -152,7 +152,7 @@ export function AIScreen({ patient }: { patient: Patient }) {
           </div>
           <div className="px-4 py-3">
             <div className="flex items-start gap-3">
-              <CheckCircle2 size={15} className="text-emerald-600 shrink-0 mt-0.5" />
+              <CheckCircle2 size={15} className="text-taken shrink-0 mt-0.5" />
               <div>
                 <p className="text-sm font-semibold text-foreground">Morning routine well-established</p>
                 <p className="text-xs text-muted-foreground mt-0.5 leading-relaxed">Metformin and Amlodipine at 7:00 AM were taken consistently every day, averaging within 12 minutes of scheduled time. Excellent adherence for these doses.</p>
@@ -161,7 +161,7 @@ export function AIScreen({ patient }: { patient: Patient }) {
           </div>
           <div className="px-4 py-3">
             <div className="flex items-start gap-3">
-              <TrendingDown size={15} className="text-amber-600 shrink-0 mt-0.5" />
+              <TrendingDown size={15} className="text-warn shrink-0 mt-0.5" />
               <div>
                 <p className="text-sm font-semibold text-foreground">Slight decline vs last week</p>
                 <p className="text-xs text-muted-foreground mt-0.5 leading-relaxed">Week-on-week adherence dropped from 89% to 82%. No significant change in routine noted; may coincide with Mdm Tan's complaint of increased joint discomfort this week.</p>

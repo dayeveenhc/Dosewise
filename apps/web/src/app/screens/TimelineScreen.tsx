@@ -21,15 +21,15 @@ export function TimelineScreen({ patient, justAddedMed, onSendReminder }: { pati
   }, []);
 
   const statusConfig: Record<MedStatus, { dot: string; line: string }> = {
-    taken: { dot: "bg-emerald-500", line: "border-emerald-200" },
-    missed: { dot: "bg-orange-500", line: "border-orange-200" },
-    upcoming: { dot: "bg-sky-400", line: "border-sky-200" },
+    taken: { dot: "bg-taken-bg0", line: "border-taken-border" },
+    missed: { dot: "bg-missed-bg0", line: "border-missed-border" },
+    upcoming: { dot: "bg-upcoming", line: "border-upcoming-border" },
     skipped: { dot: "bg-stone-400", line: "border-stone-200" },
   };
   const weekDotCls: Record<MedStatus, string> = {
-    taken: "bg-emerald-500",
-    missed: "bg-orange-500",
-    upcoming: "bg-sky-400",
+    taken: "bg-taken-bg0",
+    missed: "bg-missed-bg0",
+    upcoming: "bg-upcoming",
     skipped: "bg-stone-300",
   };
 
@@ -108,7 +108,7 @@ export function TimelineScreen({ patient, justAddedMed, onSendReminder }: { pati
             const selectedDay_ = d.toDateString() === selectedDay.toDateString();
             const pastDay      = isPast(d);
             const adherenceDot = pastDay
-              ? ((d.getDate() * 3 + 5) % 10 > 2 ? "bg-emerald-400" : "bg-orange-400")
+              ? ((d.getDate() * 3 + 5) % 10 > 2 ? "bg-taken" : "bg-missed")
               : todayDay ? "bg-primary" : "bg-muted-foreground/20";
 
             return (
@@ -172,14 +172,14 @@ export function TimelineScreen({ patient, justAddedMed, onSendReminder }: { pati
                   {i < dayMeds.length - 1 && <div className="w-px flex-1 bg-border mt-1" />}
                 </div>
                 {/* Entry — home-page schedule card styling */}
-                <div className={`flex-1 mb-4 bg-card rounded-2xl border shadow-sm overflow-hidden ${justAdded ? "border-2 border-emerald-400 ring-2 ring-emerald-300/50" : cfg.line}`}>
+                <div className={`flex-1 mb-4 bg-card rounded-2xl border shadow-sm overflow-hidden ${justAdded ? "border-2 border-taken ring-2 ring-taken/40" : cfg.line}`}>
                   <div className="flex items-start gap-3 px-4 py-3">
                     <MedAvatar name={med.name} size={44} className="rounded-lg shrink-0" />
                     <div className="flex-1 min-w-0">
                       <div className="flex items-center gap-2 flex-wrap">
                         <p className="text-sm font-semibold text-foreground">{med.name}{med.dose ? ` · ${med.dose}` : ""}</p>
                         {justAdded && (
-                          <span className="flex items-center gap-1 bg-emerald-100 text-emerald-700 text-[10px] font-bold px-2 py-0.5 rounded-full">
+                          <span className="flex items-center gap-1 bg-taken-bg text-taken-fg text-[10px] font-bold px-2 py-0.5 rounded-full">
                             <Check size={9} strokeWidth={3} />{t(language, "prescription.justAdded")}
                           </span>
                         )}
@@ -205,7 +205,7 @@ export function TimelineScreen({ patient, justAddedMed, onSendReminder }: { pati
                   </div>
                   {med.status === "missed" && (
                     <div className="px-4 pb-3">
-                      <button onClick={() => onSendReminder(med.name)} className="w-full bg-orange-50 border border-orange-200 text-orange-700 text-xs font-semibold rounded-xl py-2 flex items-center justify-center gap-1.5">
+                      <button onClick={() => onSendReminder(med.name)} className="w-full bg-missed-bg border border-missed-border text-missed-fg text-xs font-semibold rounded-xl py-2 flex items-center justify-center gap-1.5">
                         <Send size={11} /> {t(language, "common.sendReminder")} to patient
                       </button>
                     </div>
@@ -254,9 +254,9 @@ export function TimelineScreen({ patient, justAddedMed, onSendReminder }: { pati
             ))}
           </div>
           <div className="flex items-center gap-4 px-4 py-3 border-t border-border flex-wrap">
-            <span className="flex items-center gap-1.5 text-[10px] text-muted-foreground"><div className="w-2 h-2 rounded-full bg-emerald-500" />{t(language, "common.taken")}</span>
-            <span className="flex items-center gap-1.5 text-[10px] text-muted-foreground"><div className="w-2 h-2 rounded-full bg-orange-500" />{t(language, "common.missed")}</span>
-            <span className="flex items-center gap-1.5 text-[10px] text-muted-foreground"><div className="w-2 h-2 rounded-full bg-sky-400" />{t(language, "common.upcoming")}</span>
+            <span className="flex items-center gap-1.5 text-[10px] text-muted-foreground"><div className="w-2 h-2 rounded-full bg-taken-bg0" />{t(language, "common.taken")}</span>
+            <span className="flex items-center gap-1.5 text-[10px] text-muted-foreground"><div className="w-2 h-2 rounded-full bg-missed-bg0" />{t(language, "common.missed")}</span>
+            <span className="flex items-center gap-1.5 text-[10px] text-muted-foreground"><div className="w-2 h-2 rounded-full bg-upcoming" />{t(language, "common.upcoming")}</span>
             <span className="flex items-center gap-1.5 text-[10px] text-muted-foreground"><span className="text-muted-foreground/40">✕</span>{t(language, "common.notDue")}</span>
           </div>
         </div>

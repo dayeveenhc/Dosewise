@@ -9,7 +9,8 @@ export const travelModeSetupSteps: WalkthroughStep[] = [
   {
     id: "travel.open-quickhelp",
     screen: ON_AI,
-    selector: '[data-tour="elder-quickhelp"]', // ElderlyAIScreen.tsx — existing, reused
+    // Travel Mode sits under the "My medicines" category tile.
+    selector: '[data-walk="elder-cat-medicines"]',
     instructionKey: "walk.travel.openQuickHelp",
     waitFor: { type: "click", source: "dom" },
   },

@@ -58,15 +58,41 @@ through Supabase Postgres **RLS as the user** (Hermes mints/verifies JWTs — se
 
 Vite/React app with two top-level modes selected at onboarding: **elderly**
 (large-text, simplified, voice-first) and **caregiver** (fuller control view).
+
+**Design system (2026-07-29 revamp).** All colour lives in `styles/theme.css` as
+CSS variables — screens use `bg-primary`/`text-muted-foreground`/etc., never a
+raw Tailwind palette class. Brand ramp: `#357266` pine `--primary` (nav, buttons,
+the current-dose card), `#0E3B43` `--accent`, `#85B690` tints, `#E2DBBE`
+`--muted`, `#F5F2E7` `--background`. **Dose status has its own tokens** —
+`--taken-*` (palest green, recessive), `--upcoming-*` (saturated pine, leads),
+`--missed-*` (orange, deliberately outside the brand ramp), `--warn-*`. Adding a
+status colour means adding a token, not a class. `accessibility.tsx` layers
+`contrast: normal|high|max` and `colourVision: off|deuteranopia|protanopia|
+tritanopia` classes onto `<html>`, each overriding those same variables — which
+is why hardcoded palette classes break accessibility, not just consistency. The
+elder header is app-name-centred (help left, profile right) and the bottom nav
+is oversized (26px icons, 13px bold labels) in both modes.
 Gates: `npm run build` (transpile-only), `npm run typecheck` (`tsc --noEmit` —
 a pragmatic non-strict `tsconfig.json`, added as a refactor safety net since the
 build doesn't type-check), `npm test` (vitest), `npm run e2e` (Playwright).
 Both have an AI assistant chat screen wired to Hermes:
 
 - `screens/AskMeiScreen.tsx` — caregiver chat ("Ask Mei").
-- `screens/elderly/ElderlyAIScreen.tsx` — elder chat, plus Quick-help tiles
-  (add prescription by photo, update profile from a report, ask about a
-  medication, language & voice, travel mode).
+- `screens/elderly/ElderlyAIScreen.tsx` — **not a chat screen**: a grouped list
+  of what Mei can do ("I can do this for you" — photo/report scan, travel sheet,
+  doctor question; "I can show you how" — 10 narrated walkthroughs), with the
+  chat itself as a full sheet behind one prominent card. The sheet auto-closes
+  whenever a walkthrough starts, a ChangeHighlight fires, or a routed action
+  navigates — otherwise it would cover the thing being shown.
+- `screens/elderly/ElderlyNotificationsScreen.tsx` — the **Reminders** tab
+  (renamed from Notifications): caregiver link requests, caregiver messages with
+  Dismiss + Reply, and the elder's **questions for their doctor** (moved here
+  from the AI screen, and now persisted to `doctor_questions` for real via
+  `lib/doctor.ts::createDoctorQuestion`).
+- `screens/elderly/ElderlySettingsScreen.tsx` — a **hub + sub-screens**: profile
+  card (with its Edit button on the card), collapsible caregiver QR, a search
+  box over every setting, then one card per area showing its most-used control
+  inline with "More settings" opening the full page (back button).
 
 Real backend wiring (Supabase + Hermes) exists for: login/signup, medication
 CRUD, profile save, dose logging, travel plan, and the full chat/photo/report
@@ -82,8 +108,14 @@ only when the real user performs the real action (native DOM listener, or an
 app-emitted event via `lib/walkthrough/steps/` + `lib/walkthrough/bus.ts` for
 actions no generic listener can tell apart, e.g. an async write's real
 success). Started by Hermes's `start_walkthrough` tool (task name only — step
-content stays client-side); see MEMORY.md's 2026-07-22 entry for the full
-architecture and known gaps.
+content stays client-side), or directly from the Ask Mei help list; see
+MEMORY.md's 2026-07-22 entry for the full architecture and known gaps. Seven
+narrate-only walkthroughs (`check_schedule`, `log_dose`, `undo_dose`,
+`language_voice`, `reminder_settings`, `emergency_contact`, `text_size`) share
+one file, `lib/walkthrough/steps/narrated.ts`. **A new task name must be added
+in three places or tests fail**: `types.ts::WalkthroughTaskName` +
+`WALKTHROUGH_TASK_LABELS`, `tools/walkthrough.py::TASK_NAMES`, and
+`prompts.py::_WALKTHROUGH_LABELS`.
 
 A **Guided Auto-Navigation** mode is layered on top (2026-07-23): a step can
 instead carry an `act` (Mei performs the fill/tap/upload/submit herself, visibly
@@ -91,7 +123,8 @@ animated — `lib/walkthrough/actor.ts`) plus `verify`/`reveal` phases (orchestr
 by `lib/walkthrough/orchestrate.ts::runActStep` — a failed Verify STOPS and never
 implies success), so `waitFor` is now optional on a step. **Four autonomous scenarios** are built and live-validated end-to-end
 (Playwright, real Supabase, incl. write-fail paths): `add_prescription_auto`,
-`travel_mode_auto`, `edit_profile_auto`, and `accept_caregiver_link` (the
+`travel_mode_auto`, `edit_profile_auto`, `add_doctor_question_auto`, and
+`accept_caregiver_link` (the
 consent flow — Mei navigates but the elder taps Accept themselves, then Verify
 confirms the link is active). Verify is a real re-query: client `onVerify` (host,
 e.g. `ElderlyApp`) mirrors the Hermes read-only `verify_medication_exists` tool

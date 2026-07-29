@@ -290,15 +290,15 @@ export function AskMeiScreen({ patient, elderId, onUpdatePatient, onNavigate, on
       <div ref={scrollRef} className="flex-1 overflow-y-auto scrollbar-none px-4 py-3 space-y-3 border-t border-border">
         {messages.map(msg => msg.isRateLimited ? (
           <div key={msg.id} className="flex justify-center">
-            <div className="flex items-center gap-1.5 bg-amber-50 border border-amber-200 text-amber-800 rounded-full px-3.5 py-1.5">
-              <AlertTriangle size={13} className="text-amber-600 shrink-0" />
+            <div className="flex items-center gap-1.5 bg-warn-bg border border-warn-border text-warn-fg rounded-full px-3.5 py-1.5">
+              <AlertTriangle size={13} className="text-warn shrink-0" />
               <span className="text-[13px] font-semibold">{msg.text}</span>
             </div>
           </div>
         ) : msg.isConfirmation ? (
           <div key={msg.id} className="flex justify-center">
-            <div className="flex items-center gap-1.5 bg-emerald-50 border border-emerald-200 text-emerald-800 rounded-full px-3.5 py-1.5">
-              <Check size={13} className="text-emerald-600 shrink-0" />
+            <div className="flex items-center gap-1.5 bg-taken-bg border border-taken-border text-taken-fg rounded-full px-3.5 py-1.5">
+              <Check size={13} className="text-taken shrink-0" />
               <span className="text-[13px] font-semibold">{msg.text.replace(/^✓\s*/, "")}</span>
             </div>
           </div>

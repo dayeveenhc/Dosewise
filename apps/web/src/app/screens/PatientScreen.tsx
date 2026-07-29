@@ -56,7 +56,7 @@ export function PatientScreen({ patient, justAddedMed, onEditProfile, onAddPresc
     <div className="px-4 py-5 space-y-5">
       {/* Header card */}
       <Card className="overflow-hidden">
-        <div className="h-20 bg-gradient-to-br from-primary to-sky-800" />
+        <div className="h-20 bg-gradient-to-br from-primary to-accent" />
         <div className="px-4 pb-4 -mt-10">
           <img src={patient.photo} alt={patient.name} className="w-20 h-20 rounded-2xl object-cover border-4 border-white shadow-md bg-muted" />
           <h2 className="font-['Fraunces'] text-xl font-semibold text-foreground mt-2">{patient.name}</h2>
@@ -107,13 +107,13 @@ export function PatientScreen({ patient, justAddedMed, onEditProfile, onAddPresc
           {groupedMedications.map((m) => {
             const justAdded = !!justAddedMed && m.name === justAddedMed;
             return (
-            <div key={m.name} className={`px-4 py-3 flex items-center gap-3 ${justAdded ? "bg-emerald-50/60 ring-2 ring-emerald-300/50 rounded-xl" : ""}`}>
+            <div key={m.name} className={`px-4 py-3 flex items-center gap-3 ${justAdded ? "bg-taken-bg/60 ring-2 ring-taken/40 rounded-xl" : ""}`}>
               <MedAvatar name={m.name} size={32} className="rounded-full shrink-0" />
               <div className="flex-1 min-w-0">
                 <p className="text-sm font-semibold text-foreground flex items-center gap-1.5 flex-wrap">
                   <span>{m.name} <span className="text-xs font-normal text-muted-foreground">{m.dose}</span></span>
                   {justAdded && (
-                    <span className="inline-flex items-center gap-1 bg-emerald-100 text-emerald-700 text-[10px] font-bold px-2 py-0.5 rounded-full">
+                    <span className="inline-flex items-center gap-1 bg-taken-bg text-taken-fg text-[10px] font-bold px-2 py-0.5 rounded-full">
                       <Check size={9} strokeWidth={3} />{t(language, "prescription.justAdded")}
                     </span>
                   )}
@@ -123,7 +123,7 @@ export function PatientScreen({ patient, justAddedMed, onEditProfile, onAddPresc
                   <p className="text-[11px] text-muted-foreground">{MED_FREQUENCY[m.name]}</p>
                 )}
                 {m.refillDaysLeft && m.refillDaysLeft <= 7 && (
-                  <p className="text-[11px] text-amber-700 font-medium mt-0.5">{t(language, "common.daysOfSupplyLeft", { count: m.refillDaysLeft })}</p>
+                  <p className="text-[11px] text-warn-fg font-medium mt-0.5">{t(language, "common.daysOfSupplyLeft", { count: m.refillDaysLeft })}</p>
                 )}
               </div>
               <button
@@ -181,8 +181,8 @@ export function PatientScreen({ patient, justAddedMed, onEditProfile, onAddPresc
                 <p className="text-sm font-semibold text-foreground">{c.name}</p>
                 <p className="text-[11px] text-muted-foreground">{c.role}</p>
               </div>
-              <a href={`tel:${c.phone}`} className="w-8 h-8 bg-emerald-50 border border-emerald-200 rounded-full flex items-center justify-center">
-                <Phone size={13} className="text-emerald-700" />
+              <a href={`tel:${c.phone}`} className="w-8 h-8 bg-taken-bg border border-taken-border rounded-full flex items-center justify-center">
+                <Phone size={13} className="text-taken-fg" />
               </a>
             </div>
           ))}

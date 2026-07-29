@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from "react";
-import { Droplets, Home, Pill, Brain, Bell, Settings, HelpCircle } from "lucide-react";
+import { Droplets, Home, Pill, Brain, Bell, Settings, HelpCircle, ChevronLeft } from "lucide-react";
 import type { Patient, Medication, MedStatus, Message } from "../../types";
 import type { ElderlyTab, DoctorQ } from "./types";
 import { ElderlyHomeScreen } from "./ElderlyHomeScreen";
@@ -15,20 +15,21 @@ import type { AgentAction } from "../../lib/hermes";
 import { GuidedTour } from "../../components/GuidedTour";
 import type { TourStep } from "../../components/GuidedTour";
 import { ConfirmDialog } from "../../components/ConfirmDialog";
-import { logDoseTaken, addMedication, fetchElderMedications, to24h } from "../../lib/medications";
+import { logDoseTaken, unlogDoseTaken, addMedication, fetchElderMedications, to24h } from "../../lib/medications";
 import { defaultDoseTime } from "../../components/TimesPicker";
 import { MED_COLOURS } from "../../data/medications";
 import { useLanguage } from "../../lib/languageContext";
+import { useAccessibility } from "../../accessibility.tsx";
 import { t } from "../../lib/language";
 import { Walkthrough } from "../../components/Walkthrough";
 import { resolveWalkthroughSteps } from "../../lib/walkthrough/steps";
 import type { WalkthroughScreen, WalkthroughTaskName, VerifyDirective, RevealDirective, WalkthroughParams } from "../../lib/walkthrough/types";
 import { loadWalkthroughSession, saveWalkthroughSession, clearWalkthroughSession } from "../../lib/walkthroughState";
 import { markWalkthroughCompleted, fetchProfile } from "../../lib/profile";
-import { fetchDoctorQuestions } from "../../lib/doctor";
+import { fetchDoctorQuestions, createDoctorQuestion } from "../../lib/doctor";
 import { hasActiveCareLink } from "../../lib/careLinks";
 
-export function ElderlyApp({ patient, elderId, onUpdatePatient, onBack, onSignOut, startTour, careMessages }: {
+export function ElderlyApp({ patient, elderId, onUpdatePatient, onBack, onSignOut, startTour, careMessages, onDismissCareMessage, onReplyCareMessage }: {
   patient: Patient;
   elderId?: string;
   onUpdatePatient: (p: Patient | ((prev: Patient) => Patient)) => void;
@@ -36,8 +37,14 @@ export function ElderlyApp({ patient, elderId, onUpdatePatient, onBack, onSignOu
   onSignOut: () => void;
   startTour?: boolean;
   careMessages: Message[];
+  onDismissCareMessage: (id: number) => void;
+  onReplyCareMessage: (id: number, text: string) => void;
 }) {
   const [tab, setTab] = useState<ElderlyTab>("home");
+  // A screen with its own sub-view (the chat, an Ask Mei category, a Settings
+  // page) REPLACES this header instead of stacking a second one under it. The
+  // owning screen clears it on unmount, so no reset is needed here.
+  const [headerOverride, setHeaderOverride] = useState<{ title: string; onBack: () => void; action?: React.ReactNode } | null>(null);
   const [currentTime, setCurrentTime] = useState(new Date());
   const [pendingAIMessage, setPendingAIMessage] = useState<string | undefined>();
   // Pre-fills Ask Mei's input box WITHOUT sending — the elder still taps Send
@@ -63,6 +70,7 @@ export function ElderlyApp({ patient, elderId, onUpdatePatient, onBack, onSignOu
   const [revealCaption, setRevealCaption] = useState<{ rect: DOMRect; verb: string; text: string } | null>(null);
   const revealCaptionRaf = useRef<number>();
   const { language } = useLanguage();
+  const { notifications: notifyPrefs } = useAccessibility();
 
   const flagJustAdded = (name?: string) => {
     if (!name) return;
@@ -93,7 +101,7 @@ export function ElderlyApp({ patient, elderId, onUpdatePatient, onBack, onSignOu
   useEffect(() => {
     if (typeof window === "undefined" || !("Notification" in window)) return;
     const check = () => {
-      if (Notification.permission !== "granted") return;
+      if (Notification.permission !== "granted" || !notifyPrefs.doseReminders) return;
       const now = new Date();
       const nowLabel = now.toLocaleTimeString("en-SG", { hour: "numeric", minute: "2-digit", hour12: true }).toUpperCase();
       const today = now.toISOString().slice(0, 10);
@@ -110,7 +118,7 @@ export function ElderlyApp({ patient, elderId, onUpdatePatient, onBack, onSignOu
     check();
     const interval = setInterval(check, 30_000);
     return () => clearInterval(interval);
-  }, [patient.medications]);
+  }, [patient.medications, notifyPrefs.doseReminders]);
 
   const tourSteps: TourStep[] = [
     {
@@ -217,6 +225,15 @@ export function ElderlyApp({ patient, elderId, onUpdatePatient, onBack, onSignOu
         const profile = await fetchProfile(elderId);
         const list = profile?.details[verify.field as keyof typeof profile.details];
         if (Array.isArray(list) && list.some(v => String(v).trim().toLowerCase() === want)) return true;
+        await new Promise(r => setTimeout(r, 400));
+      }
+      return false;
+    }
+    if (verify.kind === "doctor-question-exists") {
+      const want = verify.question.trim().toLowerCase();
+      for (let attempt = 0; attempt < 12; attempt++) {
+        const rows = await fetchDoctorQuestions(elderId);
+        if (rows.some(r => r.question.trim().toLowerCase() === want)) return true;
         await new Promise(r => setTimeout(r, 400));
       }
       return false;
@@ -337,14 +354,13 @@ export function ElderlyApp({ patient, elderId, onUpdatePatient, onBack, onSignOu
     setWalkthroughTask(null);
     setWalkthroughStepIndex(0);
   };
+  // Bumped when a doctor_message change is highlighted, so the Reminders screen
+  // opens its doctor tab and the highlight has a card to land on.
+  const [openQuestionsSignal, setOpenQuestionsSignal] = useState(0);
   const [doctorQuestions, setDoctorQuestions] = useState<DoctorQ[]>([
     { id: "seed-1", question: "Can I take Celecoxib and Metformin at the same time?",           addedAt: "Added by Mei · Today",     answered: false },
     { id: "seed-2", question: "Is it normal to feel a little dizzy after taking Amlodipine?",  addedAt: "Added by Mei · Yesterday", answered: false },
   ]);
-  // Signals ElderlyAIScreen to switch to its "Ask a doctor" sub-tab (bumped when a
-  // doctor_message change is highlighted, so ChangeHighlight lands on the thread).
-  const [openDoctorSignal, setOpenDoctorSignal] = useState(0);
-
   // Pull the elder's REAL doctor_questions and merge them in (dedupe by id, keep
   // the seed + any local manual adds). Without this, a question Mei queued via
   // chat writes to the DB but never appears in the elder's thread.
@@ -368,9 +384,9 @@ export function ElderlyApp({ patient, elderId, onUpdatePatient, onBack, onSignOu
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [elderId]);
 
-  // Refresh when the elder opens the AI screen (where the doctor thread lives).
+  // Refresh when the elder opens Reminders (where the doctor thread now lives).
   useEffect(() => {
-    if (tab === "ai") void refreshDoctorQuestions();
+    if (tab === "notifications") void refreshDoctorQuestions();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [tab, elderId]);
 
@@ -385,6 +401,21 @@ export function ElderlyApp({ patient, elderId, onUpdatePatient, onBack, onSignOu
     });
     const med = patient.medications.find(m => m.id === medId);
     if (elderId && med?.medicationId) logDoseTaken(med.medicationId, elderId);
+  };
+
+  // Undo a mis-logged dose. Mirrors handleLogDose: optimistic local flip back to
+  // "upcoming" (the Home screen re-derives missed-vs-upcoming from the clock),
+  // plus the real write. Supply goes back up by the day logging it consumed.
+  const handleUnlogDose = (medId: number) => {
+    onUpdatePatient({
+      ...patient,
+      medications: patient.medications.map(m => m.id === medId ? {
+        ...m, status: "upcoming" as MedStatus, takenAt: undefined,
+        refillDaysLeft: m.refillDaysLeft !== undefined ? m.refillDaysLeft + 1 : undefined,
+      } : m),
+    });
+    const med = patient.medications.find(m => m.id === medId);
+    if (elderId && med?.medicationId) void unlogDoseTaken(med.medicationId, elderId);
   };
 
   const handleAddPrescription = async (med: Omit<Medication, "id" | "status"> & { times?: string[] }) => {
@@ -416,17 +447,25 @@ export function ElderlyApp({ patient, elderId, onUpdatePatient, onBack, onSignOu
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [tab, elderId]);
 
-  const handleAddDoctorQ = (q: string) => {
-    setDoctorQuestions(prev => [{ id: `local-${Date.now()}`, question: q, addedAt: `Added by Mei · ${new Date().toLocaleTimeString("en-SG", { hour: "2-digit", minute: "2-digit" })}`, answered: false }, ...prev]);
+  // Persists for real (doctor_questions, RLS as the elder) so the question
+  // survives a reload and an autonomous walkthrough can VERIFY it landed. Falls
+  // back to a local-only row if there's no signed-in elder or the write fails,
+  // rather than dropping what they typed.
+  const handleAddDoctorQ = async (q: string) => {
+    const local: DoctorQ = {
+      id: `local-${Date.now()}`, question: q,
+      addedAt: `Added · ${new Date().toLocaleTimeString("en-SG", { hour: "2-digit", minute: "2-digit" })}`,
+      answered: false,
+    };
+    const saved = elderId ? await createDoctorQuestion(elderId, q) : null;
+    setDoctorQuestions(prev => [saved ?? local, ...prev]);
   };
-
-  const unasked = doctorQuestions.filter(q => !q.answered).length;
 
   const NAV: { id: ElderlyTab; icon: any; label: string; fab?: boolean }[] = [
     { id: "home",          icon: Home,        label: t(language, "nav.home") },
-    { id: "prescriptions", icon: Pill,        label: t(language, "nav.medications") },
+    { id: "prescriptions", icon: Pill,        label: t(language, "nav.medicines") },
     { id: "ai",            icon: Brain,       label: t(language, "nav.askMei"), fab: true },
-    { id: "notifications", icon: Bell,        label: t(language, "nav.notifications") },
+    { id: "notifications", icon: Bell,        label: t(language, "nav.reminders") },
     { id: "settings",      icon: Settings,    label: t(language, "nav.settings") },
   ];
 
@@ -444,28 +483,47 @@ export function ElderlyApp({ patient, elderId, onUpdatePatient, onBack, onSignOu
         </div>
       </div>
 
-      {/* Header */}
-      <div className="px-4 pt-2 pb-3 bg-background/80 backdrop-blur-sm border-b border-border shrink-0">
-        <div className="flex items-center justify-between">
-          <div>
-            <p className="text-[10px] text-muted-foreground uppercase tracking-[0.2em] font-medium">DOSEWISE</p>
-            <h1 className="font-['Fraunces'] text-lg font-semibold text-foreground leading-tight">
-              {tab === "home" ? t(language, "header.hello", { name: patient.nickname || patient.name.split(" ")[1] }) : tab === "prescriptions" ? t(language, "nav.medications") : tab === "ai" ? t(language, "nav.askMei") : tab === "notifications" ? t(language, "nav.notifications") : t(language, "nav.settings")}
-            </h1>
-          </div>
-          <div className="flex items-center gap-2">
-            <button onClick={() => setShowTourConfirm(true)} className="w-8 h-8 rounded-full bg-card border border-border flex items-center justify-center">
-              <HelpCircle size={15} className="text-muted-foreground" />
+      {/* Header — app name centred, help and profile in the corners. The screen
+          title moved into each screen, so this bar stays one constant, always
+          recognisable anchor rather than text that changes under you. */}
+      <div className="px-3 py-2 bg-background/80 backdrop-blur-sm border-b border-border/60 shrink-0">
+        {headerOverride ? (
+          <div className="flex items-center gap-2.5">
+            <button
+              onClick={headerOverride.onBack}
+              aria-label={t(language, "common.back")}
+              className="w-11 h-11 rounded-full bg-card border border-border flex items-center justify-center shrink-0 active:bg-muted transition-colors"
+            >
+              <ChevronLeft size={22} className="text-foreground" />
             </button>
-            <img src={patient.photo} alt={patient.nickname} className="w-9 h-9 rounded-full object-cover border-2 border-primary/30" />
+            <h1 className="flex-1 min-w-0 truncate text-[19px] font-bold text-foreground">{headerOverride.title}</h1>
+            {headerOverride.action}
           </div>
-        </div>
+        ) : (
+          <div className="flex items-center justify-between gap-2">
+            <button
+              onClick={() => setShowTourConfirm(true)}
+              aria-label={t(language, "header.help")}
+              className="w-11 h-11 rounded-full bg-card border border-border flex items-center justify-center active:bg-muted transition-colors"
+            >
+              <HelpCircle size={22} className="text-primary" />
+            </button>
+            <h1 className="font-['Fraunces'] text-[25px] font-semibold tracking-tight text-primary leading-none">Dosewise</h1>
+            <button
+              onClick={() => setTab("settings")}
+              aria-label={t(language, "header.profile")}
+              className="w-11 h-11 rounded-full overflow-hidden border-2 border-primary/30 shrink-0 active:opacity-80 transition-opacity"
+            >
+              <img src={patient.photo} alt="" className="w-full h-full object-cover" />
+            </button>
+          </div>
+        )}
       </div>
 
       {/* Screen content */}
       <div className="flex-1 min-h-0 overflow-hidden flex flex-col">
-        {tab === "home"          && <ElderlyHomeScreen         patient={patient} onLogDose={handleLogDose} onOpenTravel={() => setShowTravel(true)} justAddedMed={justAddedMed} />}
-        {tab === "prescriptions" && <ElderlyPrescriptionScreen patient={patient} onOpenAI={openAI} onAddRx={() => setAddRx("manual")} onRequestRefill={name => openAIPrefill(t(language, "ai.refillRequestMsg", { name }))} justAddedMed={justAddedMed} />}
+        {tab === "home"          && <ElderlyHomeScreen         patient={patient} onLogDose={handleLogDose} onUnlogDose={handleUnlogDose} onOpenTravel={() => setShowTravel(true)} justAddedMed={justAddedMed} />}
+        {tab === "prescriptions" && <ElderlyPrescriptionScreen patient={patient} onAddRx={() => setAddRx("manual")} onRequestRefill={name => openAIPrefill(t(language, "ai.refillRequestMsg", { name }))} justAddedMed={justAddedMed} />}
         {tab === "ai"            && (
           <ElderlyAIScreen
             patient={patient}
@@ -475,46 +533,63 @@ export function ElderlyApp({ patient, elderId, onUpdatePatient, onBack, onSignOu
             onMedAdded={flagJustAdded}
             onHighlightChange={setHighlightChange}
             onOpenTravel={() => setShowTravel(true)}
-            doctorQuestions={doctorQuestions}
-            openDoctorSignal={openDoctorSignal}
-            onAddDoctorQ={handleAddDoctorQ}
-            onMarkAnswered={(id: string) => setDoctorQuestions(p => p.map(q => q.id === id ? { ...q, answered: true } : q))}
-            onDeleteQuestion={(id: string) => setDoctorQuestions(p => p.filter(q => q.id !== id))}
             autoMessage={pendingAIMessage}
             prefillMessage={pendingPrefill}
             onAutoMessageConsumed={() => setPendingAIMessage(undefined)}
             onPrefillConsumed={() => setPendingPrefill(undefined)}
             onWalkthroughStart={handleWalkthroughStart}
+            onHeaderOverride={setHeaderOverride}
           />
         )}
-        {tab === "notifications" && <ElderlyNotificationsScreen careMessages={careMessages} elderId={elderId} />}
-        {tab === "settings"      && <ElderlySettingsScreen     patient={patient} elderId={elderId} onUpdatePatient={onUpdatePatient} onBack={onBack} onSignOut={onSignOut} />}
+        {tab === "notifications" && (
+          <ElderlyNotificationsScreen
+            careMessages={careMessages}
+            elderId={elderId}
+            doctorQuestions={doctorQuestions}
+            onAddDoctorQ={q => void handleAddDoctorQ(q)}
+            onMarkAnswered={(id: string) => setDoctorQuestions(p => p.map(q => q.id === id ? { ...q, answered: true } : q))}
+            onDeleteQuestion={(id: string) => setDoctorQuestions(p => p.filter(q => q.id !== id))}
+            onDismissMessage={onDismissCareMessage}
+            onReplyMessage={onReplyCareMessage}
+            openQuestionsSignal={openQuestionsSignal}
+          />
+        )}
+        {tab === "settings"      && <ElderlySettingsScreen     patient={patient} elderId={elderId} onUpdatePatient={onUpdatePatient} onBack={onBack} onSignOut={onSignOut} onHeaderOverride={setHeaderOverride} />}
       </div>
 
       {/* Bottom nav — z-40 keeps it (and the Ask Mei FAB peeking above it) painting
           over any scrolled content behind it, regardless of that content's own layout. */}
-      <div className="relative z-40 shrink-0 bg-card/95 backdrop-blur-md border-t border-border px-2 pb-6 pt-2">
+      {/* Icon-only. The visible labels are gone at the user's request, so each
+          control carries an aria-label — without one an icon-only tab bar is
+          silent to a screen reader. */}
+      {/* Row is items-END so every control shares one baseline: the FAB's
+          negative margin then only controls how far it rises above the bar, not
+          where it sits in it (with items-center it drifted a few px high). Five
+          flex-1 columns keep the spacing exactly equal. */}
+      <div className="relative z-40 shrink-0 bg-card/95 backdrop-blur-md border-t border-border px-3 pt-4 pb-6">
         <div className="flex items-end">
           {NAV.map(item => {
+            const isActive = tab === item.id;
             if (item.fab) {
               return (
-                <div key={item.id} className="relative z-40 flex-1 flex flex-col items-center">
-                  <button onClick={() => setTab(item.id)} data-tour={`nav-${item.id}`} className={`relative z-40 w-14 h-14 rounded-full flex items-center justify-center -mt-7 shadow-lg active:scale-95 transition-transform bg-primary ${tab === item.id ? "ring-4 ring-primary/25" : ""}`}>
-                    <Brain size={24} className="text-primary-foreground" />
-                    {unasked > 0 && (
-                      <div className="absolute -top-1 -right-0.5 w-4 h-4 bg-amber-500 rounded-full text-[9px] font-bold text-white flex items-center justify-center">{unasked}</div>
-                    )}
+                <div key={item.id} className="relative z-40 flex-1 flex justify-center">
+                  <button onClick={() => setTab(item.id)} data-tour={`nav-${item.id}`} aria-label={item.label} aria-current={isActive ? "page" : undefined} className={`relative z-40 w-16 h-16 rounded-full flex items-center justify-center -mt-6 -top-1 shadow-lg active:scale-95 transition-transform bg-primary ${isActive ? "ring-4 ring-accent/40" : ""}`}>
+                    <Brain size={30} className="text-primary-foreground" />
                   </button>
-                  <span className={`text-[10px] font-medium mt-1 ${tab === item.id ? "text-primary" : "text-muted-foreground"}`}>{item.label}</span>
                 </div>
               );
             }
             return (
-              <button key={item.id} onClick={() => setTab(item.id)} data-tour={`nav-${item.id}`} className="flex-1 flex flex-col items-center gap-1 py-1">
-                <div className={`w-10 h-7 rounded-2xl flex items-center justify-center transition-colors relative ${tab === item.id ? "bg-primary" : ""}`}>
-                  <item.icon size={18} className={tab === item.id ? "text-primary-foreground" : "text-muted-foreground"} />
+              <button key={item.id} onClick={() => setTab(item.id)} data-tour={`nav-${item.id}`} aria-label={item.label} aria-current={isActive ? "page" : undefined} className="flex-1 min-w-0 flex justify-center">
+                {/* Active state is a coloured icon plus a dot, not a filled
+                    pill: with the labels gone, a filled active tab was visually
+                    identical to the filled Ask Mei circle. Only the FAB is
+                    filled now, so "where am I" and "the assistant" never read
+                    as the same thing. */}
+                <div className="w-16 h-12 flex flex-col items-center justify-end gap-1.5">
+                  <item.icon size={26} className={`transition-colors ${isActive ? "text-primary" : "text-muted-foreground/70"}`} />
+                  <span className={`h-1.5 w-1.5 rounded-full transition-colors ${isActive ? "bg-primary" : "bg-transparent"}`} />
                 </div>
-                <span className={`text-[10px] font-medium ${tab === item.id ? "text-primary" : "text-muted-foreground"}`}>{item.label}</span>
               </button>
             );
           })}
@@ -535,10 +610,10 @@ export function ElderlyApp({ patient, elderId, onUpdatePatient, onBack, onSignOu
         mode="elderly"
         onNavigate={target => {
           setTab(target as ElderlyTab);
-          // A doctor-question change lives in the AI screen's "Ask a doctor"
-          // sub-tab: open it and pull the fresh row so the highlight can land.
+          // A doctor-question change now lands on the Reminders tab — pull the
+          // fresh row so the highlight has a real element to attach to.
           if (highlightChange?.entity_type === "doctor_message") {
-            setOpenDoctorSignal(s => s + 1);
+            setOpenQuestionsSignal(n => n + 1);
             void refreshDoctorQuestions();
           }
         }}

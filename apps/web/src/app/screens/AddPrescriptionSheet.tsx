@@ -377,7 +377,7 @@ export function AddPrescriptionSheet({ onClose, onAdd, onAdded, initialTab = "ma
               </div>
             )}
             {submitState !== "idle" && (
-              <div className={`rounded-xl border px-3 py-2.5 flex items-center gap-2 text-sm ${submitState === "saving" ? "border-primary/20 bg-primary/10 text-primary" : "border-emerald-200 bg-emerald-50 text-emerald-700"}`}>
+              <div className={`rounded-xl border px-3 py-2.5 flex items-center gap-2 text-sm ${submitState === "saving" ? "border-primary/20 bg-primary/10 text-primary" : "border-taken-border bg-taken-bg text-taken-fg"}`}>
                 {submitState === "saving" ? <Sparkles size={14} className="animate-pulse" /> : <Check size={14} />}
                 <span>{submitState === "saving" ? t(language, "prescription.savingMedication") : t(language, "prescription.medicationAdded")}</span>
               </div>
