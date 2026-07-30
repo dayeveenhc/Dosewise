@@ -43,7 +43,6 @@ export function ElderlyPrescriptionScreen({ patient, onOpenAI, onAddRx, onReques
   const { colourBlind } = useAccessibility();
   const { language } = useLanguage();
   const [helpOpen, setHelpOpen] = useState<number | null>(null);
-  const [pastOpen, setPastOpen] = useState(false);
   const pastMedications = patient.pastMedications ?? [];
   // `patient.medications` is one entry per (medication, time-slot) — right for the
   // schedule, wrong here: a twice-daily pill is one prescription, not two. Group
@@ -93,6 +92,7 @@ export function ElderlyPrescriptionScreen({ patient, onOpenAI, onAddRx, onReques
                     <div className="flex items-start justify-between gap-2">
                       <div className="flex items-center gap-1.5 flex-wrap min-w-0">
                         <p className="font-bold text-[17px] text-foreground leading-snug">{m.name}</p>
+                        {m.dose && <span className="text-sm font-semibold text-muted-foreground">{m.dose}</span>}
                         {justAdded && (
                           <span className="flex items-center gap-1 bg-emerald-100 text-emerald-700 text-[10px] font-bold px-2 py-0.5 rounded-full">
                             <Check size={9} strokeWidth={3} />{t(language, "prescription.justAdded")}
@@ -212,27 +212,30 @@ export function ElderlyPrescriptionScreen({ patient, onOpenAI, onAddRx, onReques
         })}
         </div>
 
+        {/* Stopped (archived) medications — always visible, grouped after the
+            active cards, each keyed by its real medication uuid so a
+            discontinue_medication highlight lands on data-testid="medication-{id}".
+            Muted on purpose: stopped, never deleted. */}
         {pastMedications.length > 0 && (
           <div className="bg-card rounded-2xl border border-border overflow-hidden">
-            <button
-              onClick={() => setPastOpen(v => !v)}
-              className="w-full flex items-center gap-2 px-4 py-3.5 text-sm font-semibold text-foreground"
-            >
+            <div className="flex items-center gap-2 px-4 py-3.5 text-sm font-semibold text-muted-foreground">
               <History size={15} className="text-muted-foreground" />
               {t(language, "prescription.past")}
               <span className="text-xs font-bold text-muted-foreground bg-muted rounded-full px-2 py-0.5">{pastMedications.length}</span>
-              <ChevronDown size={14} className={`ml-auto text-muted-foreground transition-transform ${pastOpen ? "rotate-180" : ""}`} />
-            </button>
-            {pastOpen && (
-              <div className="divide-y divide-border border-t border-border">
-                {pastMedications.map(m => (
-                  <div key={m.id} className="px-4 py-3">
+            </div>
+            <div className="divide-y divide-border border-t border-border">
+              {pastMedications.map(m => (
+                <div key={m.id} data-testid={`medication-${m.id}`} className="px-4 py-3 flex items-center gap-2 opacity-80">
+                  <div className="flex-1 min-w-0">
                     <p className="text-sm font-semibold text-muted-foreground">{m.name} <span className="text-xs font-normal">{m.dose}</span></p>
                     <p className="text-xs text-muted-foreground/80">{m.purpose}</p>
                   </div>
-                ))}
-              </div>
-            )}
+                  <span className="shrink-0 text-[10px] font-bold uppercase tracking-wide text-stone-600 bg-stone-100 border border-stone-200 rounded-full px-2 py-0.5">
+                    {t(language, "prescription.stopped")}
+                  </span>
+                </div>
+              ))}
+            </div>
           </div>
         )}
 

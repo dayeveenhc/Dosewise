@@ -126,6 +126,9 @@ export function ElderlyHomeScreen({ patient, onLogDose, onOpenTravel, justAddedM
   };
 
   const dayMeds = patient.medications.map(m => ({ ...m, status: statusForDay(m, selectedDay) as MedStatus }));
+  // Today's local date (YYYY-MM-DD) for matching accessibility.dose_snoozes
+  // entries — those are written with the elder's wall-clock date.
+  const localDateISO = `${today.getFullYear()}-${String(today.getMonth() + 1).padStart(2, "0")}-${String(today.getDate()).padStart(2, "0")}`;
   const takenCount = dayMeds.filter(m => m.status === "taken").length;
   const total = patient.medications.length;
   const refillAlerts = patient.medications.filter(m => m.refillDaysLeft !== undefined && m.refillDaysLeft <= 5);
@@ -225,7 +228,7 @@ export function ElderlyHomeScreen({ patient, onLogDose, onOpenTravel, justAddedM
 
     if (isTaken) {
       return (
-        <div key={m.id} className="rounded-xl border border-border bg-card flex items-center gap-3 px-3 py-2.5 opacity-60">
+        <div key={m.id} data-testid={m.medicationId ? `medication-${m.medicationId}` : undefined} className="rounded-xl border border-border bg-card flex items-center gap-3 px-3 py-2.5 opacity-60">
           <div className="w-9 h-9 rounded-lg overflow-hidden shrink-0 bg-muted">
             <img src={photo} alt={m.name} className="w-full h-full object-cover" />
           </div>
@@ -242,6 +245,11 @@ export function ElderlyHomeScreen({ patient, onLogDose, onOpenTravel, justAddedM
       );
     }
 
+    // One-time reminder snooze for this medication today (snooze_dose tool) —
+    // display only; the schedule itself is unchanged.
+    const snooze = isSelectedToday && m.medicationId
+      ? patient.doseSnoozes?.find(s => s.medication_id === m.medicationId && s.date === localDateISO)
+      : undefined;
     const justAdded = !!justAddedMed && m.name === justAddedMed;
     const cardCls = justAdded ? "border-2 border-emerald-400 bg-emerald-50/60 shadow-sm ring-2 ring-emerald-300/50"
                   : isNext ? "border-2 border-primary bg-sky-50/60 shadow-sm"
@@ -267,6 +275,11 @@ export function ElderlyHomeScreen({ patient, onLogDose, onOpenTravel, justAddedM
                   {isMissed && (
                     <span className="flex items-center gap-1 bg-orange-100 text-orange-700 text-[10px] font-bold px-2 py-0.5 rounded-full">
                       <AlertTriangle size={9} />{t(language, "common.missed")}
+                    </span>
+                  )}
+                  {snooze && (
+                    <span className="flex items-center gap-1 bg-sky-100 text-sky-700 text-[10px] font-bold px-2 py-0.5 rounded-full">
+                      <Clock size={9} />{t(language, "home.snoozedUntil", { time: input24hTo12h(snooze.until) })}
                     </span>
                   )}
                 </div>

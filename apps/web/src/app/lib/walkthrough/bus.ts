@@ -11,6 +11,11 @@
 // CustomEvent's `detail` carries whatever payload a listener needs.
 const bus = new EventTarget();
 
+// Pace-controller telemetry (lib/walkthrough/pace.ts): emitted on every phase
+// start / min-reached / end with { phase, canAdvance }, so the overlay UI can
+// render Next-button state and the "checking…" label without prop drilling.
+export const WALK_PHASE_EVENT = "walk-phase";
+
 export function emitWalkthroughEvent(event: string, detail?: unknown): void {
   bus.dispatchEvent(new CustomEvent(event, { detail }));
 }

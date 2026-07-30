@@ -1,8 +1,32 @@
 import { supabase } from "./supabase";
 import type { ExtractedProfile } from "./hermes";
+import { normalizeAllergies } from "./changeHighlight";
+import type { AllergyEntry } from "./changeHighlight";
 import type { MealTimes } from "../types";
 
 export type Role = "elder" | "caregiver";
+
+// A symptom the elder reported via Mei's add_symptom tool — written by the
+// backend (services/hermes tools/symptoms.py) into accessibility.symptom_reports,
+// snake_case keys as stored.
+export interface SymptomReport {
+  id: string;
+  symptom: string;
+  noted_at: string; // ISO timestamp
+  medication_id?: string;
+  medication_name?: string;
+}
+
+// A one-time reminder snooze written by Mei's snooze_dose tool (services/hermes
+// tools/doses.py) into accessibility.dose_snoozes — one entry per
+// (medication_id, slot, date), snake_case keys as stored.
+export interface DoseSnooze {
+  medication_id: string;
+  name?: string;
+  slot: string;  // HH:MM (24h) — the scheduled slot being snoozed
+  date: string;  // YYYY-MM-DD, elder-local
+  until: string; // HH:MM (24h)
+}
 
 // Fields the guided setup wizard collects that have no dedicated column on
 // public.profiles (age/weight/height/gender/allergies/routine) — stored inside
@@ -18,7 +42,10 @@ export interface ProfileDetails {
   heightCm?: number;
   gender?: string;
   conditions?: string[];
-  allergies?: string[];
+  // Legacy plain strings, promoted in place to {name, severity} objects the
+  // first time the backend's set_allergy_severity grades one — handle BOTH
+  // shapes wherever this is read (lib/changeHighlight.ts's normalizeAllergies).
+  allergies?: AllergyEntry[];
   drugAllergies?: string[];
   wakeTime?: string;
   mealTimes?: MealTimes;
@@ -31,6 +58,9 @@ export interface ProfileDetails {
   // flag could never do. Written via markWalkthroughCompleted's read-merge-write,
   // never a bare saveProfile() overwrite (see that function's own note).
   completedWalkthroughs?: string[];
+  // Backend-written (snake_case, services/hermes tools) — read-only here.
+  symptom_reports?: SymptomReport[];
+  dose_snoozes?: DoseSnooze[];
 }
 
 // A medication draft the guided wizard's MedList edits (name/dose/time). Mirrors
@@ -93,6 +123,20 @@ export function mergeProfileDetails(existing: ProfileDetails, incoming: ProfileD
     }
     return merged.length ? merged : undefined;
   };
+  // Allergies can be legacy strings or promoted {name, severity} objects —
+  // dedupe by NAME, and never flatten an existing entry (its severity survives).
+  const unionAllergies = (a?: AllergyEntry[], b?: AllergyEntry[]): AllergyEntry[] | undefined => {
+    const merged = [...(a ?? [])];
+    const names = normalizeAllergies(merged).map(x => x.name.toLowerCase());
+    for (const item of b ?? []) {
+      const name = normalizeAllergies([item])[0]?.name.toLowerCase() ?? "";
+      if (name && !names.includes(name)) {
+        merged.push(item);
+        names.push(name);
+      }
+    }
+    return merged.length ? merged : undefined;
+  };
   return {
     ...existing,
     dob: existing.dob ?? incoming.dob,
@@ -100,7 +144,7 @@ export function mergeProfileDetails(existing: ProfileDetails, incoming: ProfileD
     heightCm: existing.heightCm ?? incoming.heightCm,
     gender: existing.gender ?? incoming.gender,
     conditions: unionList(existing.conditions, incoming.conditions),
-    allergies: unionList(existing.allergies, incoming.allergies),
+    allergies: unionAllergies(existing.allergies, incoming.allergies),
     drugAllergies: unionList(existing.drugAllergies, incoming.drugAllergies),
   };
 }

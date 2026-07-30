@@ -19,6 +19,7 @@ from hermes.channels.session import SessionRegistry
 from hermes.config import get_settings
 from hermes.main import create_app
 from hermes.ratelimit import SlidingWindowLimiter, turn_tiers
+from hermes.tools.base import ToolContext
 
 ELDER_A = "00000000-0000-0000-0000-00000000000a"
 
@@ -332,6 +333,62 @@ async def test_confirm_no_clears_pending_and_writes_nothing(monkeypatch):
     assert state.pending_image is None            # stale scan can't attach later
     assert state.awaiting_confirmation is False
     assert "won't save" in tg.sent[-1][1]
+
+
+async def test_confirm_no_clears_chat_confirm_slots_and_kills_commit(monkeypatch):
+    """The fixed leak: a ✖ No must clear the slots _pending_commit_call doesn't
+    map (pending_dosage / pending_missed_doses / pending_bulk) — the old code
+    fell through to an LLM turn and left a DECLINED proposal committable."""
+    use_anthropic(monkeypatch)
+    _no_llm(monkeypatch)  # the decline must stay deterministic — no LLM turn
+    db = FakeDB({
+        "medications": [{"id": "m1", "name": "Metformin", "dosage": "500mg",
+                         "archived": False, "schedule": {"times": ["08:00"]}}],
+        "conversation_turns": [],
+    })
+    registry = SessionRegistry(ELDER_A)
+    state = registry.get(111)
+    state.pending_dosage = {"name": "Metformin", "dosage": "1000mg"}
+    state.pending_missed_doses = [
+        {"medication_id": "m1", "name": "Metformin", "slot": "08:00"}
+    ]
+    state.pending_bulk = {
+        "tool": "log_doses",
+        "items": [{"medication_id": "m1", "name": "Metformin",
+                   "kind": "backdate", "payload": "08:00"}],
+    }
+    state.awaiting_confirmation = True
+    tg = FakeTelegram()
+
+    await telegram.handle_update(
+        _confirm_update("confirm:no"), anthropic=None, supabase=FakeSupabase(db=db),
+        registry=registry, telegram=tg,
+    )
+    assert "won't save" in tg.sent[-1][1]
+    assert state.pending_dosage is None
+    assert state.pending_missed_doses is None
+    assert state.pending_bulk is None
+    assert state.awaiting_confirmation is False
+
+    # The declined proposals are NO LONGER COMMITTABLE: every confirmed=true
+    # retry is refused by the commit guards, and nothing is written.
+    from hermes.tools import get_handler
+
+    ctx = ToolContext(supabase=FakeSupabase(db=db), elder_id=ELDER_A,
+                      session=state, telegram=tg)
+    out = await get_handler("update_medication_dosage")(
+        ctx, medication_name="Metformin", dosage="1000mg", confirmed=True
+    )
+    assert "Refused" in out
+    out = await get_handler("log_doses")(
+        ctx, medication_names=["Metformin"], confirmed=True
+    )
+    assert "Refused" in out
+    out = await get_handler("resolve_missed_doses")(ctx, confirmed=True)
+    assert "Refused" in out
+    assert not db.updated
+    assert not [r for t, r in db.inserted if t == "doses"]
+    assert ctx.committed_actions == []
 
 
 async def test_rate_limited_confirm_with_pending_still_commits(monkeypatch):

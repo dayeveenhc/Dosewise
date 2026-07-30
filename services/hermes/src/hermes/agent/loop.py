@@ -177,6 +177,29 @@ async def _dispatch_tool(
     return output, is_error
 
 
+def _stabilize_actions(ctx: ToolContext, pre: int, ordered_names: list[str]) -> None:
+    """Pin this iteration's committed actions to the model's tool-call order.
+
+    A tool batch runs under ``asyncio.gather``: the OUTPUTS come back in call
+    order, but each handler appends to ``ctx.committed_actions`` whenever it
+    happens to commit — completion order, which is nondeterministic when ≥2
+    write tools run in one iteration. The web app treats ``actions`` as ordered
+    (``actions[0]`` drives the primary highlight), so stable-sort the slice this
+    batch appended (``ctx.committed_actions[pre:]``) by each action's tool
+    position in the call order. Stable: several actions from one tool keep
+    their relative order; a tool name not in the batch (none today) sinks last.
+    Shared by all three provider loops.
+    """
+    tail = ctx.committed_actions[pre:]
+    if len(tail) < 2:
+        return
+    order: dict[str, int] = {}
+    for i, name in enumerate(ordered_names):
+        order.setdefault(name, i)
+    tail.sort(key=lambda a: order.get(a.get("tool"), len(ordered_names)))
+    ctx.committed_actions[pre:] = tail
+
+
 # ---------------------------------------------------------------------------
 # OpenAI — chat.completions API with tool_calls / tool-role messages
 # ---------------------------------------------------------------------------
@@ -255,6 +278,7 @@ async def _run_openai(
 
         for tc in tool_calls:
             tools_used.append(tc.function.name)
+        pre = len(ctx.committed_actions)
         outs = await asyncio.gather(
             *(
                 _dispatch_tool(
@@ -264,6 +288,7 @@ async def _run_openai(
                 for tc in tool_calls
             )
         )
+        _stabilize_actions(ctx, pre, [tc.function.name for tc in tool_calls])
         for tc, (out, _is_error) in zip(tool_calls, outs, strict=True):
             messages.append({"role": "tool", "tool_call_id": tc.id, "content": out})
 
@@ -332,9 +357,11 @@ async def _run_anthropic(
         tool_blocks = [b for b in response.content if b.type == "tool_use"]
         for block in tool_blocks:
             tools_used.append(block.name)
+        pre = len(ctx.committed_actions)
         outs = await asyncio.gather(
             *(_dispatch_tool(ctx, b.name, b.input, on_event=on_event) for b in tool_blocks)
         )
+        _stabilize_actions(ctx, pre, [b.name for b in tool_blocks])
 
         results: list[dict] = []
         for block, (out, is_error) in zip(tool_blocks, outs, strict=True):
@@ -438,9 +465,11 @@ async def _run_gemini(
         contents.append(content)  # model turn carrying the functionCall parts
         for fc in calls:
             tools_used.append(fc.name)
+        pre = len(ctx.committed_actions)
         outs = await asyncio.gather(
             *(_dispatch_tool(ctx, fc.name, dict(fc.args or {}), on_event=on_event) for fc in calls)
         )
+        _stabilize_actions(ctx, pre, [fc.name for fc in calls])
         response_parts = [
             types.Part.from_function_response(name=fc.name, response={"result": out})
             for fc, (out, _is_error) in zip(calls, outs, strict=True)

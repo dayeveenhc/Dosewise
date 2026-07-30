@@ -93,19 +93,40 @@ export async function fetchElderMedications(elderId: string): Promise<Medication
   return out;
 }
 
-// Mirrors Hermes's log_dose tool (services/hermes/src/hermes/tools/doses.py): flip
-// the most recent pending dose to taken, or insert a new taken dose at now.
-export async function logDoseTaken(medicationId: string, elderId: string): Promise<void> {
+// Flip the pending dose that matches the TAPPED card's own slot, or insert a
+// new taken dose at now. `slotHHMM` (24h, the specific card's own time —
+// callers already have this per-slot, since fetchElderMedications emits one
+// card per schedule.times entry) picks among multiple same-day pending rows
+// by nearest wall-clock time-of-day, same principle as Hermes's log_dose
+// tool's _dose_plan (services/hermes/src/hermes/tools/doses.py) — this was
+// previously "most recent pending, regardless of which slot's card was
+// tapped", which flipped the WRONG dose whenever a medication had more than
+// one pending slot today (found live, Phase-4 spot-check of scenario s03).
+// No slotHHMM (caller doesn't know it) falls back to the old any-pending
+// behaviour, kept only for backward compatibility.
+export async function logDoseTaken(medicationId: string, elderId: string, slotHHMM?: string): Promise<void> {
   const nowIso = new Date().toISOString();
-  const { data: pending } = await supabase
-    .from("doses").select("id")
-    .eq("medication_id", medicationId).eq("status", "pending")
-    .order("scheduled_at", { ascending: false }).limit(1);
+  const { data: allPending } = await supabase
+    .from("doses").select("id,scheduled_at")
+    .eq("medication_id", medicationId).eq("status", "pending");
+  const pending = allPending ?? [];
 
-  if (pending && pending.length) {
+  if (pending.length) {
+    let target = pending[0];
+    if (slotHHMM && pending.length > 1) {
+      const [wantH, wantM] = slotHHMM.split(":").map(Number);
+      const wantMinutes = wantH * 60 + wantM;
+      target = pending.reduce((best, row) => {
+        const d = new Date(row.scheduled_at);
+        const rowMinutes = d.getHours() * 60 + d.getMinutes();
+        const bestD = new Date(best.scheduled_at);
+        const bestMinutes = bestD.getHours() * 60 + bestD.getMinutes();
+        return Math.abs(rowMinutes - wantMinutes) < Math.abs(bestMinutes - wantMinutes) ? row : best;
+      }, pending[0]);
+    }
     const { error } = await supabase.from("doses")
       .update({ status: "taken", logged_at: nowIso, logged_by: elderId })
-      .eq("id", pending[0].id);
+      .eq("id", target.id);
     if (error) throw error;
     return;
   }

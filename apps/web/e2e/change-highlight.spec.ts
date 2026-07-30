@@ -51,7 +51,8 @@ test("ChangeHighlight rings the exact medication card with a changed_fields capt
   const caption = page.locator('[data-testid="change-highlight-caption"]');
   await expect(caption).toBeVisible();
   await expect(caption).toContainText("Updated");
-  await expect(caption).toContainText("dose time 18:00 → 20:00");
+  // Bugfix-B: dose times render in 12h ("6:00 PM"), not raw 24h HH:MM.
+  await expect(caption).toContainText("dose time 6:00 PM → 8:00 PM");
 
   // Step 5: evidence.
   await page.screenshot({ path: "e2e/artifacts/change-highlight/highlighted.png", fullPage: true });

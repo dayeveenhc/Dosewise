@@ -44,6 +44,13 @@ class SessionState:
     # A pending set_medication_reminder proposal ({"name", "times"}), held until the
     # elder confirms so the commit can only ever save the times it read back.
     pending_reminder: dict | None = None
+    # A pending update_medication_dosage proposal ({"name", "dosage"}), held until the
+    # elder confirms so a dose change only ever saves the value it read back.
+    pending_dosage: dict | None = None
+    # The full list of missed-dose slots read back by resolve_missed_doses
+    # ([{"medication_id", "name", "slot"}, ...]), held until the elder confirms so
+    # the bulk commit can only ever mark slots that were enumerated to them.
+    pending_missed_doses: list | None = None
     # Whether the elder wants spoken replies for typed messages too (from
     # profiles.accessibility.tts, or the /voice command). Default False — voice
     # mirrors the user: a voice note always gets a spoken reply, typed messages
@@ -62,6 +69,12 @@ class SessionState:
     # A pending update_medical_profile proposal ({"content", "replace"}), held until
     # the elder confirms so a profile write only ever saves what was read back.
     pending_profile: dict | None = None
+    # A pending BULK proposal shared by the multi-item propose→confirm tools
+    # ({"tool": str, "items": list}). Guarded on commit by
+    # tools/base.py::match_pending_bulk — the commit is honored only when the
+    # stash belongs to the SAME tool, so a confirm can never save a list that
+    # was never read back (or one proposed by a different tool).
+    pending_bulk: dict | None = None
     # True while a /setup re-run forces guided-intake mode even though a profile
     # already exists. Cleared when a profile update commits.
     intake_active: bool = False
@@ -94,6 +107,8 @@ class SessionRegistry:
         state.slang_loaded = False
         state.awaiting_confirmation = False
         state.pending_reminder = None
+        state.pending_dosage = None
+        state.pending_missed_doses = None
         state.voice_default = False
         state.voice_loaded = False
         state.memory_text = None
@@ -101,6 +116,7 @@ class SessionRegistry:
         state.medical_profile = None
         state.medical_profile_loaded = False
         state.pending_profile = None
+        state.pending_bulk = None
         state.intake_active = False
         self._profile_to_chat[elder_id] = chat_id
 

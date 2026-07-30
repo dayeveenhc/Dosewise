@@ -7,6 +7,8 @@ import type { FontSize } from "../../accessibility.tsx";
 import type { Patient } from "../../types";
 import { MED_SHAPES, COMMON_CONDITIONS, COMMON_ALLERGIES, COMMON_DRUG_ALLERGIES } from "../../data/medications";
 import { fetchProfile, saveProfile, calculateAge } from "../../lib/profile";
+import type { SymptomReport } from "../../lib/profile";
+import { normalizeAllergies, slugify } from "../../lib/changeHighlight";
 import { TagList, fieldCls, GenderPicker, withCatalogLabels } from "../setup/GuidedSetupWizard";
 import { MedAvatar } from "../../components/shared";
 import { MeiSuggestButton } from "../../components/MeiSuggestButton";
@@ -43,6 +45,14 @@ export function ElderlySettingsScreen({ patient, elderId, onUpdatePatient, onBac
   const [heightDraft, setHeightDraft] = useState("");
   const [conditionsDraft, setConditionsDraft] = useState<string[]>([]);
   const [allergiesDraft, setAllergiesDraft] = useState<string[]>([]);
+  // Normalized saved allergies (legacy strings OR promoted {name, severity}
+  // objects — lib/changeHighlight.ts's normalizeAllergies) — drives the
+  // always-visible chips in the summary card, so a set_allergy_severity
+  // highlight (data-testid="allergy-{slug}") resolves even while the editable
+  // profile section is collapsed; severities survive a profile save.
+  const [allergyEntries, setAllergyEntries] = useState<{ name: string; severity: string | null }[]>([]);
+  // Read-only symptom journal written by Mei's add_symptom tool.
+  const [symptomReports, setSymptomReports] = useState<SymptomReport[]>([]);
   const [drugAllergiesDraft, setDrugAllergiesDraft] = useState<string[]>([]);
   const [wakeDraft, setWakeDraft] = useState("07:00");
   const [breakfastDraft, setBreakfastDraft] = useState("08:00");
@@ -63,7 +73,12 @@ export function ElderlySettingsScreen({ patient, elderId, onUpdatePatient, onBac
       setWeightDraft(d.weightKg ? String(d.weightKg) : "");
       setHeightDraft(d.heightCm ? String(d.heightCm) : "");
       setConditionsDraft(d.conditions ?? []);
-      setAllergiesDraft(d.allergies ?? []);
+      const allergies = normalizeAllergies(d.allergies).filter(a => a.name);
+      setAllergyEntries(allergies);
+      setAllergiesDraft(allergies.map(a => a.name));
+      setSymptomReports(
+        [...(d.symptom_reports ?? [])].sort((a, b) => (b.noted_at ?? "").localeCompare(a.noted_at ?? ""))
+      );
       setDrugAllergiesDraft(d.drugAllergies ?? []);
       setWakeDraft(d.wakeTime ?? "07:00");
       setBreakfastDraft(d.mealTimes?.breakfast ?? "08:00");
@@ -77,18 +92,33 @@ export function ElderlySettingsScreen({ patient, elderId, onUpdatePatient, onBac
     if (!elderId) return;
     setProfileSaving(true);
     const mealTimes = { breakfast: breakfastDraft, lunch: lunchDraft, dinner: dinnerDraft };
+    // Re-attach a graded severity (set via Mei's set_allergy_severity) to any
+    // surviving name, so editing the list here never silently drops a grade.
+    const severityByName = Object.fromEntries(
+      allergyEntries.filter(a => a.severity).map(a => [a.name.trim().toLowerCase(), a.severity!])
+    );
+    const savedAllergies = allergiesDraft.map(n => {
+      const severity = severityByName[n.trim().toLowerCase()];
+      return severity ? { name: n, severity } : n;
+    });
+    // Read-merge-write (profile.ts's rule for this shared jsonb): fields this
+    // form doesn't edit — medical_profile, symptom_reports, dose_snoozes,
+    // travelPlan, completedWalkthroughs — must survive a save here.
+    const existing = (await fetchProfile(elderId))?.details ?? {};
     await saveProfile(elderId, "elder", patient.name, {
+      ...existing,
       dob: dobDraft || undefined,
       weightKg: weightDraft ? Number(weightDraft) : undefined,
       heightCm: heightDraft ? Number(heightDraft) : undefined,
       gender: genderDraft || undefined,
       conditions: conditionsDraft,
-      allergies: allergiesDraft,
+      allergies: savedAllergies,
       drugAllergies: drugAllergiesDraft,
       wakeTime: wakeDraft,
       mealTimes,
       sleepTime: sleepDraft,
     });
+    setAllergyEntries(normalizeAllergies(savedAllergies));
     onUpdatePatient({
       ...patient,
       age: dobDraft ? calculateAge(dobDraft) : patient.age,
@@ -119,8 +149,39 @@ export function ElderlySettingsScreen({ patient, elderId, onUpdatePatient, onBac
           </div>
           <div className="flex flex-wrap gap-1.5">
             {patient.conditions.map(c => <span key={c} className="text-xs bg-secondary text-secondary-foreground rounded-full px-2.5 py-1">{c}</span>)}
+            {/* Saved allergies (both legacy strings and promoted {name, severity}
+                objects) — always visible so a set_allergy_severity highlight can
+                land on data-testid="allergy-{slug}" even while the editable
+                profile section below is collapsed. */}
+            {allergyEntries.map(a => (
+              <span key={a.name} data-testid={`allergy-${slugify(a.name)}`} className="inline-flex items-center gap-1 text-xs bg-red-50 text-red-800 border border-red-200 rounded-full px-2.5 py-1">
+                {a.name}
+                {a.severity && (
+                  <em className="not-italic text-[10px] font-bold uppercase tracking-wide bg-red-100 text-red-700 rounded-full px-1.5 py-0.5">{a.severity}</em>
+                )}
+              </span>
+            ))}
           </div>
         </div>
+
+        {/* Symptoms noted — read-only journal written by Mei's add_symptom tool
+            (accessibility.symptom_reports), newest first; hidden when empty. */}
+        {symptomReports.length > 0 && (
+          <div className="bg-card rounded-2xl border border-border divide-y divide-border">
+            <div className="px-4 py-3"><p className="font-semibold text-foreground">{t(language, "settings.symptomsNoted")}</p></div>
+            {symptomReports.map(r => (
+              <div key={r.id} data-testid={`symptom-${r.id}`} className="px-4 py-3">
+                <p className="text-[15px] text-foreground leading-snug">{r.symptom}</p>
+                <p className="text-xs text-muted-foreground mt-0.5">
+                  {r.medication_name ? `${r.medication_name} · ` : ""}
+                  {Number.isNaN(new Date(r.noted_at).getTime())
+                    ? ""
+                    : new Date(r.noted_at).toLocaleDateString("en-SG", { day: "numeric", month: "short" })}
+                </p>
+              </div>
+            ))}
+          </div>
+        )}
 
         {/* Your Profile — everything the guided setup wizard asked, editable here */}
         <div className="bg-card rounded-2xl border border-border overflow-hidden" data-tour="elder-profile-section">
@@ -326,7 +387,7 @@ export function ElderlySettingsScreen({ patient, elderId, onUpdatePatient, onBac
               <p className="text-[15px] font-medium text-foreground">{t(language, "settings.language")}</p>
               <p className="text-xs text-muted-foreground">{t(language, "settings.languageDesc")}</p>
             </div>
-            <select value={language} onChange={e => setLanguage(e.target.value as any)} className="bg-muted rounded-xl px-3 py-2 text-sm font-medium text-foreground outline-none">
+            <select value={language} data-walk="elder-language-select" onChange={e => setLanguage(e.target.value as any)} className="bg-muted rounded-xl px-3 py-2 text-sm font-medium text-foreground outline-none">
               {LANGUAGE_OPTIONS.map(option => <option key={option.id} value={option.id}>{option.label}</option>)}
             </select>
           </div>
@@ -344,7 +405,7 @@ export function ElderlySettingsScreen({ patient, elderId, onUpdatePatient, onBac
         </div>
 
         {primary && (
-          <div className="bg-card rounded-2xl border border-border divide-y divide-border">
+          <div className="bg-card rounded-2xl border border-border divide-y divide-border" data-walk="elder-emergency-section">
             <div className="px-4 py-3"><p className="font-semibold text-foreground">{t(language, "settings.emergencyContact")}</p></div>
             <div className="px-4 py-4 flex items-center justify-between">
               <div>
@@ -352,7 +413,7 @@ export function ElderlySettingsScreen({ patient, elderId, onUpdatePatient, onBac
                 <p className="text-sm text-muted-foreground">{primary.role}</p>
                 <p className="text-sm text-muted-foreground">{primary.phone}</p>
               </div>
-              <button onClick={() => setShowCallPrimary(true)} className="w-12 h-12 bg-emerald-100 text-emerald-700 rounded-xl flex items-center justify-center active:scale-95 transition-transform">
+              <button onClick={() => setShowCallPrimary(true)} data-walk="elder-emergency-call" className="w-12 h-12 bg-emerald-100 text-emerald-700 rounded-xl flex items-center justify-center active:scale-95 transition-transform">
                 <Phone size={18} />
               </button>
             </div>

@@ -2,9 +2,10 @@ import { useRef, useState } from "react";
 import type { ReactNode, ChangeEvent } from "react";
 import { ArrowLeft, Loader2, Plus, X, Check, Sunrise, Coffee, Utensils, UtensilsCrossed, Moon, PartyPopper, Users, Camera, Sparkles, Venus, Mars, Eye, EyeOff } from "lucide-react";
 import { supabase } from "../../lib/supabase";
-import { saveProfile } from "../../lib/profile";
+import { saveProfile, markWalkthroughCompleted } from "../../lib/profile";
 import { addMedication, archiveMedication, to24h } from "../../lib/medications";
 import { extractProfile, fileToBase64 } from "../../lib/hermes";
+import { normalizeAllergies } from "../../lib/changeHighlight";
 import { MEDICATION_CATALOG, COMMON_CONDITIONS, COMMON_ALLERGIES, COMMON_DRUG_ALLERGIES } from "../../data/medications";
 import { TimeField, TimesPicker, defaultDoseTime } from "../../components/TimesPicker";
 import type { RoutineTimes } from "../../components/TimesPicker";
@@ -408,7 +409,9 @@ export function GuidedSetupWizard({ mode, hasSession, elderId: initialElderId, p
   const [heightCm, setHeightCm] = useState(prefill?.details.heightCm != null ? String(prefill.details.heightCm) : "");
   const [gender, setGender] = useState(prefill?.details.gender ?? "");
   const [conditions, setConditions] = useState<string[]>(prefill?.details.conditions ?? []);
-  const [allergies, setAllergies] = useState<string[]>(prefill?.details.allergies ?? []);
+  // Extraction prefill is always plain strings, but ProfileDetails.allergies
+  // may carry promoted {name, severity} entries — normalize to names here.
+  const [allergies, setAllergies] = useState<string[]>(() => normalizeAllergies(prefill?.details.allergies).map(a => a.name).filter(Boolean));
   const [drugAllergies, setDrugAllergies] = useState<string[]>(prefill?.details.drugAllergies ?? []);
   const [wakeTime, setWakeTime] = useState(prefill?.details.wakeTime ?? "07:00");
   // An extraction yields one time per med; the wizard's multi-select shape wraps
@@ -500,6 +503,10 @@ export function GuidedSetupWizard({ mode, hasSession, elderId: initialElderId, p
     } else {
       await saveProfile(elderId, role, fullName, {});
     }
+    // Mark this task done so prompts.py's "not yet shown" gate can actually
+    // suppress re-offering onboarding once it's genuinely complete — every
+    // wizard run (new signup or a chat-triggered one) reaches this point.
+    await markWalkthroughCompleted(elderId, role, "onboarding");
     setFinishing(false);
     // Gated on the real, resolved profile/medication writes above — never the
     // Finish button's click alone.

@@ -208,23 +208,37 @@
 
 /* Guided Auto-Navigation Reveal: a transient emerald pulse the walkthrough adds
    to the element where a change just landed (ElderlyApp handleWalkthroughReveal),
-   so it's unmistakable. ~2.6s = two 1.3s cycles, matching the JS cleanup timer. */
+   so it's unmistakable. ONE iteration of the full pulse duration; --dw-pulse-ms
+   is set from PACING.REVEAL_PULSE_MS (lib/walkthrough/pacing.ts's
+   applyPacingCssVars) so the animation can never drift from the JS teardown
+   timers — the fallback only covers pre-mount. */
 @keyframes walk-reveal-pulse {
   0%, 100% { box-shadow: 0 0 0 0 rgba(16, 185, 129, 0); }
   25% { box-shadow: 0 0 0 4px rgba(16, 185, 129, 0.55); }
   60% { box-shadow: 0 0 0 7px rgba(16, 185, 129, 0.22); }
 }
 .walk-reveal-pulse {
-  animation: walk-reveal-pulse 1.3s ease-in-out 2;
+  animation: walk-reveal-pulse var(--dw-pulse-ms, 1400ms) ease-in-out 1;
   border-radius: 14px;
+}
+
+/* Walkthrough field pre-highlight: the "look here" ring the actor puts on a
+   field/button for PACING.FIELD_PREHIGHLIGHT_MS / PRE_CLICK_MS before Mei
+   types into or presses it. Steady (no animation) — it's an attention cue,
+   not a change proof. */
+.walk-field-prehighlight {
+  box-shadow: 0 0 0 2px rgba(16, 185, 129, 0.7), 0 0 0 6px rgba(16, 185, 129, 0.18);
+  border-radius: 12px;
+  transition: box-shadow 150ms ease;
 }
 
 /* ChangeHighlight: the canonical "here's the exact record that changed" ring the
    ChangeHighlight component adds around a target element (data-testid keyed) while
-   its caption is up (~3.5s). A steady emerald ring + soft glow, distinct from the
-   transient walk-reveal-pulse above. */
+   its caption is up (PACING.HIGHLIGHT_DWELL_MIN_MS). A steady emerald ring + soft
+   glow, distinct from the transient walk-reveal-pulse above; cycles on the same
+   --dw-pulse-ms so all proof animations share one clock. */
 .change-highlight {
-  animation: change-highlight-glow 1.4s ease-in-out infinite;
+  animation: change-highlight-glow var(--dw-pulse-ms, 1400ms) ease-in-out infinite;
   border-radius: 16px;
   position: relative;
   z-index: 55;
@@ -232,4 +246,19 @@
 @keyframes change-highlight-glow {
   0%, 100% { box-shadow: 0 0 0 2px rgba(16, 185, 129, 0.7), 0 0 0 5px rgba(16, 185, 129, 0.16); }
   50% { box-shadow: 0 0 0 2px rgba(16, 185, 129, 0.5), 0 0 0 8px rgba(16, 185, 129, 0.08); }
+}
+
+/* Stopped/discontinued variant of the ChangeHighlight ring: same mechanics,
+   but a muted amber-gray — a medication that was STOPPED must not glow the
+   success emerald. Chosen by ChangeHighlight when an entity's
+   changed_fields.status.after === "discontinued". */
+.change-highlight-stopped {
+  animation: change-highlight-stopped-glow var(--dw-pulse-ms, 1400ms) ease-in-out infinite;
+  border-radius: 16px;
+  position: relative;
+  z-index: 55;
+}
+@keyframes change-highlight-stopped-glow {
+  0%, 100% { box-shadow: 0 0 0 2px rgba(180, 83, 9, 0.55), 0 0 0 5px rgba(120, 113, 108, 0.18); }
+  50% { box-shadow: 0 0 0 2px rgba(180, 83, 9, 0.4), 0 0 0 8px rgba(120, 113, 108, 0.1); }
 }

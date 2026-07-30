@@ -8,11 +8,15 @@ import { performAct } from "./actor";
 // swallowed by React's own value tracker — whereas performAct's native-prototype
 // setter + dispatched input event does. If this ever regresses, autonomous
 // "fill" steps would silently type into the DOM while React (and the eventual
-// write) sees an empty field.
+// write) sees an empty field. Timing comes from PACING (types deliberately
+// carry no per-step pace); the fastForward path must land the full value with
+// a real change event, instantly.
 
 afterEach(cleanup);
 
 const noCancel = { shouldCancel: () => false };
+// A controller mid-fast-forward: typing (and the pre-highlight wait) collapse.
+const fastForward = { shouldCancel: () => false, shouldFastForward: () => true };
 
 function ControlledInput() {
   const [value, setValue] = useState("");
@@ -42,13 +46,16 @@ describe("performAct", () => {
     const { getByTestId } = render(<ControlledInput />);
     await act(async () => {
       await performAct(
-        { kind: "fill", selector: '[data-testid="field"]', value: "Metformin", paceMs: 1 },
+        { kind: "fill", selector: '[data-testid="field"]', value: "Metformin" },
         noCancel,
       );
     });
-    expect((getByTestId("field") as HTMLInputElement).value).toBe("Metformin");
+    const field = getByTestId("field") as HTMLInputElement;
+    expect(field.value).toBe("Metformin");
     // The echo reflects React state — proof onChange fired, not just the DOM node.
     expect(getByTestId("echo").textContent).toBe("Metformin");
+    // The pre-highlight ring never outlives the fill.
+    expect(field.classList.contains("walk-field-prehighlight")).toBe(false);
   });
 
   it("a naive el.value assignment does NOT update React (fix is load-bearing)", async () => {
@@ -61,6 +68,27 @@ describe("performAct", () => {
     // React's tracker was updated by its own patched setter, so onChange never
     // fires — state (and the echo) stay empty.
     expect(getByTestId("echo").textContent).toBe("");
+  });
+
+  it("fastForward completes typing instantly with the full value + change event", async () => {
+    const { getByTestId } = render(<ControlledInput />);
+    const input = getByTestId("field") as HTMLInputElement;
+    let changeEvents = 0;
+    input.addEventListener("change", () => { changeEvents++; });
+    const startedAt = Date.now();
+    await act(async () => {
+      await performAct(
+        { kind: "fill", selector: '[data-testid="field"]', value: "Amlodipine 5mg" },
+        fastForward,
+      );
+    });
+    expect(input.value).toBe("Amlodipine 5mg");
+    expect(getByTestId("echo").textContent).toBe("Amlodipine 5mg");
+    expect(changeEvents).toBe(1);
+    expect(input.classList.contains("walk-field-prehighlight")).toBe(false);
+    // No per-char sleeps and no pre-highlight wait ran (the paced path would
+    // take ≥ 300 + 14×45 ms).
+    expect(Date.now() - startedAt).toBeLessThan(500);
   });
 
   it("click fires the target's onClick", async () => {

@@ -1,13 +1,24 @@
-import { useState } from "react";
-import { Users, Send } from "lucide-react";
+import { useEffect, useState } from "react";
+import { Users, Send, NotebookPen } from "lucide-react";
 import { MESSAGES } from "../data/patients";
+import { fetchCareNotes } from "../lib/careNotes";
+import type { CareNote } from "../lib/careNotes";
 import { useLanguage } from "../lib/languageContext";
 import { t } from "../lib/language";
 
-export function MessagesScreen() {
+export function MessagesScreen({ elderId }: { elderId?: string }) {
   const { language } = useLanguage();
   const [messages, setMessages] = useState(MESSAGES);
+  // REAL care-log notes (add_care_note tool) — refetched on every mount, which
+  // is what lets a care_note ChangeHighlight navigate here and find its
+  // data-testid="care_note-{id}" row.
+  const [careNotes, setCareNotes] = useState<CareNote[]>([]);
   const [draft, setDraft] = useState("");
+
+  useEffect(() => {
+    if (!elderId) return;
+    void fetchCareNotes(elderId).then(setCareNotes);
+  }, [elderId]);
 
   const send = () => {
     if (!draft.trim()) return;
@@ -36,6 +47,18 @@ export function MessagesScreen() {
 
       {/* Messages */}
       <div className="flex-1 overflow-y-auto px-4 py-4 space-y-4">
+        {/* Care-log notes saved via Mei (real rows, newest first) — shown above
+            the mock thread; each row is a ChangeHighlight target. */}
+        {careNotes.map(n => (
+          <div key={n.id} data-testid={`care_note-${n.id}`} className="bg-amber-50/70 border border-amber-200 rounded-2xl px-3.5 py-2.5">
+            <div className="flex items-center gap-1.5 mb-1">
+              <NotebookPen size={12} className="text-amber-700 shrink-0" />
+              <span className="text-[10px] font-bold uppercase tracking-wide text-amber-800">{t(language, "messages.careLogNote")}</span>
+              <span className="ml-auto text-[10px] font-mono text-muted-foreground">{n.time}</span>
+            </div>
+            <p className="text-sm leading-relaxed text-foreground">{n.body}</p>
+          </div>
+        ))}
         {messages.map(m => (
           <div key={m.id} className={`flex ${m.isMe ? "justify-end" : "justify-start"}`}>
             <div className={`max-w-[80%]`}>

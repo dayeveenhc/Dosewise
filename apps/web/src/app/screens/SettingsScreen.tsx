@@ -264,7 +264,7 @@ export function SettingsScreen({ patient, caregiverAccount, onSwitchMode, onSign
         </Card>
       </div>
 
-      <button onClick={onSwitchMode} className="w-full h-12 rounded-2xl border border-border text-muted-foreground text-sm font-medium flex items-center justify-center gap-2 active:scale-[0.98] transition-transform">
+      <button onClick={onSwitchMode} data-walk="cg-switch-mode" className="w-full h-12 rounded-2xl border border-border text-muted-foreground text-sm font-medium flex items-center justify-center gap-2 active:scale-[0.98] transition-transform">
         <RefreshCw size={14} />{t(language, "settings.switchToElderly")}
       </button>
 

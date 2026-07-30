@@ -9,6 +9,7 @@ import { supabase } from "./lib/supabase";
 import { ensureProfile, fetchElderMedications, fetchArchivedMedications, addMedication, archiveMedication, to24h } from "./lib/medications";
 import { fetchProfileRole, fetchProfile, calculateAge } from "./lib/profile";
 import type { WizardPrefill } from "./lib/profile";
+import { normalizeAllergies } from "./lib/changeHighlight";
 import { readStoredAppMode, persistAppMode } from "./lib/sessionState";
 import { WelcomeScreen } from "./screens/setup/WelcomeScreen";
 import { SetupMethodScreen } from "./screens/setup/SetupMethodScreen";
@@ -25,6 +26,8 @@ import { SettingsScreen } from "./screens/SettingsScreen";
 import { AddPrescriptionSheet } from "./screens/AddPrescriptionSheet";
 import { EditProfileSheet } from "./screens/EditProfileSheet";
 import { ElderlyApp } from "./screens/elderly/ElderlyApp";
+import { ChangeHighlight } from "./components/ChangeHighlight";
+import type { AgentAction } from "./lib/hermes";
 import { AccessibilityProvider } from "./accessibility.tsx";
 import { GuidedTour } from "./components/GuidedTour";
 import type { TourStep } from "./components/GuidedTour";
@@ -37,7 +40,9 @@ import { LanguageProvider, readStoredLanguage } from "./lib/languageContext";
 import { t } from "./lib/language";
 import { Walkthrough } from "./components/Walkthrough";
 import { resolveWalkthroughSteps } from "./lib/walkthrough/steps";
-import type { WalkthroughScreen, WalkthroughTaskName, WalkthroughParams } from "./lib/walkthrough/types";
+import { buildVerifyRunner } from "./lib/walkthrough/verify";
+import { PACING } from "./lib/walkthrough/pacing";
+import type { WalkthroughScreen, WalkthroughTaskName, WalkthroughParams, VerifyDirective, RevealDirective } from "./lib/walkthrough/types";
 import { defaultDoseTime } from "./components/TimesPicker";
 import { MED_COLOURS } from "./data/medications";
 import { loadWalkthroughSession, saveWalkthroughSession, clearWalkthroughSession } from "./lib/walkthroughState";
@@ -92,6 +97,14 @@ export default function App() {
   const [showScanLink, setShowScanLink] = useState(false);
   const [walkthroughTask, setWalkthroughTask] = useState<WalkthroughTaskName | null>(null);
   const [walkthroughStepIndex, setWalkthroughStepIndex] = useState(0);
+  // The committed change being pulse-highlighted caregiver-side (mirrors
+  // ElderlyApp's proof layer — the caregiver app previously had none).
+  const [highlightChange, setHighlightChange] = useState<AgentAction | null>(null);
+  // Set when an ACTIVE elder session asked for the "onboarding" walkthrough:
+  // the wizard is a separate stage, so we switch into it and this flag routes
+  // the wizard's exit/completion back into the elder app instead of the
+  // normal post-setup path.
+  const [resumeElderAfterWizard, setResumeElderAfterWizard] = useState(false);
 
   // Demo pop-up notifications — fires a couple of sample alerts a little
   // after landing in the caregiver app, so the top-of-screen toast UI has
@@ -250,9 +263,15 @@ export default function App() {
         mealTimes: profile?.details.mealTimes ?? prev[0].mealTimes,
         sleepTime: profile?.details.sleepTime ?? prev[0].sleepTime,
         travelPlan: profile?.details.travelPlan ?? prev[0].travelPlan,
+        doseSnoozes: profile?.details.dose_snoozes ?? prev[0].doseSnoozes,
         conditions: profile?.details.conditions?.length ? profile.details.conditions : prev[0].conditions,
+        // Allergy entries may be legacy strings or promoted {name, severity}
+        // objects — Patient.allergies stays a plain name list.
         allergies: profile?.details.allergies?.length || profile?.details.drugAllergies?.length
-          ? [...(profile.details.allergies ?? []), ...(profile.details.drugAllergies ?? [])]
+          ? [
+              ...normalizeAllergies(profile.details.allergies).map(a => a.name).filter(Boolean),
+              ...(profile.details.drugAllergies ?? []),
+            ]
           : prev[0].allergies,
         medications,
         pastMedications,
@@ -330,6 +349,34 @@ export default function App() {
     saveWalkthroughSession(elderId, { taskName, stepIndex: 0, startedAt: Date.now() });
   };
 
+  // Dev-only deterministic triggers, mirroring ElderlyApp.tsx's caregiver-side
+  // gap: an e2e drive can start a caregiver walkthrough or fire ChangeHighlight
+  // with a committed action (real entity_id) without depending on the LLM.
+  // Gated on appMode==="caregiver" (and re-run on every appMode change, so the
+  // cleanup fires the INSTANT it stops being true): `App` itself is the root
+  // component and never unmounts, so an unconditional `useEffect(...,[])` here
+  // would register these once for the whole SPA session and then RACE against
+  // ElderlyApp's own registration of the exact same two window properties the
+  // moment appMode flips to "elderly" — whichever mounts/re-renders last wins,
+  // a real, timing-dependent bug found live re-running the full scenario
+  // regression suite (every elder-mode dev-hook scenario intermittently landed
+  // on a plain Home screen with no overlay at all — the caregiver's
+  // no-op-for-this-task handleWalkthroughStart had silently won the race).
+  useEffect(() => {
+    if (!import.meta.env.DEV || appMode !== "caregiver") return;
+    type Hook = (t: string, p?: WalkthroughParams) => void;
+    (window as unknown as { __dwStartWalkthrough?: Hook }).__dwStartWalkthrough = (task, params) =>
+      handleWalkthroughStart(task as WalkthroughTaskName, params ?? {});
+    type HlHook = (action: AgentAction) => void;
+    (window as unknown as { __dwHighlightChange?: HlHook }).__dwHighlightChange = action =>
+      setHighlightChange(action);
+    return () => {
+      delete (window as unknown as { __dwStartWalkthrough?: Hook }).__dwStartWalkthrough;
+      delete (window as unknown as { __dwHighlightChange?: HlHook }).__dwHighlightChange;
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [appMode]);
+
   const handleWalkthroughNavigate = (target: WalkthroughScreen) => {
     if (target.mode === "caregiver") setScreen(target.screen);
   };
@@ -354,6 +401,72 @@ export default function App() {
     clearWalkthroughSession(elderId);
     setWalkthroughTask(null);
     setWalkthroughStepIndex(0);
+  };
+
+  // Caregiver-shell Verify: real re-queries for checks the signed-in
+  // CAREGIVER's own data can answer (their profile/accessibility); kinds that
+  // need ELDER data (medications, archived meds, the elder-side care-link
+  // check) get honest stubs that return false — never a faked pass this
+  // context can't actually prove.
+  const handleWalkthroughVerify = async (verify: VerifyDirective): Promise<boolean> => {
+    if (!elderId) return false;
+    return buildVerifyRunner({
+      elderId,
+      fetchProfile,
+      fetchAccessibility: async id => (await fetchProfile(id))?.details ?? null,
+      fetchElderMedications: async () => [],
+      fetchArchivedMedications: async () => [],
+      hasActiveCareLink: async () => false,
+    })(verify);
+  };
+
+  // Caregiver-shell Reveal: navigate + pulse the real element (minimal mirror
+  // of ElderlyApp's handleWalkthroughReveal; no caption tracker here).
+  const handleWalkthroughReveal = (reveal: RevealDirective) => {
+    if (reveal.screen.mode === "caregiver") setScreen(reveal.screen.screen);
+    if (reveal.pulse === false) return;
+    setTimeout(() => {
+      const el = document.querySelector<HTMLElement>(reveal.selector);
+      if (!el) return;
+      el.scrollIntoView({ block: "center", behavior: "smooth" });
+      el.classList.add("walk-reveal-pulse");
+      setTimeout(() => el.classList.remove("walk-reveal-pulse"), PACING.REVEAL_PULSE_MS);
+    }, PACING.NAVIGATE_MS);
+  };
+
+  // Chat→wizard entry: an ACTIVE elder session received start_walkthrough
+  // ("onboarding"), whose steps live on the wizard — a separate onboarding
+  // stage the elder shell can't spotlight. Switch into the wizard;
+  // resumeElderAfterWizard routes its exit/completion back into the elder app.
+  // Scenario s30 finishes the UX on top of this pathway.
+  const handleElderOnboardingWalkthrough = async () => {
+    if (!session) return; // guarded: only an active session can round-trip back
+    // The wizard always starts from BLANK local state here (no prefill
+    // threading exists for this entry point) and its own finish() does a
+    // full profile save from that state — so re-running it for an elder who
+    // already has real profile data would silently wipe it. Re-query the
+    // REAL profile rather than trust local `patients` state: `patients`
+    // initializes from the mock PATIENTS literal (which already has non-empty
+    // conditions/allergies baked in) until the async fetch replaces it, so a
+    // synchronous check here can read stale mock data for a genuinely blank
+    // elder — found live re-verifying scenario s30's own fix. `wakeTime`/
+    // weight/height are wizard-routine-only fields (never set on the mock
+    // default), but conditions/allergies can ALSO be populated with no wizard
+    // run at all (e.g. a caregiver-entered diagnosis) — also found live by
+    // s30, which seeded exactly that shape. A real prefill-and-merge flow is
+    // future work if "redo onboarding" is ever wanted as an intentional
+    // feature; refusing outright is the safe default until then.
+    const real = await fetchProfile(elderId);
+    const d = real?.details;
+    const alreadyHasProfile =
+      !!d?.wakeTime || !!d?.weightKg || !!d?.heightCm ||
+      (d?.conditions?.length ?? 0) > 0 || (d?.allergies?.length ?? 0) > 0;
+    if (alreadyHasProfile) return;
+    setResumeElderAfterWizard(true);
+    setPendingMode("elderly");
+    setWizardPrefill(undefined);
+    setPreAuthStage("wizard");
+    setAppMode("onboarding");
   };
 
   const handleAddPrescription = async (med: Omit<Medication, "id" | "status"> & { times?: string[] }) => {
@@ -445,8 +558,8 @@ export default function App() {
   if (authLoading) {
     return (
       <LanguageProvider>
-        <div className="min-h-screen bg-stone-300 flex items-center justify-center p-4" style={{ fontFamily: "'DM Sans', system-ui, sans-serif" }}>
-          <div className="w-[390px] h-[844px] bg-background relative overflow-hidden rounded-[3rem] shadow-2xl border-[6px] border-stone-800 flex flex-col" />
+        <div className="min-h-dvh flex items-center justify-center bg-stone-300 md:p-4" style={{ fontFamily: "'DM Sans', system-ui, sans-serif" }}>
+          <div className="w-full h-dvh bg-background relative overflow-hidden flex flex-col md:w-[390px] md:h-[844px] md:rounded-[3rem] md:shadow-2xl md:border-[6px] md:border-stone-800" />
         </div>
       </LanguageProvider>
     );
@@ -455,8 +568,8 @@ export default function App() {
   if (appMode === "onboarding") {
     return (
       <LanguageProvider>
-        <div className="min-h-screen bg-stone-300 flex items-center justify-center p-4" style={{ fontFamily: "'DM Sans', system-ui, sans-serif" }}>
-          <div className="w-[390px] h-[844px] bg-background relative overflow-hidden rounded-[3rem] shadow-2xl border-[6px] border-stone-800 flex flex-col">
+        <div className="min-h-dvh flex items-center justify-center bg-stone-300 md:p-4" style={{ fontFamily: "'DM Sans', system-ui, sans-serif" }}>
+          <div className="w-full h-dvh bg-background relative overflow-hidden flex flex-col md:w-[390px] md:h-[844px] md:rounded-[3rem] md:shadow-2xl md:border-[6px] md:border-stone-800">
             {preAuthStage === "welcome" && (
               <WelcomeScreen onSignIn={() => setPreAuthStage("signin")} onGetStarted={() => setPreAuthStage("mode")} />
             )}
@@ -489,8 +602,22 @@ export default function App() {
                 hasSession={!!session}
                 elderId={elderId}
                 prefill={wizardPrefill}
-                onComplete={() => { setNeedsWizard(false); setWizardPrefill(undefined); setScreen("dashboard"); setJustOnboarded(true); setAppMode(pendingMode); }}
-                onExit={() => setPreAuthStage("method")}
+                onComplete={() => {
+                  setNeedsWizard(false); setWizardPrefill(undefined); setScreen("dashboard");
+                  if (resumeElderAfterWizard) {
+                    // Chat-initiated onboarding run: back into the elder app,
+                    // without re-triggering the post-setup auto-tour.
+                    setResumeElderAfterWizard(false);
+                    setAppMode("elderly");
+                  } else {
+                    setJustOnboarded(true);
+                    setAppMode(pendingMode);
+                  }
+                }}
+                onExit={() => {
+                  if (resumeElderAfterWizard) { setResumeElderAfterWizard(false); setAppMode("elderly"); }
+                  else setPreAuthStage("method");
+                }}
               />
             )}
           </div>
@@ -502,8 +629,8 @@ export default function App() {
   if (appMode === "elderly") {
     return (
       <LanguageProvider>
-        <div className="min-h-screen bg-stone-300 flex items-center justify-center p-4" style={{ fontFamily: "'DM Sans', system-ui, sans-serif" }}>
-          <div className="w-[390px] h-[844px] bg-background relative overflow-hidden rounded-[3rem] shadow-2xl border-[6px] border-stone-800 flex flex-col">
+        <div className="min-h-dvh flex items-center justify-center bg-stone-300 md:p-4" style={{ fontFamily: "'DM Sans', system-ui, sans-serif" }}>
+          <div className="w-full h-dvh bg-background relative overflow-hidden flex flex-col md:w-[390px] md:h-[844px] md:rounded-[3rem] md:shadow-2xl md:border-[6px] md:border-stone-800">
             <AccessibilityProvider>
               <ElderlyApp
                 patient={patients[0]}
@@ -513,6 +640,7 @@ export default function App() {
                 onSignOut={() => supabase.auth.signOut()}
                 startTour={justOnboarded}
                 careMessages={careMessages}
+                onStartOnboardingWizard={handleElderOnboardingWalkthrough}
               />
             </AccessibilityProvider>
             <ToastStack
@@ -527,9 +655,9 @@ export default function App() {
 
   return (
     <LanguageProvider>
-      <div className="min-h-screen bg-stone-300 flex items-center justify-center p-4" style={{ fontFamily: "'DM Sans', system-ui, sans-serif" }}>
+      <div className="min-h-dvh flex items-center justify-center bg-stone-300 md:p-4" style={{ fontFamily: "'DM Sans', system-ui, sans-serif" }}>
         {/* Phone frame */}
-        <div className="w-[390px] h-[844px] bg-background relative overflow-hidden rounded-[3rem] shadow-2xl border-[6px] border-stone-800 flex flex-col">
+        <div className="w-full h-dvh bg-background relative overflow-hidden flex flex-col md:w-[390px] md:h-[844px] md:rounded-[3rem] md:shadow-2xl md:border-[6px] md:border-stone-800">
         <AccessibilityProvider>
           {/* Status bar */}
           <LiveStatusBar className="bg-background/80 backdrop-blur-sm" />
@@ -603,8 +731,8 @@ export default function App() {
                 onDismiss={id => setNotifications(prev => prev.filter(n => n.id !== id))}
               />
             )}
-            {screen === "ai" && <AskMeiScreen patient={patient} elderId={elderId} onUpdatePatient={handleUpdatePatient} onNavigate={setScreen} onMedsChanged={refreshMedications} onMedAdded={flagJustAdded} onWalkthroughStart={handleWalkthroughStart} />}
-            {screen === "messages" && <MessagesScreen />}
+            {screen === "ai" && <AskMeiScreen patient={patient} elderId={elderId} onUpdatePatient={handleUpdatePatient} onNavigate={setScreen} onMedsChanged={refreshMedications} onMedAdded={flagJustAdded} onHighlightChange={setHighlightChange} onWalkthroughStart={handleWalkthroughStart} />}
+            {screen === "messages" && <MessagesScreen elderId={elderId} />}
             {screen === "settings" && <SettingsScreen patient={patient} caregiverAccount={caregiverAccount} onSwitchMode={openModeSwitch} onSignOut={() => supabase.auth.signOut()} onEditProfile={() => setShowEditProfile(true)} />}
           </div>
 
@@ -645,6 +773,13 @@ export default function App() {
             onClick={id => { setToasts(prev => prev.filter(t => t.id !== id)); setScreen("notifications"); }}
           />
 
+          {/* Caregiver proof-of-change layer — mirrors ElderlyApp's wiring. */}
+          <ChangeHighlight
+            change={highlightChange}
+            mode="caregiver"
+            onNavigate={target => setScreen(target as Screen)}
+            onDone={() => setHighlightChange(null)}
+          />
           {showCaregiverTour && <GuidedTour steps={caregiverTourSteps} onFinish={() => setShowCaregiverTour(false)} />}
           {walkthroughTask && walkthroughSteps.length > 0 && (
             <Walkthrough
@@ -654,6 +789,8 @@ export default function App() {
               onNavigate={handleWalkthroughNavigate}
               onAdvance={handleWalkthroughAdvance}
               onExit={handleWalkthroughExit}
+              onVerify={handleWalkthroughVerify}
+              onReveal={handleWalkthroughReveal}
             />
           )}
           {showCaregiverTourConfirm && (

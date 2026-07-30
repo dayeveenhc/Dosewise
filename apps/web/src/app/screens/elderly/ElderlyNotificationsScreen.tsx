@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { MessageSquare, User, ShieldQuestion, Check, X, Loader2 } from "lucide-react";
+import { MessageSquare, User, ShieldQuestion, Check, X, Loader2, RefreshCw } from "lucide-react";
 import type { Message } from "../../types";
 import { useLanguage } from "../../lib/languageContext";
 import { t } from "../../lib/language";
@@ -10,6 +10,9 @@ export function ElderlyNotificationsScreen({ careMessages, elderId }: { careMess
   const { language } = useLanguage();
   const [requests, setRequests] = useState<PendingLinkRequest[]>([]);
   const [busy, setBusy] = useState<string | null>(null);
+  // Demo low-stock alert (no live push infra) — dismissible locally. Carries
+  // the notifications_tour's stable anchors (notif-refill-row / notif-ack-btn).
+  const [refillMockDismissed, setRefillMockDismissed] = useState(false);
 
   useEffect(() => {
     if (!elderId) return;
@@ -70,6 +73,29 @@ export function ElderlyNotificationsScreen({ careMessages, elderId }: { careMess
             </div>
           </div>
         ))}
+
+        {/* Mock low-stock/refill alert — mirrors the caregiver demo toast; the
+            notifications_tour spotlights this row and its Got it button. */}
+        {!refillMockDismissed && (
+          <div data-walk="notif-refill-row" className="bg-amber-50 rounded-2xl border border-amber-200 p-4">
+            <div className="flex items-center gap-2 mb-1.5">
+              <div className="w-8 h-8 rounded-full bg-amber-100 flex items-center justify-center shrink-0">
+                <RefreshCw size={14} className="text-amber-700" />
+              </div>
+              <p className="text-sm font-semibold text-amber-900 flex-1">{t(language, "notifications.lowStockTitle", { med: "Metformin" })}</p>
+            </div>
+            <p className="text-[15px] text-amber-900/90 leading-relaxed mb-3">
+              {t(language, "notifications.lowStockBody", { med: "Metformin 500mg", days: 4 })}
+            </p>
+            <button
+              onClick={() => setRefillMockDismissed(true)}
+              data-walk="notif-ack-btn"
+              className="w-full bg-amber-100 border border-amber-300 text-amber-900 rounded-xl py-2.5 text-sm font-semibold flex items-center justify-center gap-1.5 active:scale-[0.98] transition-transform"
+            >
+              <Check size={15} />{t(language, "notifications.gotIt")}
+            </button>
+          </div>
+        )}
 
         <p className="text-sm text-muted-foreground">{t(language, "notifications.header")}</p>
         {careMessages.length === 0 && requests.length === 0 ? (
