@@ -558,8 +558,8 @@ export default function App() {
   if (authLoading) {
     return (
       <LanguageProvider>
-        <div className="min-h-screen bg-stone-300 flex items-center justify-center p-4" style={{ fontFamily: "'DM Sans', system-ui, sans-serif" }}>
-          <div className="w-[390px] h-[844px] bg-background relative overflow-hidden rounded-[3rem] shadow-2xl border-[6px] border-stone-800 flex flex-col" />
+        <div className="min-h-dvh flex items-center justify-center bg-stone-300 md:p-4" style={{ fontFamily: "'DM Sans', system-ui, sans-serif" }}>
+          <div className="w-full h-dvh bg-background relative overflow-hidden flex flex-col md:w-[390px] md:h-[844px] md:rounded-[3rem] md:shadow-2xl md:border-[6px] md:border-stone-800" />
         </div>
       </LanguageProvider>
     );
@@ -568,8 +568,8 @@ export default function App() {
   if (appMode === "onboarding") {
     return (
       <LanguageProvider>
-        <div className="min-h-screen bg-stone-300 flex items-center justify-center p-4" style={{ fontFamily: "'DM Sans', system-ui, sans-serif" }}>
-          <div className="w-[390px] h-[844px] bg-background relative overflow-hidden rounded-[3rem] shadow-2xl border-[6px] border-stone-800 flex flex-col">
+        <div className="min-h-dvh flex items-center justify-center bg-stone-300 md:p-4" style={{ fontFamily: "'DM Sans', system-ui, sans-serif" }}>
+          <div className="w-full h-dvh bg-background relative overflow-hidden flex flex-col md:w-[390px] md:h-[844px] md:rounded-[3rem] md:shadow-2xl md:border-[6px] md:border-stone-800">
             {preAuthStage === "welcome" && (
               <WelcomeScreen onSignIn={() => setPreAuthStage("signin")} onGetStarted={() => setPreAuthStage("mode")} />
             )}
@@ -629,8 +629,8 @@ export default function App() {
   if (appMode === "elderly") {
     return (
       <LanguageProvider>
-        <div className="min-h-screen bg-stone-300 flex items-center justify-center p-4" style={{ fontFamily: "'DM Sans', system-ui, sans-serif" }}>
-          <div className="w-[390px] h-[844px] bg-background relative overflow-hidden rounded-[3rem] shadow-2xl border-[6px] border-stone-800 flex flex-col">
+        <div className="min-h-dvh flex items-center justify-center bg-stone-300 md:p-4" style={{ fontFamily: "'DM Sans', system-ui, sans-serif" }}>
+          <div className="w-full h-dvh bg-background relative overflow-hidden flex flex-col md:w-[390px] md:h-[844px] md:rounded-[3rem] md:shadow-2xl md:border-[6px] md:border-stone-800">
             <AccessibilityProvider>
               <ElderlyApp
                 patient={patients[0]}
@@ -655,9 +655,9 @@ export default function App() {
 
   return (
     <LanguageProvider>
-      <div className="min-h-screen bg-stone-300 flex items-center justify-center p-4" style={{ fontFamily: "'DM Sans', system-ui, sans-serif" }}>
+      <div className="min-h-dvh flex items-center justify-center bg-stone-300 md:p-4" style={{ fontFamily: "'DM Sans', system-ui, sans-serif" }}>
         {/* Phone frame */}
-        <div className="w-[390px] h-[844px] bg-background relative overflow-hidden rounded-[3rem] shadow-2xl border-[6px] border-stone-800 flex flex-col">
+        <div className="w-full h-dvh bg-background relative overflow-hidden flex flex-col md:w-[390px] md:h-[844px] md:rounded-[3rem] md:shadow-2xl md:border-[6px] md:border-stone-800">
         <AccessibilityProvider>
           {/* Status bar */}
           <LiveStatusBar className="bg-background/80 backdrop-blur-sm" />
