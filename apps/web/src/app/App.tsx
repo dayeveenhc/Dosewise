@@ -446,7 +446,7 @@ export default function App() {
     return (
       <LanguageProvider>
         <div className="min-h-screen bg-[#CBC7B8] flex items-center justify-center p-4" style={{ fontFamily: "'DM Sans', system-ui, sans-serif" }}>
-          <div className="w-[390px] h-[844px] bg-background dw-app-bg relative overflow-hidden rounded-[3rem] shadow-2xl border-[6px] border-[#24504A] flex flex-col" />
+          <div className="w-[390px] h-[844px] bg-background dw-app-bg relative overflow-hidden rounded-[3rem] shadow-2xl border-[6px] border-black flex flex-col" />
         </div>
       </LanguageProvider>
     );
@@ -456,7 +456,7 @@ export default function App() {
     return (
       <LanguageProvider>
         <div className="min-h-screen bg-[#CBC7B8] flex items-center justify-center p-4" style={{ fontFamily: "'DM Sans', system-ui, sans-serif" }}>
-          <div className="w-[390px] h-[844px] bg-background dw-app-bg relative overflow-hidden rounded-[3rem] shadow-2xl border-[6px] border-[#24504A] flex flex-col">
+          <div className="w-[390px] h-[844px] bg-background dw-app-bg relative overflow-hidden rounded-[3rem] shadow-2xl border-[6px] border-black flex flex-col">
             {preAuthStage === "welcome" && (
               <WelcomeScreen onSignIn={() => setPreAuthStage("signin")} onGetStarted={() => setPreAuthStage("mode")} />
             )}
@@ -503,7 +503,7 @@ export default function App() {
     return (
       <LanguageProvider>
         <div className="min-h-screen bg-[#CBC7B8] flex items-center justify-center p-4" style={{ fontFamily: "'DM Sans', system-ui, sans-serif" }}>
-          <div className="w-[390px] h-[844px] bg-background dw-app-bg relative overflow-hidden rounded-[3rem] shadow-2xl border-[6px] border-[#24504A] flex flex-col">
+          <div className="w-[390px] h-[844px] bg-background dw-app-bg relative overflow-hidden rounded-[3rem] shadow-2xl border-[6px] border-black flex flex-col">
             <AccessibilityProvider>
               <ElderlyApp
                 patient={patients[0]}
@@ -545,7 +545,7 @@ export default function App() {
     <LanguageProvider>
       <div className="min-h-screen bg-[#CBC7B8] flex items-center justify-center p-4" style={{ fontFamily: "'DM Sans', system-ui, sans-serif" }}>
         {/* Phone frame */}
-        <div className="w-[390px] h-[844px] bg-background dw-app-bg relative overflow-hidden rounded-[3rem] shadow-2xl border-[6px] border-[#24504A] flex flex-col">
+        <div className="w-[390px] h-[844px] bg-background dw-app-bg relative overflow-hidden rounded-[3rem] shadow-2xl border-[6px] border-black flex flex-col">
         <AccessibilityProvider>
           {/* Status bar */}
           <LiveStatusBar className="bg-background/80 backdrop-blur-sm" />

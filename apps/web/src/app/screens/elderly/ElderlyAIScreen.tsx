@@ -6,7 +6,7 @@ import type { EMsg, ElderlyTab } from "./types";
 import { agentTurnStream, extractProfile, fileToBase64 } from "../../lib/hermes";
 import type { AgentTurnEvent, AgentAction } from "../../lib/hermes";
 import { firstHighlightable } from "../../lib/changeHighlight";
-import { isRunningLow } from "../../lib/medications";
+import { anyMedicationRunningLow } from "../../lib/medications";
 import { fetchProfile, saveProfile, toProfileDetails, mergeProfileDetails } from "../../lib/profile";
 import type { WalkthroughTaskName, WalkthroughParams } from "../../lib/walkthrough/types";
 import { firstRoutableAction, ACTION_TARGETS } from "../../lib/agentActions";
@@ -164,7 +164,7 @@ export function ElderlyAIScreen({ patient, elderId, onNavigate, onMedsChanged, o
   // The refill walkthrough spotlights a per-medicine button that now only
   // exists below half supply. With nothing low it would dim the screen and
   // point at nothing, so fall back to asking Mei — which always works.
-  const anyRunningLow = patient.medications.some(isRunningLow);
+  const anyRunningLow = anyMedicationRunningLow(patient.medications);
 
   const scrollToBottom = () => setTimeout(() => { if (scrollRef.current) scrollRef.current.scrollTop = scrollRef.current.scrollHeight; }, 60);
 

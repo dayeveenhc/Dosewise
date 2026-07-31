@@ -57,7 +57,7 @@ export async function fetchElderMedications(elderId: string): Promise<Medication
       .eq("elder_id", elderId).eq("archived", false),
     supabase.from("doses").select("medication_id,status,logged_at")
       .eq("elder_id", elderId).gte("scheduled_at", startOfLocalDayIso()),
-    supabase.from("refills").select("medication_id,run_out_forecast").eq("elder_id", elderId),
+    supabase.from("refills").select("medication_id,run_out_forecast,pills_remaining").eq("elder_id", elderId),
   ]);
   if (medsRes.error) throw medsRes.error;
   const doses = dosesRes.data ?? [];
@@ -85,6 +85,7 @@ export async function fetchElderMedications(elderId: string): Promise<Medication
           ? new Date(takenDose.logged_at).toLocaleTimeString("en-SG", { hour: "2-digit", minute: "2-digit" })
           : undefined,
         refillDaysLeft,
+        pillsRemaining: refill?.pills_remaining ?? undefined,
         purpose: med.purpose ?? "",
         colour: FALLBACK_COLOUR,
       });
@@ -93,12 +94,40 @@ export async function fetchElderMedications(elderId: string): Promise<Medication
   return out;
 }
 
-// A medicine counts as "running low" below half of a nominal 30-day supply.
-// The Medications card only offers Request refill past this point, and Ask Mei
-// uses it to decide whether the refill walkthrough has anything to point at —
-// keep the two reading the same rule from here.
-export function isRunningLow(med: { refillDaysLeft?: number }): boolean {
-  return Math.min(100, Math.round(((med.refillDaysLeft ?? 30) / 30) * 100)) < 50;
+// Days of supply left, from the pills actually remaining and how many are taken
+// per day — 30 pills taken twice daily is 15 days, not 30. Falls back to the
+// refill row's own run-out forecast when the pill count is unknown, and returns
+// undefined when we know neither: better to show nothing than to invent a
+// number on a medication screen.
+export function supplyDaysLeft(
+  med: { pillsRemaining?: number; refillDaysLeft?: number },
+  dosesPerDay: number,
+): number | undefined {
+  if (med.pillsRemaining != null && dosesPerDay > 0) return Math.floor(med.pillsRemaining / dosesPerDay);
+  return med.refillDaysLeft;
+}
+
+// Below this the days-left figure turns red.
+export const LOW_SUPPLY_DAYS = 10;
+// Below this the card offers Request refill — deliberately earlier than the red
+// warning, so the action is available before it becomes urgent.
+export const REFILL_PROMPT_DAYS = 15;
+
+// Whether ANY medication is low enough to be worth a refill. Ask Mei uses this
+// to decide whether the refill walkthrough has a button to point at; it has to
+// group the per-time-slot rows back into real medications first, since doses
+// per day is exactly what the calculation needs.
+export function anyMedicationRunningLow(meds: Medication[]): boolean {
+  const byMed = new Map<string, Medication[]>();
+  for (const m of meds) {
+    const key = m.medicationId ?? m.name;
+    (byMed.get(key) ?? byMed.set(key, []).get(key)!).push(m);
+  }
+  for (const slots of byMed.values()) {
+    const days = supplyDaysLeft(slots[0], slots.length);
+    if (days != null && days < REFILL_PROMPT_DAYS) return true;
+  }
+  return false;
 }
 
 // Mirrors Hermes's log_dose tool (services/hermes/src/hermes/tools/doses.py): flip

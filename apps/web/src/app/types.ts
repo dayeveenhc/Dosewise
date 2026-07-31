@@ -16,6 +16,7 @@ export interface Medication {
   status: MedStatus;
   takenAt?: string;
   refillDaysLeft?: number;
+  pillsRemaining?: number;
   purpose: string;
   colour: string;
 }

@@ -2,7 +2,7 @@ import { useState } from "react";
 import { Plus, BookOpen, ChevronDown, History, Check, RefreshCw, ShieldAlert } from "lucide-react";
 import { useAccessibility } from "../../accessibility.tsx";
 import type { Medication, Patient } from "../../types";
-import { to24h, isRunningLow } from "../../lib/medications";
+import { to24h, supplyDaysLeft, LOW_SUPPLY_DAYS, REFILL_PROMPT_DAYS } from "../../lib/medications";
 import { MED_PLAIN, MED_SIMPLE, MED_SHAPES, EYEDROP_STEPS } from "../../data/medications";
 import { MedAvatar } from "../../components/shared";
 import { useLanguage } from "../../lib/languageContext";
@@ -88,12 +88,16 @@ export function ElderlyPrescriptionScreen({ patient, onAddRx, onRequestRefill, j
           const plain       = MED_PLAIN[m.name];
           const direction   = MED_SIMPLE[m.name] ?? t(language, "home.takeAsDirected");
           const shape       = MED_SHAPES[m.name];
-          const lowRefill   = m.refillDaysLeft !== undefined && m.refillDaysLeft <= 7;
-          const supplyDays  = m.refillDaysLeft ?? 30;
-          const supplyPct   = Math.min(100, Math.round((supplyDays / 30) * 100));
-          // Only offered once it's actually worth acting on. A refill can still
-          // be asked for at any time from Ask Mei → My medicines → Request refill.
-          const needsRefill = isRunningLow(m);
+          // Days left comes from the pills remaining divided by how many are
+          // taken per day (m.times.length), so a twice-daily medicine runs out
+          // in half the time. Undefined when there's no refill data at all —
+          // the supply block is then hidden rather than showing a guess.
+          const daysLeft    = supplyDaysLeft(m, m.times.length);
+          const lowRefill   = daysLeft != null && daysLeft < LOW_SUPPLY_DAYS;
+          const supplyPct   = daysLeft == null ? 0 : Math.min(100, Math.round((daysLeft / 30) * 100));
+          // Offered a little before the red warning, so the action is there
+          // before it becomes urgent. Ask Mei reads the same threshold.
+          const needsRefill = daysLeft != null && daysLeft < REFILL_PROMPT_DAYS;
           const isEyeDrop   = m.name === "Latanoprost Eye Drops";
           const isHelpOpen  = helpOpen === m.id;
           const justAdded   = !!justAddedMed && m.name === justAddedMed;
@@ -129,25 +133,26 @@ export function ElderlyPrescriptionScreen({ patient, onAddRx, onRequestRefill, j
 
                 <div className="mt-3 flex flex-wrap items-center gap-2">
                   {m.times.map(time => (
-                    <span key={time} className="text-[15px] font-bold text-secondary-foreground bg-secondary border border-primary/20 rounded-lg px-2.5 py-1.5 whitespace-nowrap">
+                    <span key={time} className="text-[14px] font-bold text-secondary-foreground bg-secondary border border-primary/20 rounded-lg px-2.5 py-1 whitespace-nowrap">
                       {time}
                     </span>
                   ))}
                 </div>
 
-                {/* Supply bar — always shown */}
-                <div className="mt-3.5">
-                  <div className="flex items-center justify-between mb-1.5">
-                    <p className="text-[13px] text-muted-foreground">{t(language, "prescription.supply")}</p>
-                    <p className={`text-[13px] font-bold ${lowRefill ? "text-missed-fg" : "text-foreground"}`}>{t(language, "prescription.supplyOfTotal", { days: supplyDays })}</p>
+                {daysLeft != null && (
+                  <div className="mt-3.5">
+                    <div className="flex items-center justify-between mb-1.5">
+                      <p className="text-[13px] text-muted-foreground">{t(language, "prescription.supply")}</p>
+                      <p className={`text-[13px] font-bold ${lowRefill ? "text-missed-fg" : "text-foreground"}`}>{t(language, "prescription.daysLeft", { days: daysLeft })}</p>
+                    </div>
+                    <div className="w-full h-2 bg-muted rounded-full overflow-hidden">
+                      <div
+                        className={`h-full rounded-full ${lowRefill ? "bg-missed" : "bg-primary"}`}
+                        style={{ width: `${supplyPct}%` }}
+                      />
+                    </div>
                   </div>
-                  <div className="w-full h-2 bg-muted rounded-full overflow-hidden">
-                    <div
-                      className={`h-full rounded-full ${lowRefill ? "bg-missed" : "bg-primary"}`}
-                      style={{ width: `${supplyPct}%` }}
-                    />
-                  </div>
-                </div>
+                )}
 
                 {/* How to take it sits above Request refill — using it correctly
                     matters before whether more is needed. */}

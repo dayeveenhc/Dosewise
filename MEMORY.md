@@ -55,8 +55,18 @@ one screen, so a next dose within ~an hour of now is still visible at
 scrollTop 0 — `scratchpad/nextdose.spec.ts` places it at 7pm+ with fillers below
 and skips itself after 8pm.
 
-**Request refill is gated on `isRunningLow()` (< half of a nominal 30-day
-supply), and that gate has a second consumer.** The `request_refill` walkthrough
+**Supply is days-left, computed from `refills.pills_remaining ÷ doses per day**
+(`lib/medications.ts::supplyDaysLeft`) — 30 pills taken twice daily is 15 days.
+`fetchElderMedications` now selects `pills_remaining` onto `Medication`. Falls
+back to the run-out forecast when the pill count is null, and returns undefined
+when neither exists — the supply block is then **hidden rather than showing an
+invented 30/30**, which is what the old `?? 30` did. Two thresholds, both in
+`medications.ts`: `LOW_SUPPLY_DAYS` 10 (turns red) and `REFILL_PROMPT_DAYS` 15
+(offers Request refill, deliberately earlier than the warning). Proven against
+real rows in `scratchpad/supply.spec.ts`.
+
+**Request refill is gated on the shared threshold, and that gate has a second
+consumer.** The `request_refill` walkthrough
 spotlights `[data-walk="med-request-refill-btn"]`, which now only exists on a
 low card — with nothing low it dimmed the screen and pointed at nothing (verified,
 `scratchpad/refill.spec.ts`). Ask Mei's Request-refill row therefore checks
