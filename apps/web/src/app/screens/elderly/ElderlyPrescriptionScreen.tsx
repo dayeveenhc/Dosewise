@@ -1,8 +1,8 @@
 import { useState } from "react";
-import { Plus, BookOpen, ChevronDown, Eye, History, Check, Clock, RefreshCw, ShieldAlert } from "lucide-react";
+import { Plus, BookOpen, ChevronDown, History, Check, RefreshCw, ShieldAlert } from "lucide-react";
 import { useAccessibility } from "../../accessibility.tsx";
 import type { Medication, Patient } from "../../types";
-import { to24h } from "../../lib/medications";
+import { to24h, isRunningLow } from "../../lib/medications";
 import { MED_PLAIN, MED_SIMPLE, MED_SHAPES, EYEDROP_STEPS } from "../../data/medications";
 import { MedAvatar } from "../../components/shared";
 import { useLanguage } from "../../lib/languageContext";
@@ -53,6 +53,16 @@ export function ElderlyPrescriptionScreen({ patient, onAddRx, onRequestRefill, j
     <div className="flex-1 overflow-y-auto scrollbar-none">
       <div className="px-4 pt-3 pb-28 space-y-3">
 
+        {/* Grey and borderless: it's standing advice, not an alert about
+            anything happening right now — the warn palette overstated it. */}
+        <div className="bg-muted/50 rounded-2xl px-3.5 py-3 flex items-start gap-2.5">
+          <ShieldAlert size={18} className="text-muted-foreground shrink-0 mt-0.5" />
+          <div className="min-w-0">
+            <p className="text-[14px] font-bold text-foreground/85 leading-tight mb-0.5">{t(language, "prescription.safetyTitle")}</p>
+            <p className="text-[13px] text-muted-foreground leading-relaxed">{t(language, "prescription.disclaimer")}</p>
+          </div>
+        </div>
+
         {/* Count and the add action share one row, so the button sits in the
             corner opposite the title rather than eating a full-width band. */}
         <div className="flex items-center justify-between gap-3">
@@ -61,9 +71,9 @@ export function ElderlyPrescriptionScreen({ patient, onAddRx, onRequestRefill, j
             onClick={onAddRx}
             data-tour="elder-add-prescription"
             aria-label={t(language, "prescription.add")}
-            className="h-12 px-5 bg-primary text-primary-foreground rounded-2xl text-[16px] font-bold flex items-center gap-2 shrink-0 active:scale-95 transition-transform"
+            className="h-9 px-3.5 bg-primary text-primary-foreground rounded-full text-[15px] font-bold flex items-center gap-1.5 shrink-0 dw-press"
           >
-            <Plus size={22} strokeWidth={3} className="shrink-0" />{t(language, "prescription.addShort")}
+            <Plus size={17} strokeWidth={3} className="shrink-0" />{t(language, "prescription.addShort")}
           </button>
         </div>
 
@@ -81,6 +91,9 @@ export function ElderlyPrescriptionScreen({ patient, onAddRx, onRequestRefill, j
           const lowRefill   = m.refillDaysLeft !== undefined && m.refillDaysLeft <= 7;
           const supplyDays  = m.refillDaysLeft ?? 30;
           const supplyPct   = Math.min(100, Math.round((supplyDays / 30) * 100));
+          // Only offered once it's actually worth acting on. A refill can still
+          // be asked for at any time from Ask Mei → My medicines → Request refill.
+          const needsRefill = isRunningLow(m);
           const isEyeDrop   = m.name === "Latanoprost Eye Drops";
           const isHelpOpen  = helpOpen === m.id;
           const justAdded   = !!justAddedMed && m.name === justAddedMed;
@@ -101,29 +114,20 @@ export function ElderlyPrescriptionScreen({ patient, onAddRx, onRequestRefill, j
                   <MedAvatar name={m.name} size={48} className="rounded-xl shrink-0" />
                   <div className="flex-1 min-w-0">
                     <p className="font-bold text-[17px] text-foreground leading-tight break-words">{m.name}</p>
-                    {/* Instructions first — most actionable */}
-                    <div className="flex items-start gap-2 mt-1.5">
-                      {colourBlind ? (
-                        <Eye size={14} className="shrink-0 text-primary mt-1" />
-                      ) : (
-                        <div className="w-2 h-2 rounded-full shrink-0 mt-2" style={{ backgroundColor: m.colour }} />
-                      )}
-                      <p className="text-[14px] font-semibold text-foreground leading-snug">{direction}</p>
-                    </div>
-                    {/* Purpose second — context */}
-                    <p className="text-[13px] text-muted-foreground mt-1 pl-4 leading-snug">
+                    {/* Instructions first (most actionable), then the reason.
+                        Both align flush under the name now that the leading
+                        colour dot is gone. */}
+                    <p className="text-[14px] font-semibold text-foreground leading-snug mt-1">{direction}</p>
+                    <p className="text-[13px] text-muted-foreground leading-snug mt-0.5">
                       {plain?.why ?? t(language, "prescription.forPurpose", { purpose: m.purpose.toLowerCase() })}
                     </p>
                     {colourBlind && shape && (
-                      <p className="text-[13px] text-muted-foreground mt-1 pl-4">{shape.shape} · {shape.marking}</p>
+                      <p className="text-[13px] text-muted-foreground mt-1">{shape.shape} · {shape.marking}</p>
                     )}
                   </div>
                 </div>
 
-                {/* The times speak for themselves — the clock icon carries the
-                    meaning the removed label used to. */}
                 <div className="mt-3 flex flex-wrap items-center gap-2">
-                  <Clock size={15} className="text-primary shrink-0" />
                   {m.times.map(time => (
                     <span key={time} className="text-[15px] font-bold text-secondary-foreground bg-secondary border border-primary/20 rounded-lg px-2.5 py-1.5 whitespace-nowrap">
                       {time}
@@ -160,13 +164,15 @@ export function ElderlyPrescriptionScreen({ patient, onAddRx, onRequestRefill, j
                   </button>
                 )}
 
-                <button
-                  onClick={() => onRequestRefill(m.name)}
-                  data-walk="med-request-refill-btn"
-                  className="mt-2.5 w-full flex items-center justify-center gap-2 h-11 rounded-xl border border-border text-[14px] font-bold text-foreground active:bg-muted transition-colors"
-                >
-                  <RefreshCw size={17} className="shrink-0" />{t(language, "prescription.requestRefill")}
-                </button>
+                {needsRefill && (
+                  <button
+                    onClick={() => onRequestRefill(m.name)}
+                    data-walk="med-request-refill-btn"
+                    className="mt-2.5 w-full flex items-center justify-center gap-2 h-11 rounded-xl border border-border text-[14px] font-bold text-foreground active:bg-muted transition-colors"
+                  >
+                    <RefreshCw size={17} className="shrink-0" />{t(language, "prescription.requestRefill")}
+                  </button>
+                )}
               </div>
 
               {/* Eye drop detailed instructions */}
@@ -188,14 +194,6 @@ export function ElderlyPrescriptionScreen({ patient, onAddRx, onRequestRefill, j
             </div>
           );
         })}
-        </div>
-
-        <div className="bg-warn-bg border border-warn-border rounded-2xl p-3.5 flex items-start gap-2.5">
-          <ShieldAlert size={19} className="text-warn shrink-0 mt-0.5" />
-          <div className="min-w-0">
-            <p className="text-[14px] font-bold text-warn-fg leading-tight mb-0.5">{t(language, "prescription.safetyTitle")}</p>
-            <p className="text-[13px] text-warn-fg/90 leading-relaxed">{t(language, "prescription.disclaimer")}</p>
-          </div>
         </div>
 
         {pastMedications.length > 0 && (

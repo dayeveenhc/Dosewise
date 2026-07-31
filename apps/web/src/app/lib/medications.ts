@@ -93,6 +93,14 @@ export async function fetchElderMedications(elderId: string): Promise<Medication
   return out;
 }
 
+// A medicine counts as "running low" below half of a nominal 30-day supply.
+// The Medications card only offers Request refill past this point, and Ask Mei
+// uses it to decide whether the refill walkthrough has anything to point at —
+// keep the two reading the same rule from here.
+export function isRunningLow(med: { refillDaysLeft?: number }): boolean {
+  return Math.min(100, Math.round(((med.refillDaysLeft ?? 30) / 30) * 100)) < 50;
+}
+
 // Mirrors Hermes's log_dose tool (services/hermes/src/hermes/tools/doses.py): flip
 // the most recent pending dose to taken, or insert a new taken dose at now.
 export async function logDoseTaken(medicationId: string, elderId: string): Promise<void> {

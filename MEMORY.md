@@ -55,6 +55,16 @@ one screen, so a next dose within ~an hour of now is still visible at
 scrollTop 0 — `scratchpad/nextdose.spec.ts` places it at 7pm+ with fillers below
 and skips itself after 8pm.
 
+**Request refill is gated on `isRunningLow()` (< half of a nominal 30-day
+supply), and that gate has a second consumer.** The `request_refill` walkthrough
+spotlights `[data-walk="med-request-refill-btn"]`, which now only exists on a
+low card — with nothing low it dimmed the screen and pointed at nothing (verified,
+`scratchpad/refill.spec.ts`). Ask Mei's Request-refill row therefore checks
+`anyRunningLow` and falls back to opening the chat instead. Both read the
+threshold from `lib/medications.ts::isRunningLow` — don't inline the arithmetic
+again, or the card and the walkthrough will drift apart. **Seeded/real meds with
+no `refills` row default to 30/30, so by default NO card shows the button.**
+
 **Polish pass adds a small design system to `theme.css`, use it** — tinted
 elevation tokens (`--shadow-xs/sm/md/lg`, tinted with the brand ink because
 neutral-black shadows over warm cream read muddy) plus utilities `.dw-surface`

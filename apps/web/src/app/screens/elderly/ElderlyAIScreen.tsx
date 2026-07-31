@@ -6,6 +6,7 @@ import type { EMsg, ElderlyTab } from "./types";
 import { agentTurnStream, extractProfile, fileToBase64 } from "../../lib/hermes";
 import type { AgentTurnEvent, AgentAction } from "../../lib/hermes";
 import { firstHighlightable } from "../../lib/changeHighlight";
+import { isRunningLow } from "../../lib/medications";
 import { fetchProfile, saveProfile, toProfileDetails, mergeProfileDetails } from "../../lib/profile";
 import type { WalkthroughTaskName, WalkthroughParams } from "../../lib/walkthrough/types";
 import { firstRoutableAction, ACTION_TARGETS } from "../../lib/agentActions";
@@ -160,6 +161,10 @@ export function ElderlyAIScreen({ patient, elderId, onNavigate, onMedsChanged, o
 
   const uniqueMeds = [...new Set(patient.medications.map(m => m.name))];
   const canSend = !!input.trim() || !!pendingImage;
+  // The refill walkthrough spotlights a per-medicine button that now only
+  // exists below half supply. With nothing low it would dim the screen and
+  // point at nothing, so fall back to asking Mei — which always works.
+  const anyRunningLow = patient.medications.some(isRunningLow);
 
   const scrollToBottom = () => setTimeout(() => { if (scrollRef.current) scrollRef.current.scrollTop = scrollRef.current.scrollHeight; }, 60);
 
@@ -453,7 +458,7 @@ export function ElderlyAIScreen({ patient, elderId, onNavigate, onMedsChanged, o
       items: [
         { icon: Camera,       label: t(language, "ai.rowAddMedPhoto"),           run: () => setPickerFor("rx") },
         { icon: Pill,         label: t(language, "ai.rowAddMed"),                run: () => openChatWith(t(language, "ai.prefillAddMed")) },
-        { icon: RefreshCw,    label: t(language, "prescription.requestRefill"),  run: () => startWalk("request_refill") },
+        { icon: RefreshCw,    label: t(language, "prescription.requestRefill"),  run: () => (anyRunningLow ? startWalk("request_refill") : openChatWith(t(language, "ai.suggestRefills"))) },
         { icon: Stethoscope,  label: t(language, "ai.askAboutMed"),              run: () => setShowMedPicker(true) },
         { icon: CheckCircle2, label: t(language, "ai.rowLogDose"),               run: () => startWalk("log_dose") },
         { icon: RotateCcw,    label: t(language, "ai.rowUndoDose"),              run: () => startWalk("undo_dose") },
