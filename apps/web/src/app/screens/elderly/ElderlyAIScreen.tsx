@@ -492,27 +492,43 @@ export function ElderlyAIScreen({ patient, elderId, onNavigate, onMedsChanged, o
   // A category or the chat takes over the app header rather than adding a
   // second one under it. Cleared on unmount so switching tabs can't strand it.
   useEffect(() => {
-    if (mode === "chat") {
-      onHeaderOverride?.({
-        title: t(language, "ai.chatTitle"),
-        onBack: () => setMode("help"),
-        action: (
-          <button onClick={() => setShowClearConfirm(true)} aria-label={t(language, "ai.clearChat")} className="w-11 h-11 rounded-full bg-card border border-border flex items-center justify-center active:bg-muted transition-colors">
-            <Trash2 size={19} className="text-muted-foreground" />
-          </button>
-        ),
-      });
-    } else if (category) {
+    if (category) {
       onHeaderOverride?.({ title: CATEGORIES[category].title, onBack: () => setCategory(null) });
     } else {
       onHeaderOverride?.(null);
     }
     return () => onHeaderOverride?.(null);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [mode, category, language]);
+  }, [category, language]);
 
   return (
     <div className="flex flex-col flex-1 min-h-0 overflow-hidden relative">
+      {/* Switching between the buttons and the conversation happens in place —
+          no header change, no new screen. Hidden until there IS a conversation,
+          since before that there's nothing to switch back to. */}
+      {messages.length > 0 && !category && (
+        <div className="px-4 pt-3 shrink-0 flex items-center gap-2">
+          <div className="flex-1 flex gap-1.5 bg-muted/70 rounded-2xl p-1.5">
+            {([["help", t(language, "ai.tabHelp")], ["chat", t(language, "ai.tabChat")]] as const).map(([id, label]) => (
+              <button
+                key={id}
+                onClick={() => setMode(id)}
+                aria-pressed={mode === id}
+                data-walk={`elder-ai-tab-${id}`}
+                className={`flex-1 py-2 rounded-xl text-[14px] font-bold transition-colors ${mode === id ? "bg-card text-foreground dw-shadow" : "text-muted-foreground"}`}
+              >
+                {label}
+              </button>
+            ))}
+          </div>
+          {mode === "chat" && (
+            <button onClick={() => setShowClearConfirm(true)} aria-label={t(language, "ai.clearChat")} className="w-11 h-11 rounded-full dw-surface flex items-center justify-center shrink-0 active:bg-muted transition-colors">
+              <Trash2 size={18} className="text-muted-foreground" />
+            </button>
+          )}
+        </div>
+      )}
+
       {/* One scroll area above a permanent composer. Chat is a MODE, not a
           separate sheet — the text box never leaves, so typing is always the
           obvious way out of a dead end. */}
@@ -570,10 +586,12 @@ export function ElderlyAIScreen({ patient, elderId, onNavigate, onMedsChanged, o
         </div>
       ) : (
         <div className="flex-1 overflow-y-auto scrollbar-none px-4 pt-3 pb-4 space-y-3.5" data-tour="elder-quickhelp">
-          <div className="px-1">
-            <p className="text-[15px] text-muted-foreground leading-none">{t(language, "header.hello", { name: nick })}</p>
-            <h2 className="dw-display text-[24px] font-semibold text-foreground leading-tight mt-1.5">{t(language, "ai.whatCanIHelp")}</h2>
-          </div>
+          {messages.length === 0 && (
+            <div className="px-1">
+              <p className="text-[15px] text-muted-foreground leading-none">{t(language, "header.hello", { name: nick })}</p>
+              <h2 className="dw-display text-[24px] font-semibold text-foreground leading-tight mt-1.5">{t(language, "ai.whatCanIHelp")}</h2>
+            </div>
+          )}
 
           <div className="relative">
             <Search size={19} className="absolute left-3.5 top-1/2 -translate-y-1/2 text-muted-foreground pointer-events-none" />

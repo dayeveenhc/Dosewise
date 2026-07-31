@@ -91,8 +91,10 @@ before this polish pass. `main` still holds the pre-revamp state.
 
 **Ask Mei is one screen with a PERMANENT composer (3rd revision).** `mode:
 "help" | "chat"` decides what fills the space above it; the chat is no longer a
-sheet. Sending flips to chat, the header's back arrow flips back, and the text
-box never leaves — so typing is always the way out of a dead end. Camera and mic
+sheet. Sending swaps the BODY only — the app header never changes, so it never feels
+like a different screen. A Help/Chat segmented switcher (`data-walk=
+"elder-ai-tab-help|chat"`) appears once there is a conversation and moves both
+ways; clear-chat sits beside it. The text box never leaves — so typing is always the way out of a dead end. Camera and mic
 live INSIDE the field (three outside buttons left the box barely wider than the
 buttons); Send stays outside and disabled until there's something to send —
 `photo-staging.spec.ts` asserts exactly that, so don't make Send conditional.
