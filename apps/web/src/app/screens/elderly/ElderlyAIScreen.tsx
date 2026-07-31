@@ -1,6 +1,6 @@
 import { useState, useRef, useEffect } from "react";
 import type { ChangeEvent } from "react";
-import { Volume2, Mic, Send, AlertTriangle, MessageCircle, Check, Trash2, Camera, FileText, Pill, Globe, X, Plane, ChevronRight, CalendarDays, CheckCircle2, RotateCcw, RefreshCw, Bell, Phone, Type, QrCode, UserCheck, Stethoscope, HeartPulse } from "lucide-react";
+import { Volume2, Mic, Send, AlertTriangle, MessageCircle, Check, Trash2, Camera, FileText, Pill, Globe, X, Plane, ChevronRight, CalendarDays, CheckCircle2, RotateCcw, RefreshCw, Bell, Phone, Type, QrCode, UserCheck, Stethoscope, HeartPulse, Search } from "lucide-react";
 import type { Patient } from "../../types";
 import type { EMsg, ElderlyTab } from "./types";
 import { agentTurnStream, extractProfile, fileToBase64 } from "../../lib/hermes";
@@ -115,30 +115,18 @@ export function ElderlyAIScreen({ patient, elderId, onNavigate, onMedsChanged, o
   const { language, setLanguage } = useLanguage();
   const { voiceOutput, setVoiceOutput } = useAccessibility();
   const nick = patient.nickname || patient.name.split(" ")[1];
-  const buildGreeting = (): EMsg => {
-    const h = new Date().getHours();
-    const g = h < 12 ? t(language, "home.morning") : h < 17 ? t(language, "home.afternoon") : t(language, "home.evening");
-    const next = patient.medications.find(m => m.status === "upcoming");
-    const nextInfo = next
-      ? t(language, "ai.elderGreetingNext", { name: next.name, dose: next.dose, time: next.time })
-      : t(language, "ai.elderGreetingAllDone");
-    return {
-      id: 1, role: "agent",
-      text: t(language, "ai.elderGreeting", { timeOfDay: g, nick, nextInfo }),
-      time: nowLabel(),
-    };
-  };
   // Key the saved chat by the signed-in user, not the (constant, mock) patient.id
   // — otherwise every account shares one chat. Each account restores its own.
   const storageKey = `mei-chat:${elderId ?? "anon"}`;
   const restored = loadChatSession(storageKey);
   const startedAtRef = useRef<number>(restored?.startedAt ?? Date.now());
-  const [messages, setMessages] = useState<EMsg[]>(() => restored?.messages ?? [buildGreeting()]);
+  const [messages, setMessages] = useState<EMsg[]>(() => restored?.messages ?? []);
   const [input, setInput] = useState("");
-  // The chat is a sheet over the help list, not the screen itself — the point of
-  // this screen is that the things Mei can do are visible as buttons, rather
-  // than hidden behind knowing what to type at a chatbot.
-  const [chatOpen, setChatOpen] = useState(false);
+  // The composer is always on screen; this only decides what fills the space
+  // above it — the help buttons, or the conversation. Sending a message flips
+  // it to "chat", and the header's back arrow flips it back.
+  const [mode, setMode] = useState<"help" | "chat">("help");
+  const [query, setQuery] = useState("");
   // A photo the user attached but hasn't sent yet — staged so they can type what
   // they want done with it, instead of us sending a fixed "here's my prescription".
   const [pendingImage, setPendingImage] = useState<{ base64: string; url: string } | null>(null);
@@ -185,7 +173,7 @@ export function ElderlyAIScreen({ patient, elderId, onNavigate, onMedsChanged, o
     if (!el) return;
     el.style.height = "auto";
     el.style.height = `${Math.min(el.scrollHeight, 160)}px`; // matches max-h-40
-  }, [input, chatOpen]);
+  }, [input, mode]);
 
   // Force-expire the session after SESSION_TTL_MS even if the person never
   // leaves this screen, not just on the next remount.
@@ -193,7 +181,7 @@ export function ElderlyAIScreen({ patient, elderId, onNavigate, onMedsChanged, o
     const interval = setInterval(() => {
       if (Date.now() - startedAtRef.current > SESSION_TTL_MS) {
         startedAtRef.current = Date.now();
-        setMessages([buildGreeting()]);
+        setMessages([]);
       }
     }, 60_000);
     return () => clearInterval(interval);
@@ -237,7 +225,7 @@ export function ElderlyAIScreen({ patient, elderId, onNavigate, onMedsChanged, o
   const send = async (text: string, imageBase64?: string, pdfBase64?: string, displayImage?: string) => {
     const trimmed = text.trim();
     if (!trimmed || sending) return;
-    setChatOpen(true);
+    setMode("chat");
     setMessages(prev => [...prev, { id: Date.now(), role: "user", text: trimmed, time: nowLabel(), image: displayImage }]);
     scrollToBottom();
     setSending(true);
@@ -266,7 +254,7 @@ export function ElderlyAIScreen({ patient, elderId, onNavigate, onMedsChanged, o
           { id: LIVE_STEP_ID, role: "agent", text: t(language, "ai.openingYourLabel", { done, detail: "", label }), time: nowLabel(), isConfirmation: true },
         ]);
         scrollToBottom();
-        setTimeout(() => { setChatOpen(false); onNavigate(target.elderly); }, 600);
+        setTimeout(() => onNavigate(target.elderly), 600);
       }
     };
 
@@ -278,7 +266,7 @@ export function ElderlyAIScreen({ patient, elderId, onNavigate, onMedsChanged, o
     // A walkthrough takes over the whole app shell, so the chat sheet has to get
     // out of the way or it would cover the very thing being spotlighted.
     if (walkthrough) {
-      setChatOpen(false);
+      setMode("help");
       onWalkthroughStart?.(walkthrough.task_name as WalkthroughTaskName, walkthrough.params);
     }
     // Gated for a walkthrough's "agent-action-committed" step: the real
@@ -300,7 +288,6 @@ export function ElderlyAIScreen({ patient, elderId, onNavigate, onMedsChanged, o
     // (a tool not yet migrated to record_action).
     const highlight = firstHighlightable(actions);
     if (highlight) {
-      setChatOpen(false);
       onHighlightChange?.(highlight);
     } else {
       const added = actions.find(a => a.tool === "add_prescription");
@@ -317,7 +304,7 @@ export function ElderlyAIScreen({ patient, elderId, onNavigate, onMedsChanged, o
         const label = t(language, routed.target.labelKey);
         setMessages(prev => [...prev, { id: Date.now() + 2, role: "agent", text: t(language, "ai.openingYourLabel", { done, detail, label }), time: nowLabel(), isConfirmation: true }]);
         scrollToBottom();
-        setTimeout(() => { setChatOpen(false); onNavigate(routed.target.elderly); }, 1200);
+        setTimeout(() => onNavigate(routed.target.elderly), 1200);
       }
     }
   };
@@ -329,7 +316,7 @@ export function ElderlyAIScreen({ patient, elderId, onNavigate, onMedsChanged, o
     const file = e.target.files?.[0];
     e.target.value = "";
     if (!file) return;
-    setChatOpen(true);
+    setMode("chat");
     setPendingImage({ base64: await fileToBase64(file), url: URL.createObjectURL(file) });
     inputRef.current?.focus();
   };
@@ -349,7 +336,7 @@ export function ElderlyAIScreen({ patient, elderId, onNavigate, onMedsChanged, o
   // needs real values from them before Mei can carry it out.
   const openChatWith = (prefill: string) => {
     setInput(prefill);
-    setChatOpen(true);
+    setCategory(null);
     setTimeout(() => inputRef.current?.focus(), 80);
   };
 
@@ -364,7 +351,6 @@ export function ElderlyAIScreen({ patient, elderId, onNavigate, onMedsChanged, o
   useEffect(() => {
     if (prefillMessage) {
       setInput(prefillMessage);
-      setChatOpen(true);
       onPrefillConsumed?.();
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -386,8 +372,9 @@ export function ElderlyAIScreen({ patient, elderId, onNavigate, onMedsChanged, o
   // the restored-session TTL doesn't immediately expire the new chat.
   const clearChat = () => {
     startedAtRef.current = Date.now();
-    setMessages([buildGreeting()]);
+    setMessages([]);
     setShowClearConfirm(false);
+    setMode("help");
     scrollToBottom();
   };
 
@@ -403,7 +390,7 @@ export function ElderlyAIScreen({ patient, elderId, onNavigate, onMedsChanged, o
     const b64 = await fileToBase64(file);
     const isPdf = file.type === "application/pdf";
     const msg = t(language, "ai.reportMsgMine");
-    setChatOpen(true);
+    setMode("chat");
     setMessages(prev => [...prev, { id: Date.now(), role: "user", text: msg, time: nowLabel(), image: isPdf ? undefined : URL.createObjectURL(file) }]);
     scrollToBottom();
 
@@ -441,7 +428,7 @@ export function ElderlyAIScreen({ patient, elderId, onNavigate, onMedsChanged, o
       setSending(false);
       scrollToBottom();
       speak(confirmText);
-      setTimeout(() => { setChatOpen(false); onNavigate("settings"); }, 1400);
+      setTimeout(() => onNavigate("settings"), 1400);
     } catch (err) {
       console.warn("[dosewise] profile autofill failed:", err);
       setSending(false);
@@ -495,13 +482,20 @@ export function ElderlyAIScreen({ patient, elderId, onNavigate, onMedsChanged, o
     },
   };
 
+  const searchResults = query.trim()
+    ? (Object.keys(CATEGORIES) as CatId[]).flatMap(id =>
+        CATEGORIES[id].items
+          .filter(i => i.label.toLowerCase().includes(query.trim().toLowerCase()))
+          .map(i => ({ ...i, cat: CATEGORIES[id].title })))
+    : [];
+
   // A category or the chat takes over the app header rather than adding a
   // second one under it. Cleared on unmount so switching tabs can't strand it.
   useEffect(() => {
-    if (chatOpen) {
+    if (mode === "chat") {
       onHeaderOverride?.({
         title: t(language, "ai.chatTitle"),
-        onBack: () => setChatOpen(false),
+        onBack: () => setMode("help"),
         action: (
           <button onClick={() => setShowClearConfirm(true)} aria-label={t(language, "ai.clearChat")} className="w-11 h-11 rounded-full bg-card border border-border flex items-center justify-center active:bg-muted transition-colors">
             <Trash2 size={19} className="text-muted-foreground" />
@@ -515,12 +509,59 @@ export function ElderlyAIScreen({ patient, elderId, onNavigate, onMedsChanged, o
     }
     return () => onHeaderOverride?.(null);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [chatOpen, category, language]);
+  }, [mode, category, language]);
 
   return (
     <div className="flex flex-col flex-1 min-h-0 overflow-hidden relative">
-      {category ? (
-        <div className="flex-1 overflow-y-auto scrollbar-none px-4 pt-3 pb-28 space-y-3">
+      {/* One scroll area above a permanent composer. Chat is a MODE, not a
+          separate sheet — the text box never leaves, so typing is always the
+          obvious way out of a dead end. */}
+      {mode === "chat" ? (
+        <div ref={scrollRef} className="flex-1 overflow-y-auto scrollbar-none px-4 py-3 space-y-3 dw-view-in">
+          {messages.map(msg => msg.isRateLimited ? (
+            <div key={msg.id} className="flex justify-center dw-msg-in">
+              <div className="flex items-center gap-1.5 bg-warn-bg border border-warn-border text-warn-fg rounded-full px-3.5 py-1.5">
+                <AlertTriangle size={15} className="text-warn shrink-0" />
+                <span className="text-[14px] font-bold">{msg.text}</span>
+              </div>
+            </div>
+          ) : msg.isConfirmation ? (
+            <div key={msg.id} className="flex justify-center dw-msg-in">
+              <div className="flex items-center gap-1.5 bg-taken-bg border border-taken-border text-taken-fg rounded-full px-3.5 py-1.5">
+                <Check size={15} className="text-taken shrink-0" />
+                <span className="text-[14px] font-bold">{msg.text.replace(/^✓\s*/, "")}</span>
+              </div>
+            </div>
+          ) : (
+            <div key={msg.id} className={`dw-msg-in flex ${msg.role === "user" ? "justify-end" : "justify-start"} gap-2`}>
+              {msg.role === "agent" && (
+                <div className="w-9 h-9 rounded-full bg-primary flex items-center justify-center shrink-0 mt-1">
+                  <span className="text-primary-foreground text-[14px] font-bold">M</span>
+                </div>
+              )}
+              <div className={`max-w-[82%] flex flex-col gap-1 ${msg.role === "user" ? "items-end" : "items-start"}`}>
+                {msg.image && (
+                  <img src={msg.image} alt={t(language, "ai.attachment")} className="max-w-[70%] rounded-2xl border border-border object-cover" />
+                )}
+                <div className={`rounded-2xl px-4 py-3 ${msg.role === "user" ? "bg-primary text-primary-foreground rounded-tr-sm" : "dw-surface rounded-tl-sm"}`}>
+                  <p className={`text-[15px] leading-relaxed whitespace-pre-line ${msg.role === "user" ? "text-primary-foreground" : "text-foreground"}`}>{renderWithBold(msg.text)}</p>
+                  {msg.isClinic && <p className="text-[13px] mt-2 opacity-70 italic">{t(language, "ai.verifyWithDoctor")}</p>}
+                </div>
+                <p className="text-[12px] text-muted-foreground px-1">{msg.time}</p>
+              </div>
+            </div>
+          ))}
+          {isListening && (
+            <div className="flex justify-center py-2">
+              <div className="flex items-center gap-2 bg-missed-bg border border-missed-border rounded-full px-4 py-2">
+                <div className="w-2.5 h-2.5 bg-destructive rounded-full animate-pulse" />
+                <span className="text-[14px] text-missed-fg font-bold">{t(language, "ai.listening")}</span>
+              </div>
+            </div>
+          )}
+        </div>
+      ) : category ? (
+        <div className="flex-1 overflow-y-auto scrollbar-none px-4 pt-3 pb-4 space-y-3">
           <div className="dw-surface divide-y divide-border overflow-hidden">
             {CATEGORIES[category].items.map(item => (
               <HelpRow key={item.label} icon={item.icon} label={item.label} onClick={item.run} data-walk={item.walk} />
@@ -528,50 +569,140 @@ export function ElderlyAIScreen({ patient, elderId, onNavigate, onMedsChanged, o
           </div>
         </div>
       ) : (
-        <div className="flex-1 overflow-y-auto scrollbar-none px-4 pt-3 pb-28 space-y-4" data-tour="elder-quickhelp">
+        <div className="flex-1 overflow-y-auto scrollbar-none px-4 pt-3 pb-4 space-y-3.5" data-tour="elder-quickhelp">
           <div className="px-1">
             <p className="text-[15px] text-muted-foreground leading-none">{t(language, "header.hello", { name: nick })}</p>
             <h2 className="dw-display text-[24px] font-semibold text-foreground leading-tight mt-1.5">{t(language, "ai.whatCanIHelp")}</h2>
           </div>
 
-          {/* Chat leads: it's the one option that covers anything not on a tile. */}
-          <button
-            onClick={() => setChatOpen(true)}
-            data-walk="elder-open-chat"
-            className="w-full text-primary-foreground rounded-[20px] px-4 py-4 flex items-center gap-3.5 dw-raised dw-press bg-gradient-to-br from-[#3E8477] to-[#2C6055]"
-          >
-            <div className="w-12 h-12 rounded-2xl bg-white/15 flex items-center justify-center shrink-0">
-              <MessageCircle size={26} />
-            </div>
-            <div className="min-w-0 text-left">
-              <p className="text-[19px] font-bold leading-tight">{t(language, "ai.askAnything")}</p>
-              <p className="text-[14px] opacity-90 leading-snug mt-0.5">{t(language, "ai.askAnythingSub")}</p>
-            </div>
-          </button>
+          <div className="relative">
+            <Search size={19} className="absolute left-3.5 top-1/2 -translate-y-1/2 text-muted-foreground pointer-events-none" />
+            <input
+              value={query}
+              onChange={e => setQuery(e.target.value)}
+              placeholder={t(language, "ai.searchPlaceholder")}
+              data-walk="elder-help-search"
+              className="w-full h-12 bg-input-background border border-border rounded-2xl pl-11 pr-11 text-[15px] text-foreground outline-none focus:border-primary transition-colors placeholder:text-muted-foreground"
+            />
+            {query && (
+              <button onClick={() => setQuery("")} aria-label={t(language, "common.cancel")} className="absolute right-3 top-1/2 -translate-y-1/2 w-8 h-8 rounded-full bg-muted flex items-center justify-center">
+                <X size={16} className="text-muted-foreground" />
+              </button>
+            )}
+          </div>
 
-          <div className="grid grid-cols-2 gap-3">
-            {(Object.keys(CATEGORIES) as CatId[]).map(id => {
-              const cat = CATEGORIES[id];
-              return (
+          {query.trim() ? (
+            <div className="dw-surface divide-y divide-border overflow-hidden">
+              {searchResults.map(r => (
                 <button
-                  key={id}
-                  onClick={() => setCategory(id)}
-                  data-walk={`elder-cat-${id}`}
-                  className="dw-surface dw-press p-4 h-[158px] flex flex-col items-start justify-between gap-3 text-left"
+                  key={`${r.cat}-${r.label}`}
+                  onClick={() => { setQuery(""); r.run(); }}
+                  className="w-full flex items-center gap-3 px-4 py-3.5 text-left active:bg-secondary/50 transition-colors"
                 >
-                  <div className="w-12 h-12 rounded-2xl bg-secondary flex items-center justify-center">
-                    <cat.icon size={24} className="text-primary" />
+                  <div className="w-10 h-10 rounded-xl bg-secondary flex items-center justify-center shrink-0">
+                    <r.icon size={20} className="text-primary" />
                   </div>
-                  <div className="min-w-0">
-                    <p className="text-[16px] font-bold text-foreground leading-tight">{cat.title}</p>
-                    <p className="text-[13px] text-muted-foreground mt-0.5">{t(language, "ai.catCount", { count: cat.items.length })}</p>
+                  <div className="flex-1 min-w-0">
+                    <p className="text-[15px] font-semibold text-foreground leading-snug">{r.label}</p>
+                    <p className="text-[13px] text-muted-foreground">{r.cat}</p>
                   </div>
+                  <ChevronRight size={20} className="text-muted-foreground shrink-0" />
                 </button>
-              );
-            })}
+              ))}
+              {searchResults.length === 0 && (
+                <p className="px-4 py-6 text-[15px] text-muted-foreground text-center">{t(language, "settings.noResults", { q: query.trim() })}</p>
+              )}
+            </div>
+          ) : (
+            <div className="grid grid-cols-2 gap-3">
+              {(Object.keys(CATEGORIES) as CatId[]).map(id => {
+                const cat = CATEGORIES[id];
+                return (
+                  <button
+                    key={id}
+                    onClick={() => setCategory(id)}
+                    data-walk={`elder-cat-${id}`}
+                    className="dw-surface dw-press p-4 h-[140px] flex flex-col items-center justify-center gap-2.5 text-center"
+                  >
+                    <div className="w-12 h-12 rounded-2xl bg-secondary flex items-center justify-center">
+                      <cat.icon size={24} className="text-primary" />
+                    </div>
+                    <div className="min-w-0">
+                      <p className="text-[15px] font-bold text-foreground leading-tight">{cat.title}</p>
+                      <p className="text-[12px] text-muted-foreground mt-0.5">{t(language, "ai.catCount", { count: cat.items.length })}</p>
+                    </div>
+                  </button>
+                );
+              })}
+            </div>
+          )}
+        </div>
+      )}
+
+      {isSpeaking && (
+        <div className="px-4 py-1 shrink-0">
+          <div className="flex items-center gap-1.5 text-primary">
+            <Volume2 size={15} />
+            <span className="text-[14px] font-bold">{t(language, "ai.speaking")}{language !== "en" ? ` in ${LANGUAGE_OPTIONS.find(o => o.id === language)?.label}` : ""}…</span>
           </div>
         </div>
       )}
+
+      {mode === "chat" && (
+        <div className="px-4 pb-2 shrink-0">
+          <div
+            className="flex gap-2 overflow-x-auto scrollbar-none pb-1"
+            onWheel={e => { if (Math.abs(e.deltaY) > Math.abs(e.deltaX)) e.currentTarget.scrollLeft += e.deltaY; }}
+          >
+            {[t(language, "ai.suggestTookMed"), t(language, "ai.suggestWhatDoITake"), t(language, "ai.suggestRefills"), t(language, "ai.suggestHelp")].map(s => (
+              <button key={s} onClick={() => setInput(s)} className="shrink-0 bg-muted text-foreground rounded-full px-3.5 py-2 text-[14px] font-bold whitespace-nowrap active:bg-secondary transition-colors">
+                {s}
+              </button>
+            ))}
+          </div>
+        </div>
+      )}
+
+      {/* Composer — always present, in both modes. */}
+      <div className="px-4 pb-3 pt-2 border-t border-border/60 shrink-0">
+        {pendingImage && (
+          <div className="flex items-center gap-2.5 mb-2 bg-secondary border border-primary/20 rounded-xl p-2">
+            <img src={pendingImage.url} alt={t(language, "ai.attachment")} className="w-12 h-12 rounded-lg object-cover shrink-0" />
+            <span className="flex-1 text-[14px] text-secondary-foreground font-semibold">{t(language, "ai.photoAttachedHint")}</span>
+            <button onClick={() => setPendingImage(null)} aria-label={t(language, "common.cancel")} className="w-8 h-8 rounded-full bg-muted flex items-center justify-center text-muted-foreground shrink-0">
+              <X size={16} />
+            </button>
+          </div>
+        )}
+        {/* Camera and mic sit INSIDE the field: as three outside buttons they
+            left the text box barely wider than the buttons themselves, and all
+            three still need to be reachable at once. */}
+        <div className="flex gap-2 items-end">
+          <div className="flex-1 min-w-0 bg-input-background rounded-2xl border border-border min-h-12 flex items-end gap-0.5 pl-1.5 pr-3 py-1.5">
+            <button onClick={() => setPickerFor("rx")} aria-label={t(language, "common.addPrescription")} className="w-9 h-9 rounded-full flex items-center justify-center text-muted-foreground shrink-0 active:bg-muted transition-colors">
+              <Camera size={19} />
+            </button>
+            {SpeechRecognitionImpl && (
+              <button onClick={handleMic} aria-label={t(language, "ai.listening")} className={`w-9 h-9 rounded-full flex items-center justify-center shrink-0 transition-colors ${isListening ? "bg-destructive text-white" : "text-muted-foreground active:bg-muted"}`}>
+                <Mic size={19} />
+              </button>
+            )}
+            <textarea
+              ref={inputRef}
+              value={input}
+              onChange={e => setInput(e.target.value)}
+              onKeyDown={e => { if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); handleSend(); } }}
+              placeholder={t(language, pendingImage ? "ai.photoNotePlaceholder" : "ai.askAnything")}
+              className="flex-1 min-w-0 bg-transparent text-foreground text-[15px] resize-none outline-none max-h-40 leading-relaxed py-2 placeholder:text-muted-foreground"
+              rows={1}
+            />
+          </div>
+          <button onClick={handleSend} disabled={!canSend || sending} data-walk="elder-ai-send-button" aria-label={t(language, "notifications.send")} className="w-12 h-12 rounded-full bg-primary text-primary-foreground flex items-center justify-center shrink-0 disabled:opacity-30 dw-press">
+            <Send size={20} />
+          </button>
+        </div>
+        <p className="text-center text-[12px] text-muted-foreground mt-1.5">{t(language, "ai.disclaimer")}</p>
+      </div>
 
       {/* Ask a doctor: collect the real question here rather than letting the
           walkthrough invent one, then hand it to the autonomous walkthrough as
@@ -623,124 +754,6 @@ export function ElderlyAIScreen({ patient, elderId, onNavigate, onMedsChanged, o
               ))}
               {uniqueMeds.length === 0 && <p className="text-[14px] text-muted-foreground">{t(language, "prescription.empty")}</p>}
             </div>
-          </div>
-        </div>
-      )}
-
-      {/* The chat itself — a full sheet over the help list. */}
-      {chatOpen && (
-        /* z-20 keeps this under the bottom nav (z-40) so the Ask Mei button
-           isn't clipped by the sheet; the modal sheets below stay above it. */
-        <div className="absolute inset-0 z-20 flex flex-col bg-background animate-in slide-in-from-bottom duration-200">
-          {isSpeaking && (
-            <div className="px-4 py-1 shrink-0">
-              <div className="flex items-center gap-1.5 text-primary">
-                <Volume2 size={15} />
-                <span className="text-[14px] font-bold">{t(language, "ai.speaking")}{language !== "en" ? ` in ${LANGUAGE_OPTIONS.find(o => o.id === language)?.label}` : ""}…</span>
-              </div>
-            </div>
-          )}
-
-          <div ref={scrollRef} className="flex-1 overflow-y-auto scrollbar-none px-4 py-3 space-y-3">
-            {messages.map(msg => msg.isRateLimited ? (
-              <div key={msg.id} className="flex justify-center">
-                <div className="flex items-center gap-1.5 bg-warn-bg border border-warn-border text-warn-fg rounded-full px-3.5 py-1.5">
-                  <AlertTriangle size={15} className="text-warn shrink-0" />
-                  <span className="text-[14px] font-bold">{msg.text}</span>
-                </div>
-              </div>
-            ) : msg.isConfirmation ? (
-              <div key={msg.id} className="flex justify-center">
-                <div className="flex items-center gap-1.5 bg-taken-bg border border-taken-border text-taken-fg rounded-full px-3.5 py-1.5">
-                  <Check size={15} className="text-taken shrink-0" />
-                  <span className="text-[14px] font-bold">{msg.text.replace(/^✓\s*/, "")}</span>
-                </div>
-              </div>
-            ) : (
-              <div key={msg.id} className={`flex ${msg.role === "user" ? "justify-end" : "justify-start"} gap-2`}>
-                {msg.role === "agent" && (
-                  <div className="w-9 h-9 rounded-full bg-primary flex items-center justify-center shrink-0 mt-1">
-                    <span className="text-primary-foreground text-[14px] font-bold">M</span>
-                  </div>
-                )}
-                <div className={`max-w-[82%] flex flex-col gap-1 ${msg.role === "user" ? "items-end" : "items-start"}`}>
-                  {msg.image && (
-                    <img src={msg.image} alt={t(language, "ai.attachment")} className="max-w-[70%] rounded-2xl border border-border object-cover" />
-                  )}
-                  <div className={`rounded-2xl px-4 py-3 ${msg.role === "user" ? "bg-primary text-primary-foreground rounded-tr-sm" : "bg-card border border-border rounded-tl-sm"}`}>
-                    <p className={`text-[15px] leading-relaxed whitespace-pre-line ${msg.role === "user" ? "text-primary-foreground" : "text-foreground"}`}>{renderWithBold(msg.text)}</p>
-                    {msg.isClinic && <p className="text-[13px] mt-2 opacity-70 italic">{t(language, "ai.verifyWithDoctor")}</p>}
-                  </div>
-                  <p className="text-[12px] text-muted-foreground px-1">{msg.time}</p>
-                </div>
-              </div>
-            ))}
-            {isListening && (
-              <div className="flex justify-center py-2">
-                <div className="flex items-center gap-2 bg-missed-bg border border-missed-border rounded-full px-4 py-2">
-                  <div className="w-2.5 h-2.5 bg-destructive rounded-full animate-pulse" />
-                  <span className="text-[14px] text-missed-fg font-bold">{t(language, "ai.listening")}</span>
-                </div>
-              </div>
-            )}
-          </div>
-
-          <div className="px-4 pb-2 shrink-0">
-            <div
-              className="flex gap-2 overflow-x-auto scrollbar-none pb-1"
-              onWheel={e => { if (Math.abs(e.deltaY) > Math.abs(e.deltaX)) e.currentTarget.scrollLeft += e.deltaY; }}
-            >
-              {[t(language, "ai.suggestTookMed"), t(language, "ai.suggestWhatDoITake"), t(language, "ai.suggestRefills"), t(language, "ai.suggestHelp")].map(s => (
-                <button key={s} onClick={() => setInput(s)} className="shrink-0 bg-muted text-foreground rounded-full px-3.5 py-2 text-[14px] font-bold whitespace-nowrap active:bg-secondary transition-colors">
-                  {s}
-                </button>
-              ))}
-            </div>
-          </div>
-
-          <div className="px-4 pb-4 pt-1 border-t border-border shrink-0">
-            {/* Staged photo — attached, awaiting the person's instruction. */}
-            {pendingImage && (
-              <div className="flex items-center gap-2.5 mb-2 bg-secondary border border-primary/20 rounded-xl p-2">
-                <img src={pendingImage.url} alt={t(language, "ai.attachment")} className="w-12 h-12 rounded-lg object-cover shrink-0" />
-                <span className="flex-1 text-[14px] text-secondary-foreground font-semibold">{t(language, "ai.photoAttachedHint")}</span>
-                <button onClick={() => setPendingImage(null)} aria-label={t(language, "common.cancel")} className="w-8 h-8 rounded-full bg-muted flex items-center justify-center text-muted-foreground shrink-0">
-                  <X size={16} />
-                </button>
-              </div>
-            )}
-            {/* Two side buttons, not three: at this width a third left the text
-                box barely wider than the buttons themselves. The right button
-                is Mic until there's something to send, then Send — so voice
-                stays one tap away without costing the composer its width. */}
-            <div className="flex gap-2 items-end">
-              <button onClick={() => setPickerFor("rx")} aria-label={t(language, "common.addPrescription")} className="w-12 h-12 rounded-full bg-muted text-foreground flex items-center justify-center shrink-0">
-                <Camera size={20} />
-              </button>
-              {/* min-h-12 matches the 48px buttons, so the row reads as one
-                  control strip until the text actually overflows. */}
-              <div className="flex-1 min-w-0 bg-input-background rounded-2xl px-4 py-2.5 border border-border min-h-12 flex items-center">
-                <textarea
-                  ref={inputRef}
-                  value={input}
-                  onChange={e => setInput(e.target.value)}
-                  onKeyDown={e => { if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); handleSend(); } }}
-                  placeholder={t(language, pendingImage ? "ai.photoNotePlaceholder" : "ai.typeOrTapMic")}
-                  className="w-full bg-transparent text-foreground text-[15px] resize-none outline-none max-h-24 leading-relaxed placeholder:text-muted-foreground"
-                  rows={1}
-                />
-              </div>
-              {canSend || !SpeechRecognitionImpl ? (
-                <button onClick={handleSend} disabled={!canSend || sending} data-walk="elder-ai-send-button" aria-label={t(language, "notifications.send")} className="w-12 h-12 rounded-full bg-primary text-primary-foreground flex items-center justify-center shrink-0 disabled:opacity-30 active:scale-95 transition-transform">
-                  <Send size={20} />
-                </button>
-              ) : (
-                <button onClick={handleMic} aria-label={t(language, "ai.listening")} className={`w-12 h-12 rounded-full flex items-center justify-center shrink-0 transition-colors ${isListening ? "bg-destructive text-white" : "bg-muted text-foreground"}`}>
-                  <Mic size={20} />
-                </button>
-              )}
-            </div>
-            <p className="text-center text-[12px] text-muted-foreground mt-2">{t(language, "ai.disclaimer")}</p>
           </div>
         </div>
       )}

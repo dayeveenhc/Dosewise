@@ -458,6 +458,32 @@
   }
 }
 
+/* Messaging-style entrance. A CSS animation runs once per element mount, and
+   React keeps existing bubbles on the same DOM node (keyed by id), so only the
+   newly-arrived message animates — no re-running the whole thread on rerender. */
+@keyframes dw-msg-in {
+  from { opacity: 0; transform: translateY(14px) scale(0.98); }
+  to   { opacity: 1; transform: none; }
+}
+.dw-msg-in {
+  animation: dw-msg-in 260ms cubic-bezier(0.2, 0.8, 0.2, 1) both;
+}
+/* The conversation itself rising in as the help buttons stand down. */
+@keyframes dw-view-in {
+  from { opacity: 0; transform: translateY(10px); }
+  to   { opacity: 1; transform: none; }
+}
+.dw-view-in {
+  animation: dw-view-in 240ms cubic-bezier(0.2, 0.8, 0.2, 1) both;
+}
+/* Motion is decoration here — anyone who has asked the OS for less of it keeps
+   the layout and loses only the movement. */
+@media (prefers-reduced-motion: reduce) {
+  .dw-msg-in, .dw-view-in { animation: none; }
+  .dw-press { transition: none; }
+  .dw-press:active { transform: none; }
+}
+
 /* Guided Auto-Navigation Reveal: a transient emerald pulse the walkthrough adds
    to the element where a change just landed (ElderlyApp handleWalkthroughReveal),
    so it's unmistakable. ~2.6s = two 1.3s cycles, matching the JS cleanup timer. */

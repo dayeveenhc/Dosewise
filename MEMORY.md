@@ -89,6 +89,19 @@ that drift is exactly what this replaced.
 (commit f7b67fc) is the whole revamp with every gate green, taken immediately
 before this polish pass. `main` still holds the pre-revamp state.
 
+**Ask Mei is one screen with a PERMANENT composer (3rd revision).** `mode:
+"help" | "chat"` decides what fills the space above it; the chat is no longer a
+sheet. Sending flips to chat, the header's back arrow flips back, and the text
+box never leaves — so typing is always the way out of a dead end. Camera and mic
+live INSIDE the field (three outside buttons left the box barely wider than the
+buttons); Send stays outside and disabled until there's something to send —
+`photo-staging.spec.ts` asserts exactly that, so don't make Send conditional.
+**No canned greeting**: `buildGreeting` is gone and the thread starts empty,
+which also removed copy that said "tap a button above" after buttons stopped
+being above. Entrance motion is `.dw-msg-in` / `.dw-view-in` in theme.css — CSS
+animations fire once per mount and React keys bubbles by id, so only the new
+message animates. Both are disabled under `prefers-reduced-motion`.
+
 **Ask Mei is category tiles, not a flat list (2nd revision).** Seventeen rows on
 one screen read as a wall; the same items now sit behind four tiles (My
 medicines / My details / How the app looks / My care team) with a short list
