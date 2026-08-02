@@ -161,6 +161,21 @@ the return value exists to end. Found independently by two sub-agents. Both
 shells' tile launches go through a `startWalk` that renders it now. `request_refill`
 had dodged it only by accident (its tile pre-gates on `anyRunningLow`).
 
+**THE PORT-8000 RESTART STORM, FINALLY DIAGNOSED.** `hermes` had accumulated
+~37,900 restarts. Cause: `deploy/pm2/watch-and-pull.sh` compares
+`git rev-parse HEAD` against `git rev-parse origin/main` — and the VPS was
+checked out on a FEATURE BRANCH. Those SHAs can never match, so every 15s poll
+"detected a new commit", pulled, and restarted `hermes`. Forever. `:8000` was
+therefore down or flickering a good fraction of the time, which is what every
+"[FAIL] prod :8000 /health not 200" in POST was. It is NOT the orphaned
+`--multiprocessing-fork` child the cleanup phase was built for — that's a
+different (also real) failure. **Whenever the VPS is checked out anywhere other
+than the branch `watch-and-pull.sh` tracks, it will restart-loop.** Fixed by
+fast-forwarding `main` to the working branch, so HEAD == origin/main; verified
+by a flat restart counter across 5 poll intervals. If a feature branch ever
+needs to be checked out on the box for a while, set `GIT_BRANCH` to match or
+stop `hermes-git-sync` first.
+
 **Verification caveat worth keeping.** The 965 translated strings are machine
 translations without a native reviewer, on the user's explicit call. Three places
 a reviewer would earn their keep, all flagged by the translators themselves:
