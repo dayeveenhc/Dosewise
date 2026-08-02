@@ -39,11 +39,11 @@ export function NotificationsScreen({ notifications, patient, onMarkAllRead, onD
     <div className="px-4 py-5">
       <div className="flex items-center justify-between mb-4">
         <div>
-          <h2 className="font-['Fraunces'] text-xl font-semibold text-foreground">{t(language, "nav.notifications")}</h2>
+          <h2 className="dw-display text-[calc(20px*var(--dw-text,1))] font-semibold text-foreground">{t(language, "nav.notifications")}</h2>
           {unread > 0 && <p className="text-xs text-muted-foreground">{unread} unread</p>}
         </div>
         {unread > 0 && (
-          <button onClick={markAllRead} className="text-xs text-primary font-semibold">Mark all read</button>
+          <button onClick={markAllRead} className="text-[calc(12px*var(--dw-text,1))] text-primary font-bold rounded-full dw-surface px-3 py-1.5 active:bg-muted transition-colors">Mark all read</button>
         )}
       </div>
 
@@ -52,7 +52,7 @@ export function NotificationsScreen({ notifications, patient, onMarkAllRead, onD
           <div key={n.id} className={`rounded-2xl border p-4 relative ${bgFor(n.type)} ${!n.read ? "shadow-sm" : "opacity-70"}`}>
             {!n.read && <div className="absolute top-3 right-3 w-2 h-2 bg-primary rounded-full" />}
             <div className="flex items-start gap-3">
-              <div className="w-8 h-8 rounded-full bg-white/70 flex items-center justify-center shrink-0">
+              <div className="w-9 h-9 rounded-xl bg-card/80 border border-border/60 flex items-center justify-center shrink-0">
                 {iconFor(n.type)}
               </div>
               <div className="flex-1 min-w-0 pr-4">
@@ -63,21 +63,21 @@ export function NotificationsScreen({ notifications, patient, onMarkAllRead, onD
             </div>
             <div className="flex gap-2 mt-3">
               {n.type === "missed" && (
-                <button onClick={() => setShowCallPatient(true)} className="flex-1 text-xs font-semibold bg-missed-fg text-white rounded-xl py-2 flex items-center justify-center gap-1.5">
-                  <Phone size={11} /> {t(language, "common.callPatient")}
+                <button onClick={() => setShowCallPatient(true)} className="flex-1 text-[calc(12px*var(--dw-text,1))] font-bold bg-card border border-missed-border text-missed-fg rounded-xl py-2.5 flex items-center justify-center gap-1.5 active:opacity-80 transition-opacity">
+                  <Phone size={12} /> {t(language, "common.callPatient")}
                 </button>
               )}
               {n.type === "refill" && (
                 <button
                   onClick={() => setRefillRequested(prev => new Set(prev).add(n.id))}
                   disabled={refillRequested.has(n.id)}
-                  className="flex-1 text-xs font-semibold bg-warn text-white rounded-xl py-2 flex items-center justify-center gap-1.5 disabled:opacity-60"
+                  className="flex-1 text-[calc(12px*var(--dw-text,1))] font-bold bg-card border border-warn-border text-warn-fg rounded-xl py-2.5 flex items-center justify-center gap-1.5 disabled:opacity-60 active:opacity-80 transition-opacity"
                 >
-                  {refillRequested.has(n.id) ? <Check size={11} /> : <RefreshCw size={11} />}
+                  {refillRequested.has(n.id) ? <Check size={12} /> : <RefreshCw size={12} />}
                   {refillRequested.has(n.id) ? t(language, "common.requested") : t(language, "common.orderRefill")}
                 </button>
               )}
-              <button onClick={() => dismiss(n.id)} className="text-xs font-medium text-muted-foreground border border-border bg-white/60 rounded-xl px-3 py-2">
+              <button onClick={() => dismiss(n.id)} className="text-[calc(12px*var(--dw-text,1))] font-semibold text-muted-foreground border border-border bg-card/70 rounded-xl px-3.5 py-2.5 active:bg-muted transition-colors">
                 {t(language, "common.dismiss")}
               </button>
             </div>
@@ -89,7 +89,7 @@ export function NotificationsScreen({ notifications, patient, onMarkAllRead, onD
             <div className="w-16 h-16 bg-muted rounded-full flex items-center justify-center">
               <CheckCircle2 size={28} className="text-taken" />
             </div>
-            <p className="font-['Fraunces'] text-lg text-foreground">{t(language, "common.allClear")}</p>
+            <p className="dw-display text-lg text-foreground">{t(language, "common.allClear")}</p>
             <p className="text-sm text-muted-foreground">{t(language, "common.noPendingNotifications")}</p>
           </div>
         )}

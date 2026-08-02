@@ -3,6 +3,7 @@ import { slugify } from "../lib/changeHighlight";
 import type { Patient } from "../types";
 import { Card, SectionHeader, MedAvatar } from "../components/shared";
 import { MED_FREQUENCY } from "../data/medications";
+import { cadenceLabel, WEEKDAY_TOKENS } from "../lib/medications";
 import type { Medication } from "../types";
 import { useLanguage } from "../lib/languageContext";
 import { t } from "../lib/language";
@@ -24,6 +25,8 @@ interface GroupedMedication {
   colour: string;
   times: string[];
   refillDaysLeft?: number;
+  days?: string[];
+  intervalDays?: number;
 }
 
 function groupMedications(medications: Medication[]): GroupedMedication[] {
@@ -46,6 +49,8 @@ function groupMedications(medications: Medication[]): GroupedMedication[] {
         colour: m.colour,
         times: [m.time],
         refillDaysLeft: m.refillDaysLeft,
+        days: m.days,
+        intervalDays: m.intervalDays,
       });
     }
   }
@@ -55,14 +60,21 @@ function groupMedications(medications: Medication[]): GroupedMedication[] {
 export function PatientScreen({ patient, justAddedMed, onEditProfile, onAddPrescription, onDeleteMedication }: PatientScreenProps) {
   const { language } = useLanguage();
   const groupedMedications = groupMedications(patient.medications);
+  // The medicine's real cadence ("Mon, Thu" / "Every 2 days"); MED_FREQUENCY
+  // below is the older hardcoded demo copy and only shows when there is none.
+  const cadenceFor = (m: GroupedMedication) => cadenceLabel(
+    m,
+    Object.fromEntries(WEEKDAY_TOKENS.map(d => [d, t(language, `common.dayShort.${d}`)])),
+    n => t(language, "prescription.everyNDays", { n }),
+  );
   return (
     <div className="px-4 py-5 space-y-5">
       {/* Header card */}
       <Card className="overflow-hidden">
         <div className="h-20 bg-gradient-to-br from-primary to-accent" />
         <div className="px-4 pb-4 -mt-10">
-          <img src={patient.photo} alt={patient.name} className="w-20 h-20 rounded-2xl object-cover border-4 border-white shadow-md bg-muted" />
-          <h2 className="font-['Fraunces'] text-xl font-semibold text-foreground mt-2">{patient.name}</h2>
+          <img src={patient.photo} alt={patient.name} className="w-20 h-20 rounded-2xl object-cover border-4 border-card shadow-md bg-muted" />
+          <h2 className="dw-display text-[calc(20px*var(--dw-text,1))] font-semibold text-foreground mt-2">{patient.name}</h2>
           <p className="text-sm text-muted-foreground">{t(language, "common.relationAge", { relation: patient.relation, age: patient.age })}</p>
           <div className="flex gap-2 mt-3 flex-wrap">
             <span className="text-[calc(11px*var(--dw-text,1))] bg-secondary text-primary border border-primary/20 rounded-full px-2.5 py-1 font-medium">{t(language, "common.bloodType", { type: patient.bloodType })}</span>
@@ -93,8 +105,8 @@ export function PatientScreen({ patient, justAddedMed, onEditProfile, onAddPresc
         {patient.allergies.length > 0 ? (
           <div className="flex flex-wrap gap-2">
             {patient.allergies.map((a, i) => (
-              <span key={i} data-testid={`allergy-${slugify(a)}`} className="inline-flex items-center gap-1.5 bg-red-50 text-red-800 border border-red-200 rounded-xl px-3 py-1.5 text-sm font-semibold">
-                <AlertTriangle size={13} className="text-red-600" /> {a}
+              <span key={i} data-testid={`allergy-${slugify(a)}`} className="inline-flex items-center gap-1.5 bg-missed-bg text-missed-fg border border-missed-border rounded-xl px-3 py-1.5 text-sm font-semibold">
+                <AlertTriangle size={13} className="text-missed-fg" /> {a}
               </span>
             ))}
           </div>
@@ -111,7 +123,7 @@ export function PatientScreen({ patient, justAddedMed, onEditProfile, onAddPresc
             const justAdded = !!justAddedMed && m.name === justAddedMed;
             return (
             <div key={m.name} data-testid={m.medicationId ? `medication-${m.medicationId}` : undefined} className={`px-4 py-3 flex items-center gap-3 ${justAdded ? "bg-taken-bg/60 ring-2 ring-taken/40 rounded-xl" : ""}`}>
-              <MedAvatar name={m.name} size={32} className="rounded-full shrink-0" />
+              <MedAvatar name={m.name} size={36} className="rounded-xl shrink-0" />
               <div className="flex-1 min-w-0">
                 <p className="text-sm font-semibold text-foreground flex items-center gap-1.5 flex-wrap">
                   <span>{m.name} <span className="text-xs font-normal text-muted-foreground">{m.dose}</span></span>
@@ -122,8 +134,8 @@ export function PatientScreen({ patient, justAddedMed, onEditProfile, onAddPresc
                   )}
                 </p>
                 <p className="text-[calc(11px*var(--dw-text,1))] text-muted-foreground">{m.purpose} · {m.times.join(" & ")}</p>
-                {MED_FREQUENCY[m.name] && (
-                  <p className="text-[calc(11px*var(--dw-text,1))] text-muted-foreground">{MED_FREQUENCY[m.name]}</p>
+                {(cadenceFor(m) ?? MED_FREQUENCY[m.name]) && (
+                  <p className="text-[calc(11px*var(--dw-text,1))] text-muted-foreground">{cadenceFor(m) ?? MED_FREQUENCY[m.name]}</p>
                 )}
                 {m.refillDaysLeft && m.refillDaysLeft <= 7 && (
                   <p className="text-[calc(11px*var(--dw-text,1))] text-warn-fg font-medium mt-0.5">{t(language, "common.daysOfSupplyLeft", { count: m.refillDaysLeft })}</p>
@@ -131,10 +143,10 @@ export function PatientScreen({ patient, justAddedMed, onEditProfile, onAddPresc
               </div>
               <button
                 onClick={() => m.ids.forEach(onDeleteMedication)}
-                className="w-7 h-7 rounded-full bg-red-50 border border-red-200 flex items-center justify-center shrink-0 hover:bg-red-100 transition-colors"
+                className="w-8 h-8 rounded-full bg-missed-bg border border-missed-border flex items-center justify-center shrink-0 active:opacity-80 transition-opacity"
                 title={t(language, "common.removeMedication")}
               >
-                <Trash2 size={12} className="text-red-600" />
+                <Trash2 size={13} className="text-missed-fg" />
               </button>
             </div>
             );

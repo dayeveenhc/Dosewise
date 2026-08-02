@@ -19,6 +19,12 @@ export interface Medication {
   pillsRemaining?: number;
   purpose: string;
   colour: string;
+  // Cadence, read back from medications.schedule. Both absent = taken every day.
+  // `days` holds weekday tokens ("mon".."sun"); `intervalDays` is "every N days"
+  // counted from `startDate` (YYYY-MM-DD). See lib/medications.ts::isDueOn.
+  days?: string[];
+  intervalDays?: number;
+  startDate?: string;
 }
 
 export interface Contact {

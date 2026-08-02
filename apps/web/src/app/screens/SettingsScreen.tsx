@@ -206,7 +206,7 @@ export function SettingsScreen({ patient, caregiverAccount, onSwitchMode, onSign
                 <p className="text-sm font-medium text-foreground">{m.name}</p>
                 <p className="text-xs text-muted-foreground">{m.role}</p>
               </div>
-              <div className={`w-2 h-2 rounded-full ${m.active ? "bg-taken-bg0" : "bg-stone-300"}`} />
+              <div className={`w-2.5 h-2.5 rounded-full ${m.active ? "bg-taken" : "bg-muted-foreground/30"}`} />
             </div>
           ))}
           {showAddMember ? (

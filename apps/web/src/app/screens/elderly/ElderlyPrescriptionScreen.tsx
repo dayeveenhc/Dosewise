@@ -2,7 +2,7 @@ import { useState } from "react";
 import { Plus, BookOpen, ChevronDown, History, Check, RefreshCw, ShieldAlert } from "lucide-react";
 import { useAccessibility } from "../../accessibility.tsx";
 import type { Medication, Patient } from "../../types";
-import { to24h, formatClock, supplyDaysLeft, LOW_SUPPLY_DAYS, REFILL_PROMPT_DAYS } from "../../lib/medications";
+import { to24h, formatClock, supplyDaysLeft, cadenceLabel, WEEKDAY_TOKENS, LOW_SUPPLY_DAYS, REFILL_PROMPT_DAYS } from "../../lib/medications";
 import { MED_PLAIN, MED_SIMPLE, MED_SHAPES, EYEDROP_STEPS } from "../../data/medications";
 import { MedAvatar } from "../../components/shared";
 import { useLanguage } from "../../lib/languageContext";
@@ -48,6 +48,13 @@ export function ElderlyPrescriptionScreen({ patient, onAddRx, onRequestRefill, j
   // schedule, wrong here: a twice-daily pill is one prescription, not two. Group
   // back by medication and keep its times for the schedule indicator.
   const prescriptions = groupByMedication(patient.medications);
+
+  // "Mon, Thu" / "Every 2 days" — undefined for a plain daily medicine.
+  const cadenceFor = (m: Medication) => cadenceLabel(
+    m,
+    Object.fromEntries(WEEKDAY_TOKENS.map(d => [d, t(language, `common.dayShort.${d}`)])),
+    n => t(language, "prescription.everyNDays", { n }),
+  );
 
   return (
     <div className="flex-1 overflow-y-auto scrollbar-none">
@@ -154,6 +161,13 @@ export function ElderlyPrescriptionScreen({ patient, onAddRx, onRequestRefill, j
                       {formatClock(time, timeFormat)}
                     </span>
                   ))}
+                  {/* Only shown when the medicine ISN'T daily — "Every day" on
+                      every card would be noise. */}
+                  {cadenceFor(m) && (
+                    <span className="text-[calc(14px*var(--dw-text,1))] font-bold text-foreground bg-muted rounded-lg px-2.5 py-1 whitespace-nowrap">
+                      {cadenceFor(m)}
+                    </span>
+                  )}
                 </div>
 
                 {daysLeft != null && (

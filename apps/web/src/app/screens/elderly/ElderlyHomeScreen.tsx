@@ -9,7 +9,7 @@ import { ConfirmDialog } from "../../components/ConfirmDialog";
 import { BottomSheet } from "../../components/BottomSheet";
 import { useLanguage } from "../../lib/languageContext";
 import { t, localizeMedText } from "../../lib/language";
-import { formatClock, formatClockAt, lowSupplyMedications } from "../../lib/medications";
+import { formatClock, formatClockAt, lowSupplyMedications, isDueOn } from "../../lib/medications";
 
 // --- timeline window: morning (6 AM) to night (11 PM) ----------------------
 // One row per hour, in normal document flow rather than pixel-per-minute
@@ -139,8 +139,12 @@ export function ElderlyHomeScreen({ patient, onLogDose, onUnlogDose, onOpenTrave
   // Memoised because `slots`, `hourRows` and `nextDose` all key on it: a fresh
   // array each render made those three caches miss every time, and left the
   // measure effect below re-subscribing on every render too.
+  // Filtered by the medicine's own cadence first: a pill taken "Mon and Thu", or
+  // every other day, must not appear on a day it isn't actually due.
   const dayMeds = useMemo(
-    () => patient.medications.map(m => ({ ...m, status: statusForDay(m, selectedDay) as MedStatus })),
+    () => patient.medications
+      .filter(m => isDueOn(m, selectedDay))
+      .map(m => ({ ...m, status: statusForDay(m, selectedDay) as MedStatus })),
     // eslint-disable-next-line react-hooks/exhaustive-deps
     [patient.medications, selectedDay, nowMinutes],
   );
@@ -148,7 +152,7 @@ export function ElderlyHomeScreen({ patient, onLogDose, onUnlogDose, onOpenTrave
   // entries — those are written with the elder's wall-clock date.
   const localDateISO = `${today.getFullYear()}-${String(today.getMonth() + 1).padStart(2, "0")}-${String(today.getDate()).padStart(2, "0")}`;
   const takenCount = dayMeds.filter(m => m.status === "taken").length;
-  const total = patient.medications.length;
+  const total = dayMeds.length; // doses due on the SELECTED day, not every medicine on file
   // The shared rule, so this banner lists exactly the medicines the Medications
   // page marks as low. Its own `refillDaysLeft <= 5` test both double-counted a
   // twice-daily medicine and hid ones that page was already flagging.

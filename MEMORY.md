@@ -9,6 +9,51 @@ letting this grow forever — it's a memory aid, not an audit log.
 
 ---
 
+## 2026-08-02 — Caregiver UI revamp: Ask Mei on the elder shape, weekly calendar, token cleanup
+
+User-directed pass over the caregiver interface, mirroring the 2026-07-29
+elderly revamp at caregiver text sizes. `apps/web` only — no backend touched.
+
+**Ask Mei (`AskMeiScreen.tsx`) rebuilt on the elder screen's shape.** Same title
+row + help↔chat switch, same permanent composer with camera/mic *inside* the
+field, same searchable icon-row help view. Deliberately **flat labelled
+sections, not the elder's category tiles** — a category drill-down would have
+pushed Weekly Summary one level deep, which breaks `weekly_summary_tour` step 3
+and e2e s29 (they need `[data-walk="cg-weeklysummary-tile"]` visible right after
+tapping "Quick help"). The chat/help switch is therefore *labelled* "Quick help"
+in chat mode, and `data-tour="cg-askmei"` moved onto the title row that contains
+it — both tour anchors survive untouched. Verified by re-driving
+`weekly_summary_tour` and `patient_schedule_tour` in a real browser against a
+throwaway caregiver account; both complete. (The agent-turn halves of s28/s29
+were NOT re-run — that needs a local Hermes on :8901.)
+
+**Weekly calendar (`TimelineScreen.tsx`).** Week strip days now carry a per-day
+adherence bar instead of a single dot; the weekly grid gained a week-total
+adherence card, per-column `taken/due` counts, and status cells that carry a
+**glyph as well as a hue** (✓ / ✕ / dot / dashed-minus) so they survive the
+colour-vision modes. Two honest empty states added rather than a misleading
+zero: a day with nothing scored yet gets a faint empty track (not a red 0%),
+and a week with nothing due yet says so instead of showing `—%`. Grid columns
+are `minmax(0,1fr)_repeat(7,28px)` — the earlier `1fr_repeat(7,32px)` plus a
+pill avatar truncated every medicine name to "M…" in the 390px frame. The
+cosmetic `statusForDay`/`isDueOnDay` hashes are unchanged (see s28's header).
+
+**Dead status classes fixed.** `bg-taken-bg0` / `bg-missed-bg0` were used in
+`TimelineScreen`, `SettingsScreen` and `SendReminderSheet` — **no such token
+exists** (`theme.css` defines `--color-taken-bg`, not `-bg0`), so those dots and
+the reminder-sent badge had been rendering with no background at all. Now
+`bg-taken` / `bg-missed`.
+
+**Hardcoded palette classes replaced with tokens** across the caregiver screens
+(`bg-red-50`/`text-red-600`/`bg-red-500`, `bg-stone-300/400`, `bg-amber-50`,
+`text-black`, raw `text-white`, and the `#0D5C8A`/`#6B6455` hexes in the weekly
+summary chart). These bypassed the contrast/colour-vision overrides in
+`accessibility.tsx`, which is exactly the failure mode CONTEXT.md warns about —
+the caregiver screens were the last place it survived.
+
+New i18n keys (all six languages): `ai.cgRow{Schedule,WeeklyTour,LinkPatient,
+SwitchView,Notifications}`, `common.{previousWeek,nextWeek,nothingRecordedWeek}`.
+
 ## 2026-07-29 — Elderly UI revamp: brand palette as tokens, help-list Ask Mei, Settings hub, 8 new walkthroughs
 
 Full visual + structural pass over the elderly interface (caregiver brought

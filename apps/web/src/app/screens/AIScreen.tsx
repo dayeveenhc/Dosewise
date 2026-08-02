@@ -36,8 +36,8 @@ function SparklineChart({ data, height = 80, fillOpacity = 0.15 }: { data: Spark
       >
         <defs>
           <linearGradient id={uid} x1="0" y1="0" x2="0" y2="1">
-            <stop offset="0%" stopColor="#0D5C8A" stopOpacity={fillOpacity * 2} />
-            <stop offset="100%" stopColor="#0D5C8A" stopOpacity={0} />
+            <stop offset="0%" stopColor="var(--chart-1)" stopOpacity={fillOpacity * 2} />
+            <stop offset="100%" stopColor="var(--chart-1)" stopOpacity={0} />
           </linearGradient>
         </defs>
 
@@ -45,12 +45,12 @@ function SparklineChart({ data, height = 80, fillOpacity = 0.15 }: { data: Spark
         <path d={areaPath} fill={`url(#${uid})`} />
 
         {/* Line */}
-        <path d={linePath} fill="none" stroke="#0D5C8A" strokeWidth={2} strokeLinejoin="round" strokeLinecap="round" />
+        <path d={linePath} fill="none" stroke="var(--chart-1)" strokeWidth={2} strokeLinejoin="round" strokeLinecap="round" />
 
         {/* Dots + hit areas */}
         {data.map((d, i) => (
           <g key={d.day}>
-            <circle cx={xs[i]} cy={ys[i]} r={3} fill="#0D5C8A" />
+            <circle cx={xs[i]} cy={ys[i]} r={3} fill="var(--chart-1)" />
             <rect
               x={xs[i] - 18} y={pad.top} width={36} height={plotH}
               fill="transparent"
@@ -64,7 +64,7 @@ function SparklineChart({ data, height = 80, fillOpacity = 0.15 }: { data: Spark
           <line
             x1={tooltip.x} y1={pad.top}
             x2={tooltip.x} y2={pad.top + plotH}
-            stroke="#0D5C8A" strokeWidth={1} strokeDasharray="3 3" opacity={0.5}
+            stroke="var(--chart-1)" strokeWidth={1} strokeDasharray="3 3" opacity={0.5}
           />
         )}
 
@@ -75,7 +75,7 @@ function SparklineChart({ data, height = 80, fillOpacity = 0.15 }: { data: Spark
             x={xs[i]} y={H - 4}
             textAnchor="middle"
             fontSize={10}
-            fill="#6B6455"
+            fill="var(--muted-foreground)"
           >
             {d.day}
           </text>
@@ -85,7 +85,7 @@ function SparklineChart({ data, height = 80, fillOpacity = 0.15 }: { data: Spark
       {/* Floating tooltip */}
       {tooltip && (
         <div
-          className="absolute pointer-events-none bg-white border border-border rounded-xl px-2.5 py-1.5 text-xs shadow-md -translate-x-1/2"
+          className="absolute pointer-events-none bg-card border border-border rounded-xl px-2.5 py-1.5 text-xs shadow-md -translate-x-1/2"
           style={{ left: `${(tooltip.x / W) * 100}%`, top: Math.max(0, tooltip.y - 40) }}
         >
           <span className="font-semibold text-foreground">{tooltip.value}%</span>
@@ -103,10 +103,10 @@ export function AIScreen({ patient }: { patient: Patient }) {
       {/* Header */}
       <div className="flex items-start gap-3">
         <div className="w-10 h-10 bg-primary rounded-2xl flex items-center justify-center shrink-0">
-          <Brain size={20} className="text-white" />
+          <Brain size={20} className="text-primary-foreground" />
         </div>
         <div>
-          <h2 className="font-['Fraunces'] text-xl font-semibold text-foreground">{t(language, "common.weeklySummary")}</h2>
+          <h2 className="dw-display text-[calc(20px*var(--dw-text,1))] font-semibold text-foreground">{t(language, "common.weeklySummary")}</h2>
           <p className="text-xs text-muted-foreground">23–29 Jun 2026 · {patient.nickname}</p>
         </div>
       </div>
@@ -115,15 +115,15 @@ export function AIScreen({ patient }: { patient: Patient }) {
       <Card className="p-4">
         <div className="grid grid-cols-3 gap-3 text-center">
           <div className="bg-taken-bg border border-taken-border rounded-xl p-3">
-            <p className="font-['Fraunces'] text-2xl font-semibold text-taken-fg">{patient.adherenceWeek}%</p>
+            <p className="dw-display text-2xl font-semibold text-taken-fg">{patient.adherenceWeek}%</p>
             <p className="text-[calc(10px*var(--dw-text,1))] text-taken-fg font-medium mt-0.5">{t(language, "summary.adherence")}</p>
           </div>
           <div className="bg-missed-bg border border-missed-border rounded-xl p-3">
-            <p className="font-['Fraunces'] text-2xl font-semibold text-missed-fg">3</p>
+            <p className="dw-display text-2xl font-semibold text-missed-fg">3</p>
             <p className="text-[calc(10px*var(--dw-text,1))] text-missed-fg font-medium mt-0.5">{t(language, "summary.missedDoses")}</p>
           </div>
           <div className="bg-upcoming-bg border border-upcoming-border rounded-xl p-3">
-            <p className="font-['Fraunces'] text-2xl font-semibold text-upcoming-fg">29</p>
+            <p className="dw-display text-2xl font-semibold text-upcoming-fg">29</p>
             <p className="text-[calc(10px*var(--dw-text,1))] text-upcoming-fg font-medium mt-0.5">{t(language, "summary.dosesTaken")}</p>
           </div>
         </div>

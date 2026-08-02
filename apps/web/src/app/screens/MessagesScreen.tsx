@@ -50,10 +50,10 @@ export function MessagesScreen({ elderId }: { elderId?: string }) {
         {/* Care-log notes saved via Mei (real rows, newest first) — shown above
             the mock thread; each row is a ChangeHighlight target. */}
         {careNotes.map(n => (
-          <div key={n.id} data-testid={`care_note-${n.id}`} className="bg-amber-50/70 border border-amber-200 rounded-2xl px-3.5 py-2.5">
+          <div key={n.id} data-testid={`care_note-${n.id}`} className="bg-warn-bg border border-warn-border rounded-2xl px-3.5 py-2.5">
             <div className="flex items-center gap-1.5 mb-1">
-              <NotebookPen size={12} className="text-amber-700 shrink-0" />
-              <span className="text-[calc(10px*var(--dw-text,1))] font-bold uppercase tracking-wide text-amber-800">{t(language, "messages.careLogNote")}</span>
+              <NotebookPen size={12} className="text-warn-fg shrink-0" />
+              <span className="text-[calc(10px*var(--dw-text,1))] font-bold uppercase tracking-wide text-warn-fg">{t(language, "messages.careLogNote")}</span>
               <span className="ml-auto text-[calc(10px*var(--dw-text,1))] font-mono text-muted-foreground">{n.time}</span>
             </div>
             <p className="text-sm leading-relaxed text-foreground">{n.body}</p>
@@ -71,7 +71,7 @@ export function MessagesScreen({ elderId }: { elderId?: string }) {
                 </div>
               )}
               <div className={`rounded-2xl px-3.5 py-2.5 ${m.isMe ? "bg-primary text-primary-foreground rounded-tr-sm" : "bg-card border border-border rounded-tl-sm"}`}>
-                <p className={`text-sm leading-relaxed ${m.isMe ? "text-white" : "text-foreground"}`}>{m.body}</p>
+                <p className={`text-sm leading-relaxed ${m.isMe ? "text-primary-foreground" : "text-foreground"}`}>{m.body}</p>
               </div>
               <p className={`text-[calc(10px*var(--dw-text,1))] font-mono text-muted-foreground mt-1 ${m.isMe ? "text-right mr-1" : "ml-1"}`}>{m.time}</p>
             </div>
@@ -95,9 +95,9 @@ export function MessagesScreen({ elderId }: { elderId?: string }) {
           <button
             onClick={send}
             disabled={!draft.trim()}
-            className="w-10 h-10 bg-primary rounded-2xl flex items-center justify-center shrink-0 disabled:opacity-40 transition-opacity"
+            className="w-11 h-11 bg-primary rounded-full flex items-center justify-center shrink-0 disabled:opacity-40 dw-press"
           >
-            <Send size={16} className="text-white" />
+            <Send size={17} className="text-primary-foreground" />
           </button>
         </div>
         <div className="flex gap-2 mt-2 flex-wrap">
