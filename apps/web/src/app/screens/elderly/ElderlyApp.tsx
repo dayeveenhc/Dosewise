@@ -14,16 +14,19 @@ import { HighlightCaption } from "../../components/HighlightCaption";
 import type { AgentAction } from "../../lib/hermes";
 import { GuidedTour } from "../../components/GuidedTour";
 import type { TourStep } from "../../components/GuidedTour";
+import { useContentZoom } from "../../accessibility";
 import { ConfirmDialog } from "../../components/ConfirmDialog";
-import { logDoseTaken, unlogDoseTaken, addMedication, fetchElderMedications, fetchArchivedMedications, to24h } from "../../lib/medications";
+import { logDoseTaken, unlogDoseTaken, addMedication, fetchElderMedications, fetchArchivedMedications, to24h, anyMedicationRunningLow } from "../../lib/medications";
 import { defaultDoseTime } from "../../components/TimesPicker";
 import { MED_COLOURS } from "../../data/medications";
 import { useLanguage } from "../../lib/languageContext";
 import { useAccessibility } from "../../accessibility.tsx";
 import { t } from "../../lib/language";
 import { Walkthrough } from "../../components/Walkthrough";
-import { resolveWalkthroughSteps } from "../../lib/walkthrough/steps";
+import { resolveWalkthroughSteps, walkthroughShellFor } from "../../lib/walkthrough/steps";
+import { AUTONOMOUS_TASKS } from "../../lib/walkthrough/types";
 import { PACING } from "../../lib/walkthrough/pacing";
+import { highlightableEntities } from "../../lib/changeHighlight";
 import { buildVerifyRunner } from "../../lib/walkthrough/verify";
 import type { WalkthroughScreen, WalkthroughTaskName, VerifyDirective, RevealDirective, WalkthroughParams } from "../../lib/walkthrough/types";
 import { loadWalkthroughSession, saveWalkthroughSession, clearWalkthroughSession } from "../../lib/walkthroughState";
@@ -51,7 +54,15 @@ export function ElderlyApp({ patient, elderId, onUpdatePatient, onSignOut, start
   // page) REPLACES this header instead of stacking a second one under it. The
   // owning screen clears it on unmount, so no reset is needed here.
   const [headerOverride, setHeaderOverride] = useState<{ title: string; onBack: () => void; action?: React.ReactNode } | null>(null);
+  // The "Text size" accessibility setting. The app's text is almost all in
+  // absolute-px Tailwind utilities (not rem), so the html --font-size var alone
+  // barely moved anything — the slider looked broken. Proportionally zoom the
+  // scrollable content area (chrome/nav excluded, so nothing clips) so the whole
+  // elder reading surface actually grows/shrinks with the setting. "large" is the
+  // default → scale 1 (no change out of the box).
+  const contentZoom = useContentZoom();
   const [currentTime, setCurrentTime] = useState(() => new Date());
+
   const [pendingAIMessage, setPendingAIMessage] = useState<string | undefined>();
   // Pre-fills Ask Mei's input box WITHOUT sending — the elder still taps Send
   // themselves (unlike pendingAIMessage above, which auto-sends).
@@ -59,6 +70,26 @@ export function ElderlyApp({ patient, elderId, onUpdatePatient, onSignOut, start
   const [walkthroughTask, setWalkthroughTask] = useState<WalkthroughTaskName | null>(null);
   const [walkthroughStepIndex, setWalkthroughStepIndex] = useState(0);
   const [walkthroughParams, setWalkthroughParams] = useState<WalkthroughParams>({});
+  // Bumped when a walkthrough starts: screens that hold their own internal view
+  // state (Ask Mei's help-vs-chat, Settings' sub-pages/search, the Reminders
+  // demo alert) return to the state a tour's first step expects. Same mechanism
+  // as openQuestionsSignal below — the host can't reach into a child's state, and
+  // a tour's onEnter only switches tabs. Ignoring the initial 0 keeps it from
+  // clobbering anything on mount.
+  const [screenResetSignal, setScreenResetSignal] = useState(0);
+  // Whether an ACTIVE caregiver link exists. The emergency contact IS the
+  // linked caregiver now (2026-08-02) — it used to be a mock fixture that was
+  // always present, which quietly guaranteed emergency_contact_tour's final
+  // target existed. With real data that card can be absent, and that step is a
+  // consent waitFor: unreachable target = a scrim with only Exit. Refreshed on
+  // the Reminders tab, where a link is accepted.
+  //
+  // TRI-STATE: `undefined` means "not looked yet". Only a definite `false`
+  // refuses the tour. Starting at `false` refused it during the ~100ms before
+  // the first fetch resolves — telling someone who DOES have a caregiver that
+  // they don't, which is worse than the other way round: with no caregiver the
+  // tour merely reaches its final step's own timeoutMs and says so honestly.
+  const [hasCaregiver, setHasCaregiver] = useState<boolean | undefined>(undefined);
   const [addRx, setAddRx] = useState<null | "scan" | "manual">(null);
   const [showTravel, setShowTravel] = useState(false);
   const [showTour, setShowTour] = useState(!!startTour);
@@ -77,6 +108,13 @@ export function ElderlyApp({ patient, elderId, onUpdatePatient, onSignOut, start
   const revealCaptionRaf = useRef<number>();
   const { language } = useLanguage();
   const { notifications: notifyPrefs, timeFormat } = useAccessibility();
+
+  // Entity ids the current ChangeHighlight is trying to ring — handed to
+  // screens that keep content behind a collapsed section, so they can reveal it
+  // before the highlight's 5s search gives up.
+  const highlightEntityIds = highlightChange
+    ? highlightableEntities(highlightChange).map(e => e.entity_id).filter((id): id is string => !!id)
+    : undefined;
 
   const flagJustAdded = (name?: string) => {
     if (!name) return;
@@ -175,7 +213,7 @@ export function ElderlyApp({ patient, elderId, onUpdatePatient, onSignOut, start
   // chat mid-way and came back) — never across a hard refresh, matching the
   // onboarding wizard's own existing (accepted) behaviour of not surviving one.
   useEffect(() => {
-    const session = loadWalkthroughSession(elderId);
+    const session = loadWalkthroughSession("elder", elderId);
     if (session) {
       setWalkthroughTask(session.taskName);
       setWalkthroughStepIndex(session.stepIndex);
@@ -186,7 +224,12 @@ export function ElderlyApp({ patient, elderId, onUpdatePatient, onSignOut, start
 
   const walkthroughSteps = walkthroughTask ? resolveWalkthroughSteps(walkthroughTask, "elder", walkthroughParams) : [];
 
-  const handleWalkthroughStart = (taskName: WalkthroughTaskName, params: WalkthroughParams = {}) => {
+  // Returns null when the walkthrough started, or a translation key explaining
+  // why it did not. Every refusal used to be console.warn-only, so Mei said "I'll
+  // show you now" and then absolutely nothing happened — indistinguishable from
+  // the app being broken, and the single most confusing failure this shell had.
+  // The chat screen renders the reason instead.
+  const handleWalkthroughStart = (taskName: WalkthroughTaskName, params: WalkthroughParams = {}): string | null => {
     // "onboarding" steps live on the wizard, not this shell — running them here
     // would stall on selectors that never mount. Surface it to App instead
     // (chat→wizard entry; scenario s30 finishes the UX). Deliberately does NOT
@@ -197,12 +240,46 @@ export function ElderlyApp({ patient, elderId, onUpdatePatient, onSignOut, start
     // scrim with no Exit, found live by scenario s30.
     if (taskName === "onboarding" && onStartOnboardingWizard) {
       onStartOnboardingWizard();
-      return;
+      return null;
     }
+    // The request_refill walkthrough spotlights the per-card Request-refill
+    // button, which only exists on a LOW card (lib/medications.ts::isRunningLow;
+    // a medication with no refills row defaults to 30/30). With nothing low it
+    // has nothing to point at. Ask Mei's own row already gates on this — the
+    // chat path did not, so Mei could start a tour that dead-ends immediately.
+    if (taskName === "request_refill" && !anyMedicationRunningLow(patient.medications)) {
+      console.warn("[dosewise] walkthrough \"request_refill\" needs a medication running low — not starting it");
+      return "walk.refused.nothingLow";
+    }
+    // Same shape as the refill gate above: this tour ends on a CONSENT tap of
+    // the emergency-contact Call button, which only renders when a caregiver is
+    // actually linked. Offering the tour without one points at nothing.
+    if (taskName === "emergency_contact_tour" && hasCaregiver === false) {
+      console.warn("[dosewise] walkthrough \"emergency_contact_tour\" needs a linked caregiver — not starting it");
+      return "walk.refused.noCaregiver";
+    }
+    // Shell guard. Hermes offers every task name to both shells with no role
+    // filter, so an elder can be offered a caregiver-only tour — whose very
+    // first target can never exist here. Decline honestly instead of mounting
+    // an overlay that would spotlight nothing.
+    const shell = walkthroughShellFor(taskName, "elder");
+    if (shell && shell !== "elder") {
+      console.warn(`[dosewise] walkthrough "${taskName}" targets the ${shell} shell — not starting it in the elder view`);
+      return "walk.refused.wrongShell";
+    }
+    // Put the screens a walkthrough needs into the state its FIRST step assumes.
+    // Every step's onEnter can only switch bottom-nav tabs, so a screen already
+    // mounted in some other internal state (Ask Mei showing the conversation
+    // rather than the help tiles, Settings sitting inside a sub-page) never
+    // resets — and the tour's opening target simply doesn't exist. Chat is
+    // exactly where a walkthrough is started from, so this was the common case,
+    // not an edge one.
+    setScreenResetSignal(n => n + 1);
     setWalkthroughTask(taskName);
     setWalkthroughStepIndex(0);
     setWalkthroughParams(params);
-    saveWalkthroughSession(elderId, { taskName, stepIndex: 0, startedAt: Date.now(), params });
+    saveWalkthroughSession("elder", elderId, { taskName, stepIndex: 0, startedAt: Date.now(), params });
+    return null;
   };
 
   // Guided Auto-Navigation Verify phase: re-query REAL state (never trust the
@@ -285,13 +362,24 @@ export function ElderlyApp({ patient, elderId, onUpdatePatient, onSignOut, start
     }
   };
 
+  // The dev hook below registers ONCE (empty deps, deliberately — see App.tsx's
+  // note on the window-property race), so it would capture the FIRST render's
+  // handleWalkthroughStart and with it that render's `hasCaregiver` (false) and
+  // `patient` (the pre-hydration fixture). Every gate in it would then answer
+  // from stale data forever: emergency_contact_tour refused even with a linked
+  // caregiver, request_refill judged against the wrong medication list. Route
+  // the hook through a ref that tracks the latest closure instead. The real
+  // production path is unaffected — the chat gets this as a prop each render.
+  const startWalkthroughRef = useRef(handleWalkthroughStart);
+  useEffect(() => { startWalkthroughRef.current = handleWalkthroughStart; });
+
   // Dev-only deterministic trigger so an e2e drive can start an autonomous
   // walkthrough without depending on the LLM choosing start_walkthrough.
   useEffect(() => {
     if (!import.meta.env.DEV) return;
     type Hook = (t: string, p?: WalkthroughParams) => void;
     (window as unknown as { __dwStartWalkthrough?: Hook }).__dwStartWalkthrough = (task, params) =>
-      handleWalkthroughStart(task as WalkthroughTaskName, params ?? {});
+      startWalkthroughRef.current(task as WalkthroughTaskName, params ?? {});
     // Companion hook: fire ChangeHighlight with a committed action (real
     // entity_id) so an e2e can prove the highlight lands on a real record
     // without depending on the LLM choosing a write tool.
@@ -313,21 +401,31 @@ export function ElderlyApp({ patient, elderId, onUpdatePatient, onSignOut, start
     if (!walkthroughTask) return;
     const isLast = walkthroughStepIndex >= walkthroughSteps.length - 1;
     if (isLast) {
-      if (elderId) void markWalkthroughCompleted(elderId, "elder", walkthroughTask);
-      clearWalkthroughSession(elderId);
+      // An AUTONOMOUS walkthrough is not a one-time introduction — it is how the
+      // write is performed — so it never joins the "already shown" list. Hermes
+      // subtracts AUTONOMOUS_TASKS from completed_walkthroughs anyway (that is
+      // the load-bearing fix), but recording them here would keep growing the
+      // stored list with entries that mean nothing and hand the same category
+      // error to the next reader of this column.
+      if (elderId && !AUTONOMOUS_TASKS.has(walkthroughTask)) void markWalkthroughCompleted(elderId, "elder", walkthroughTask);
+      clearWalkthroughSession("elder", elderId);
       setWalkthroughTask(null);
       setWalkthroughStepIndex(0);
       return;
     }
     const next = walkthroughStepIndex + 1;
     setWalkthroughStepIndex(next);
-    saveWalkthroughSession(elderId, { taskName: walkthroughTask, stepIndex: next, startedAt: Date.now() });
+    // `params` MUST ride along. Dropping it here (the start-save above carries
+    // it) meant a mid-run remount rebuilt the steps from the builder DEFAULTS —
+    // so a walkthrough adding "Lisinopril 10mg" silently resumed as
+    // "Metformin 500mg", and then Verify checked for a medicine nobody asked for.
+    saveWalkthroughSession("elder", elderId, { taskName: walkthroughTask, stepIndex: next, startedAt: Date.now(), params: walkthroughParams });
   };
 
   // Exiting/skipping clears client state only — nothing is ever written back
   // for an abandoned walkthrough, only genuine completion (above).
   const handleWalkthroughExit = () => {
-    clearWalkthroughSession(elderId);
+    clearWalkthroughSession("elder", elderId);
     setWalkthroughTask(null);
     setWalkthroughStepIndex(0);
   };
@@ -335,8 +433,8 @@ export function ElderlyApp({ patient, elderId, onUpdatePatient, onSignOut, start
   // opens its doctor tab and the highlight has a card to land on.
   const [openQuestionsSignal, setOpenQuestionsSignal] = useState(0);
   const [doctorQuestions, setDoctorQuestions] = useState<DoctorQ[]>([
-    { id: "seed-1", question: "Can I take Celecoxib and Metformin at the same time?",           addedAt: "Added by Mei · Today",     answered: false },
-    { id: "seed-2", question: "Is it normal to feel a little dizzy after taking Amlodipine?",  addedAt: "Added by Mei · Yesterday", answered: false },
+    { id: "seed-1", question: "Can I take Celecoxib and Metformin at the same time?",           addedAt: "", source: "agent", answered: false, i18nKey: "ai.demoQ1" },
+    { id: "seed-2", question: "Is it normal to feel a little dizzy after taking Amlodipine?",  addedAt: "", source: "agent", answered: false, i18nKey: "ai.demoQ2" },
   ]);
   // Pull the elder's REAL doctor_questions and merge them in (dedupe by id, keep
   // the seed + any local manual adds). Without this, a question Mei queued via
@@ -362,6 +460,11 @@ export function ElderlyApp({ patient, elderId, onUpdatePatient, onSignOut, start
   }, [elderId]);
 
   // Refresh when the elder opens Reminders (where the doctor thread now lives).
+  useEffect(() => {
+    if (!elderId) return;
+    void hasActiveCareLink(elderId).then(setHasCaregiver);
+  }, [elderId, tab]);
+
   useEffect(() => {
     if (tab === "notifications") void refreshDoctorQuestions();
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -447,7 +550,8 @@ export function ElderlyApp({ patient, elderId, onUpdatePatient, onSignOut, start
   const handleAddDoctorQ = async (q: string) => {
     const local: DoctorQ = {
       id: `local-${Date.now()}`, question: q,
-      addedAt: `Added · ${new Date().toLocaleTimeString("en-SG", { hour: "2-digit", minute: "2-digit" })}`,
+      addedAt: new Date().toLocaleTimeString("en-SG", { hour: "2-digit", minute: "2-digit" }),
+      source: "elder",
       answered: false,
     };
     const saved = elderId ? await createDoctorQuestion(elderId, q) : null;
@@ -514,9 +618,9 @@ export function ElderlyApp({ patient, elderId, onUpdatePatient, onSignOut, start
       </div>
 
       {/* Screen content */}
-      <div className="flex-1 min-h-0 overflow-hidden flex flex-col">
+      <div className="flex-1 min-h-0 overflow-hidden flex flex-col" style={{ zoom: contentZoom } as React.CSSProperties}>
         {tab === "home"          && <ElderlyHomeScreen         patient={patient} onLogDose={handleLogDose} onUnlogDose={handleUnlogDose} onOpenTravel={() => setShowTravel(true)} justAddedMed={justAddedMed} onAskMei={openAIPrefill} />}
-        {tab === "prescriptions" && <ElderlyPrescriptionScreen patient={patient} onAddRx={() => setAddRx("manual")} onRequestRefill={name => openAIPrefill(t(language, "ai.refillRequestMsg", { name }))} justAddedMed={justAddedMed} />}
+        {tab === "prescriptions" && <ElderlyPrescriptionScreen patient={patient} onAddRx={() => setAddRx("manual")} onRequestRefill={name => openAIPrefill(t(language, "ai.refillRequestMsg", { name }))} justAddedMed={justAddedMed} highlightIds={highlightEntityIds} />}
         {tab === "ai"            && (
           <ElderlyAIScreen
             patient={patient}
@@ -532,6 +636,7 @@ export function ElderlyApp({ patient, elderId, onUpdatePatient, onSignOut, start
             onPrefillConsumed={() => setPendingPrefill(undefined)}
             onWalkthroughStart={handleWalkthroughStart}
             onHeaderOverride={setHeaderOverride}
+            walkthroughResetSignal={screenResetSignal}
           />
         )}
         {tab === "notifications" && (
@@ -545,9 +650,10 @@ export function ElderlyApp({ patient, elderId, onUpdatePatient, onSignOut, start
             onDismissMessage={onDismissCareMessage}
             onReplyMessage={onReplyCareMessage}
             openQuestionsSignal={openQuestionsSignal}
+            walkthroughResetSignal={screenResetSignal}
           />
         )}
-        {tab === "settings"      && <ElderlySettingsScreen     patient={patient} elderId={elderId} onUpdatePatient={onUpdatePatient} onSignOut={onSignOut} onHeaderOverride={setHeaderOverride} />}
+        {tab === "settings"      && <ElderlySettingsScreen     patient={patient} elderId={elderId} onUpdatePatient={onUpdatePatient} onSignOut={onSignOut} onHeaderOverride={setHeaderOverride} walkthroughResetSignal={screenResetSignal} />}
       </div>
 
       {/* Bottom nav — z-40 keeps it (and the Ask Mei FAB peeking above it) painting

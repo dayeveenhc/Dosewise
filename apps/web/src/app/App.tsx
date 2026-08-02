@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useRef, useState, type CSSProperties, type ReactNode } from "react";
 import type { Session } from "@supabase/supabase-js";
 import { ArrowLeft, Bell, HelpCircle, UserRound } from "lucide-react";
 import type { AppMode, Screen, Patient, Medication, Notification, Message } from "./types";
@@ -28,7 +28,7 @@ import { EditProfileSheet } from "./screens/EditProfileSheet";
 import { ElderlyApp } from "./screens/elderly/ElderlyApp";
 import { ChangeHighlight } from "./components/ChangeHighlight";
 import type { AgentAction } from "./lib/hermes";
-import { AccessibilityProvider } from "./accessibility.tsx";
+import { AccessibilityProvider, useContentZoom } from "./accessibility.tsx";
 import { GuidedTour } from "./components/GuidedTour";
 import type { TourStep } from "./components/GuidedTour";
 import { ConfirmDialog } from "./components/ConfirmDialog";
@@ -39,7 +39,8 @@ import { ScanLinkSheet } from "./components/ScanLinkSheet";
 import { LanguageProvider, readStoredLanguage } from "./lib/languageContext";
 import { t } from "./lib/language";
 import { Walkthrough } from "./components/Walkthrough";
-import { resolveWalkthroughSteps } from "./lib/walkthrough/steps";
+import { resolveWalkthroughSteps, walkthroughShellFor } from "./lib/walkthrough/steps";
+import { AUTONOMOUS_TASKS } from "./lib/walkthrough/types";
 import { buildVerifyRunner } from "./lib/walkthrough/verify";
 import { PACING } from "./lib/walkthrough/pacing";
 import type { WalkthroughScreen, WalkthroughTaskName, WalkthroughParams, VerifyDirective, RevealDirective } from "./lib/walkthrough/types";
@@ -47,6 +48,21 @@ import { defaultDoseTime } from "./components/TimesPicker";
 import { MED_COLOURS } from "./data/medications";
 import { loadWalkthroughSession, saveWalkthroughSession, clearWalkthroughSession } from "./lib/walkthroughState";
 import { markWalkthroughCompleted } from "./lib/profile";
+
+// Proportionally zooms the caregiver screen-content area from the Text-size
+// setting — the counterpart to ElderlyApp's content zoom. Rendered inside
+// AccessibilityProvider (so the hook resolves); chrome/nav stay outside it so
+// nothing clips. Without this the caregiver Text-size slider barely moved,
+// because the app's text is nearly all absolute-px utilities that ignore the
+// html --font-size var.
+function ZoomContent({ className, children }: { className?: string; children: ReactNode }) {
+  const zoom = useContentZoom();
+  return (
+    <div className={className} style={{ zoom } as CSSProperties}>
+      {children}
+    </div>
+  );
+}
 
 export default function App() {
   const [session, setSession] = useState<Session | null>(null);
@@ -90,13 +106,20 @@ export default function App() {
   // caregiver view is showing) can be pushed into the elder's own Notifications
   // tab too, not just a transient toast.
   const [careMessages, setCareMessages] = useState<Message[]>([
-    { id: 1, author: "Tan Wei Ming", role: "Son",      body: "Hi Ah Ma, remember your Celecoxib after lunch today. Dr. Priya called — blood test is next Tuesday at 10am.", time: "10:30 AM",  isMe: false },
-    { id: 2, author: "Tan Shu Fen",  role: "Daughter", body: "Ma, I refilled your Atorvastatin — it's in the cabinet above the stove 💙",                                   time: "Yesterday", isMe: false },
+    // Demo content. role/body/time are rendered from i18nKey (see Message) so
+    // they follow the language setting; the names stay as written.
+    { id: 1, author: "Tan Wei Ming", role: "Son",      body: "Hi Ah Ma, remember your Celecoxib after lunch today. Dr. Priya called — blood test is next Tuesday at 10am.", time: "10:30 AM",  isMe: false, i18nKey: "messages.demo1" },
+    { id: 2, author: "Tan Shu Fen",  role: "Daughter", body: "Ma, I refilled your Atorvastatin — it's in the cabinet above the stove 💙",                                   time: "Yesterday", isMe: false, i18nKey: "messages.demo2" },
   ]);
   const [showSendReminder, setShowSendReminder] = useState<{ medName?: string } | null>(null);
   const [showScanLink, setShowScanLink] = useState(false);
   const [walkthroughTask, setWalkthroughTask] = useState<WalkthroughTaskName | null>(null);
   const [walkthroughStepIndex, setWalkthroughStepIndex] = useState(0);
+  // Every caregiver-shell task is a static tour today, so params are unused by
+  // the resolver here — but they are still stored and restored, so this shell
+  // cannot silently lose them the way the elder shell did if a param-driven
+  // caregiver walkthrough is ever added.
+  const [walkthroughParams, setWalkthroughParams] = useState<WalkthroughParams>({});
   // The committed change being pulse-highlighted caregiver-side (mirrors
   // ElderlyApp's proof layer — the caregiver app previously had none).
   const [highlightChange, setHighlightChange] = useState<AgentAction | null>(null);
@@ -264,15 +287,31 @@ export default function App() {
         sleepTime: profile?.details.sleepTime ?? prev[0].sleepTime,
         travelPlan: profile?.details.travelPlan ?? prev[0].travelPlan,
         doseSnoozes: profile?.details.dose_snoozes ?? prev[0].doseSnoozes,
-        conditions: profile?.details.conditions?.length ? profile.details.conditions : prev[0].conditions,
+        // Nothing anywhere persists a blood type — the caregiver's editor keeps
+        // it in memory only — so inheriting the demo fixture's "B+" put an
+        // invented medical fact on a real person's record. Say we don't know.
+        bloodType: "Unknown",
+        // Same reasoning as bloodType above, and the same class of bug: nothing
+        // persists an emergency contact, so inheriting the fixture's
+        // "Tan Wei Ming / +65 9123 4567" put a fabricated person AND a
+        // fabricated phone number on a real account — while Mei, reading real
+        // care_links, correctly said there was no caregiver. The real emergency
+        // contact is the linked caregiver; Settings reads it from care_links.
+        contacts: [],
+        // NO mock fallback for medical facts. These used to fall back to
+        // data/patients.ts's seeded demo patient when the real profile was
+        // empty, which put "Type 2 Diabetes", "Hypertension" and "Osteoarthritis"
+        // on real accounts that had never recorded a condition — and, being
+        // fixture text rather than catalog values, they were also untranslatable,
+        // which is how this surfaced as "the conditions don't change language".
+        // An empty list is the truth; the screens render their own empty state.
+        conditions: profile?.details.conditions ?? [],
         // Allergy entries may be legacy strings or promoted {name, severity}
         // objects — Patient.allergies stays a plain name list.
-        allergies: profile?.details.allergies?.length || profile?.details.drugAllergies?.length
-          ? [
-              ...normalizeAllergies(profile.details.allergies).map(a => a.name).filter(Boolean),
-              ...(profile.details.drugAllergies ?? []),
-            ]
-          : prev[0].allergies,
+        allergies: [
+          ...normalizeAllergies(profile?.details.allergies).map(a => a.name).filter(Boolean),
+          ...(profile?.details.drugAllergies ?? []),
+        ],
         medications,
         pastMedications,
         adherenceToday,
@@ -316,17 +355,21 @@ export default function App() {
   // Resume a same-tab, in-progress walkthrough (e.g. switched to another
   // screen mid-way and came back) — never across a hard refresh.
   useEffect(() => {
-    const restored = loadWalkthroughSession(elderId);
+    const restored = loadWalkthroughSession("caregiver", elderId);
     if (restored) {
       setWalkthroughTask(restored.taskName);
       setWalkthroughStepIndex(restored.stepIndex);
+      setWalkthroughParams(restored.params ?? {});
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  const walkthroughSteps = walkthroughTask ? resolveWalkthroughSteps(walkthroughTask, "caregiver") : [];
+  const walkthroughSteps = walkthroughTask ? resolveWalkthroughSteps(walkthroughTask, "caregiver", walkthroughParams) : [];
 
-  const handleWalkthroughStart = (taskName: WalkthroughTaskName, params: WalkthroughParams = {}) => {
+  // Returns null when the walkthrough started, or a translation key saying why
+  // it did not — mirror of ElderlyApp's. A console.warn-only refusal left Mei
+  // promising a walkthrough that never appeared.
+  const handleWalkthroughStart = (taskName: WalkthroughTaskName, params: WalkthroughParams = {}): string | null => {
     // The add-prescription walkthrough is elder-shell only (its steps drive the
     // elderly screens); the caregiver shell can't run it. So here Mei's "add it"
     // is fulfilled by a direct save from the same params, then we land on the
@@ -342,11 +385,21 @@ export default function App() {
       });
       setScreen("patient");
       flagJustAdded(params.name);
-      return;
+      return null;
+    }
+    // Shell guard — mirror of ElderlyApp's. Hermes offers every task name to
+    // both shells with no role filter, so the caregiver can be offered an
+    // elder-only walkthrough whose selectors never mount here.
+    const shell = walkthroughShellFor(taskName, "caregiver");
+    if (shell && shell !== "caregiver") {
+      console.warn(`[dosewise] walkthrough "${taskName}" targets the ${shell} shell — not starting it in the caregiver view`);
+      return "walk.refused.wrongShell";
     }
     setWalkthroughTask(taskName);
     setWalkthroughStepIndex(0);
-    saveWalkthroughSession(elderId, { taskName, stepIndex: 0, startedAt: Date.now() });
+    setWalkthroughParams(params);
+    saveWalkthroughSession("caregiver", elderId, { taskName, stepIndex: 0, startedAt: Date.now(), params });
+    return null;
   };
 
   // Dev-only deterministic triggers, mirroring ElderlyApp.tsx's caregiver-side
@@ -362,11 +415,17 @@ export default function App() {
   // regression suite (every elder-mode dev-hook scenario intermittently landed
   // on a plain Home screen with no overlay at all — the caregiver's
   // no-op-for-this-task handleWalkthroughStart had silently won the race).
+  // See ElderlyApp: the hook must call the LATEST closure, not the one from
+  // the render that registered it, or every gate inside answers from stale
+  // state forever.
+  const startWalkthroughRef = useRef(handleWalkthroughStart);
+  useEffect(() => { startWalkthroughRef.current = handleWalkthroughStart; });
+
   useEffect(() => {
     if (!import.meta.env.DEV || appMode !== "caregiver") return;
     type Hook = (t: string, p?: WalkthroughParams) => void;
     (window as unknown as { __dwStartWalkthrough?: Hook }).__dwStartWalkthrough = (task, params) =>
-      handleWalkthroughStart(task as WalkthroughTaskName, params ?? {});
+      startWalkthroughRef.current(task as WalkthroughTaskName, params ?? {});
     type HlHook = (action: AgentAction) => void;
     (window as unknown as { __dwHighlightChange?: HlHook }).__dwHighlightChange = action =>
       setHighlightChange(action);
@@ -384,21 +443,29 @@ export default function App() {
   const handleWalkthroughAdvance = () => {
     if (!walkthroughTask) return;
     if (walkthroughStepIndex >= walkthroughSteps.length - 1) {
-      if (elderId) void markWalkthroughCompleted(elderId, "caregiver", walkthroughTask);
-      clearWalkthroughSession(elderId);
+      // An AUTONOMOUS walkthrough is not a one-time introduction — it is how the
+      // write is performed — so it never joins the "already shown" list. Hermes
+      // subtracts AUTONOMOUS_TASKS from completed_walkthroughs anyway (that is
+      // the load-bearing fix), but recording them here would keep growing the
+      // stored list with entries that mean nothing and hand the same category
+      // error to the next reader of this column.
+      if (elderId && !AUTONOMOUS_TASKS.has(walkthroughTask)) void markWalkthroughCompleted(elderId, "caregiver", walkthroughTask);
+      clearWalkthroughSession("caregiver", elderId);
       setWalkthroughTask(null);
       setWalkthroughStepIndex(0);
       return;
     }
     const next = walkthroughStepIndex + 1;
     setWalkthroughStepIndex(next);
-    saveWalkthroughSession(elderId, { taskName: walkthroughTask, stepIndex: next, startedAt: Date.now() });
+    // params ride along — see ElderlyApp: dropping them made a mid-run remount
+    // silently rebuild the steps from the builder defaults.
+    saveWalkthroughSession("caregiver", elderId, { taskName: walkthroughTask, stepIndex: next, startedAt: Date.now(), params: walkthroughParams });
   };
 
   // Exiting/skipping clears client state only — never written back for an
   // abandoned walkthrough, only genuine completion (above).
   const handleWalkthroughExit = () => {
-    clearWalkthroughSession(elderId);
+    clearWalkthroughSession("caregiver", elderId);
     setWalkthroughTask(null);
     setWalkthroughStepIndex(0);
   };
@@ -528,7 +595,7 @@ export default function App() {
       id: Date.now(), type: "reminder", title: t(lang, "toast.reminderSent"), body: text,
       time: "Just now", read: true, patientId: patients[selectedPatient].id,
     }, ...prev]);
-    setCareMessages(prev => [{ id: Date.now() + 1, author: "Your caregiver", role: "Reminder", body: text, time: "Just now", isMe: false }, ...prev]);
+    setCareMessages(prev => [{ id: Date.now() + 1, author: t(lang, "messages.yourCaregiver"), role: t(lang, "messages.reminderRole"), body: text, time: t(lang, "common.justNow"), isMe: false }, ...prev]);
     setElderToasts(prev => [...prev, { id: Date.now() + 2, title: t(lang, "toast.reminderFromCaregiver"), body: text }]);
   };
 
@@ -569,6 +636,15 @@ export default function App() {
   if (appMode === "onboarding") {
     return (
       <LanguageProvider>
+        {/* AccessibilityProvider is REQUIRED here, not optional chrome. The
+            wizard's routine step renders TimeFields, and current-meds /
+            med-history render TimesPicker via MedList — all three call
+            useAccessibility() (for the 12h/24h setting), and that hook THROWS
+            when the provider is missing. Without this wrapper the hook threw
+            during render, React unmounted the whole tree, and every new user
+            hit a blank white screen the moment they reached "When do you
+            usually eat and sleep?". Caught by scenario s30. */}
+        <AccessibilityProvider>
         <div className="min-h-dvh flex items-center justify-center bg-[#CBC7B8] md:p-4" style={{ fontFamily: "'DM Sans', system-ui, sans-serif" }}>
           <div className="w-full h-dvh bg-background dw-app-bg relative overflow-hidden flex flex-col md:w-[390px] md:h-[844px] md:rounded-[3rem] md:shadow-2xl md:border-[6px] md:border-black">
             {preAuthStage === "welcome" && (
@@ -623,6 +699,7 @@ export default function App() {
             )}
           </div>
         </div>
+        </AccessibilityProvider>
       </LanguageProvider>
     );
   }
@@ -722,7 +799,7 @@ export default function App() {
           </div>
 
           {/* Screen content */}
-          <div className={`flex-1 ${screen === "ai" ? "overflow-hidden flex flex-col" : "overflow-y-auto scrollbar-none"}`}>
+          <ZoomContent className={`flex-1 ${screen === "ai" ? "overflow-hidden flex flex-col" : "overflow-y-auto scrollbar-none"}`}>
             {screen === "dashboard" && <DashboardScreen patient={patient} onNavigate={setScreen} onSendReminder={handleSendReminder} />}
             {screen === "patient" && (
               <PatientScreen
@@ -745,7 +822,7 @@ export default function App() {
             {screen === "ai" && <AskMeiScreen patient={patient} elderId={elderId} onUpdatePatient={handleUpdatePatient} onNavigate={setScreen} onMedsChanged={refreshMedications} onMedAdded={flagJustAdded} onHighlightChange={setHighlightChange} onWalkthroughStart={handleWalkthroughStart} />}
             {screen === "messages" && <MessagesScreen elderId={elderId} />}
             {screen === "settings" && <SettingsScreen patient={patient} caregiverAccount={caregiverAccount} onSwitchMode={openModeSwitch} onSignOut={() => supabase.auth.signOut()} onEditProfile={() => setShowEditProfile(true)} />}
-          </div>
+          </ZoomContent>
 
           {/* Modals */}
           {showAddPrescription && (

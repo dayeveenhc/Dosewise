@@ -77,4 +77,11 @@ export interface Message {
   body: string;
   time: string;
   isMe: boolean;
+  /** Demo/seed messages only: a translation-key PREFIX ("messages.demo1") whose
+   *  `.role`/`.body`/`.time` keys the Reminders screen renders instead of the
+   *  literals above. Seeded English text is the largest block of untranslated
+   *  copy on that page, and it cannot be localized at seed time — the seed is
+   *  created above LanguageProvider and would freeze whatever language was
+   *  current at first mount. Person NAMES are never translated. */
+  i18nKey?: string;
 }

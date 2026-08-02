@@ -2,7 +2,7 @@ import { useState, useRef, useEffect } from "react";
 import type { ReactNode, ChangeEvent } from "react";
 import { X, Check, Plus, Pill, Camera, PenLine, Image as ImageIcon, Sparkles } from "lucide-react";
 import type { Medication } from "../types";
-import { MED_COLOURS, MEDICATION_CATALOG, COMMON_CONDITIONS, MED_PHOTOS } from "../data/medications";
+import { MED_COLOURS, MEDICATION_CATALOG, COMMON_CONDITIONS, MED_PHOTOS, localizeCatalogValue } from "../data/medications";
 import { TimesPicker, defaultDoseTime } from "../components/TimesPicker";
 import type { RoutineTimes } from "../components/TimesPicker";
 import { agentTurn, fileToBase64 } from "../lib/hermes";
@@ -330,7 +330,10 @@ export function AddPrescriptionSheet({ onClose, onAdd, onAdded, initialTab = "ma
                   onChange={setPurpose}
                   onPick={c => setPurpose(c.value)}
                   items={withCatalogLabels(COMMON_CONDITIONS, language)}
-                  filter={(c, q) => c.label.toLowerCase().includes(q)}
+                  // Match the localized label OR the canonical English value —
+                  // filtering on the label alone meant typing "diab" in Chinese
+                  // matched nothing.
+                  filter={(c, q) => c.label.toLowerCase().includes(q) || c.value.toLowerCase().includes(q)}
                   label={c => c.label}
                   placeholder={t(language, "wizard.conditionsPlaceholder")}
                 />
@@ -372,7 +375,7 @@ export function AddPrescriptionSheet({ onClose, onAdd, onAdded, initialTab = "ma
                   </div>
                   <div>
                     <p className="text-sm font-semibold text-foreground">{name} <span className="text-xs font-normal text-muted-foreground">{dose}</span></p>
-                    <p className="text-[calc(11px*var(--dw-text,1))] text-muted-foreground">{purpose} · {selectedTimes.join(" • ") || "8:00 AM"}</p>
+                    <p className="text-[calc(11px*var(--dw-text,1))] text-muted-foreground">{localizeCatalogValue(purpose, k => t(language, k))} · {selectedTimes.join(" • ") || "8:00 AM"}</p>
                   </div>
                 </div>
               )}

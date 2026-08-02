@@ -131,6 +131,41 @@ export async function respondToLinkRequest(linkId: string, accept: boolean): Pro
   return !error;
 }
 
+export interface LinkedCaregiver {
+  id: string;
+  /** From the link's own permissions blob — see the module header for why the
+   *  elder cannot read the caregiver's profiles row. Null when unrecorded
+   *  (seeded/provisioned links carry no name), which the UI must show honestly
+   *  rather than filling in. */
+  name: string | null;
+  relationship: string | null;
+}
+
+// Elder-side: who is ACTIVELY linked as a caregiver. This is the app's real
+// emergency contact — the Settings card used to render data/patients.ts's demo
+// fixture ("Tan Wei Ming / +65 9123 4567") on every real account, so the app
+// showed a phone number for someone who did not exist while Mei (list_caregivers)
+// correctly said nobody was linked. There is NO phone column anywhere in the
+// schema, so no number is returned here either.
+export async function fetchLinkedCaregivers(elderId: string): Promise<LinkedCaregiver[]> {
+  const { data } = await supabase
+    .from("care_links")
+    .select("id,relationship,permissions")
+    .eq("elder_id", elderId).eq("status", "active")
+    .order("created_at", { ascending: true });
+  return (data ?? []).map(row => {
+    const perms = (row.permissions ?? {}) as { requested_by_name?: string; relationship?: string };
+    return {
+      id: row.id as string,
+      name: perms.requested_by_name?.trim() || null,
+      // permissions.relationship beats the column: the re-arm path in
+      // createLinkRequest updates only {status, permissions}, so the top-level
+      // column can be stale. Mirrors services/hermes tools/caregiver.py.
+      relationship: perms.relationship?.trim() || (row.relationship as string | null) || null,
+    };
+  });
+}
+
 // Elder-side: does the elder have at least one ACTIVE caregiver link? Used by the
 // accept-caregiver-link walkthrough's Verify phase to re-query real state after
 // the elder taps Accept — never trusting the update's own return.

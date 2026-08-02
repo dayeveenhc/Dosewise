@@ -51,6 +51,29 @@ _LOG_SCHEMA = {
 }
 
 
+_REQUEST_SCHEMA = {
+    "name": "request_refill",
+    "description": (
+        "Send a refill REQUEST to the elder's doctor — it goes into the Ask-a-Doctor "
+        "thread the caregiver also sees, so the doctor can re-prescribe/approve it. "
+        "Use this whenever the elder wants a refill or to re-order a medication "
+        "('I need a refill for X', 'ask my doctor to renew X'). This is NOT for "
+        "recording how many pills are left — that's log_refill. Commit immediately "
+        "(no propose/confirm): queuing a question for the doctor is low-stakes."
+    ),
+    "input_schema": {
+        "type": "object",
+        "properties": {
+            "medication_name": {
+                "type": "string",
+                "description": "Medication the elder wants refilled.",
+            },
+        },
+        "required": ["medication_name"],
+    },
+}
+
+
 def _daily_pills(schedule: dict | None) -> int:
     """Best-effort pills-per-day from a medication schedule (len of times, min 1)."""
     times = (schedule or {}).get("times") or []
@@ -162,5 +185,64 @@ async def log_refill(
     return f"Updated {med['name']}: {pills_remaining} pills on hand{tail}."
 
 
+async def request_refill(ctx: ToolContext, medication_name: str) -> str:
+    # Resolve to the canonical name if the med is on file (so the doctor sees the
+    # real name), but don't hard-fail if it isn't — the elder can still ask.
+    meds = await find_medications(ctx, medication_name, columns="id,name")
+    name = meds[0]["name"] if meds else medication_name
+
+    # Don't queue a duplicate: if an open refill request for this same med is
+    # already on the doctor's list, say so instead of inserting a second row (the
+    # caregiver sees this thread too — two identical requests is just noise). The
+    # jsonb `context` isn't filterable via FakeDB's eq semantics, so filter the
+    # elder's own open agent rows in Python.
+    existing = await ctx.db().select(
+        "doctor_questions",
+        columns="id,context,status,source",
+        filters={
+            "elder_id": f"eq.{ctx.elder_id}",
+            "status": "eq.open",
+            "source": "eq.agent",
+        },
+    )
+    for row in existing:
+        c = row.get("context") or {}
+        if c.get("kind") == "refill" and str(c.get("medication", "")).lower() == name.lower():
+            return (
+                f"A refill request for {name} is already on your doctor's list and "
+                "still open — I didn't add a duplicate."
+            )
+
+    question = f"Refill request: please re-prescribe {name}."
+    inserted = await ctx.db().insert(
+        "doctor_questions",
+        {
+            "elder_id": ctx.elder_id,
+            "question": question,
+            "context": {"kind": "refill", "medication": name},
+            "source": "agent",
+            "status": "open",
+        },
+        returning=True,
+    )
+    # entity_type="doctor_message" so the web client routes the highlight to the
+    # Ask-a-Doctor thread (changeHighlight.ts), same as add_doctor_question — a
+    # refill request belongs on the doctor's list, not in the pill-count card.
+    record_action(
+        ctx,
+        tool="request_refill",
+        summary=question,
+        entity_type="doctor_message",
+        entity_id=first_id(inserted),
+        changed_fields={"question": {"before": None, "after": question}},
+        name=name,
+    )
+    return (
+        f"I've added a refill request for {name} to your doctor's list — they'll "
+        "see it on their next review."
+    )
+
+
 register(_CHECK_SCHEMA, check_refills)
 register(_LOG_SCHEMA, log_refill)
+register(_REQUEST_SCHEMA, request_refill)

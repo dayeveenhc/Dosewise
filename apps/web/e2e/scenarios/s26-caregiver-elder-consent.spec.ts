@@ -3,6 +3,7 @@ import { mkdirSync } from "node:fs";
 import {
   anonClient, assertPhaseMins, createCaregiverWithPendingLink, createThrowawayElder,
   expectRow, readPhaseLog, recheckDb, resetPhaseLog, signIn, startWalkthrough,
+  tapWalkthroughNext, finishWalkthrough,
 } from "../helpers";
 import { PACING } from "../../src/app/lib/walkthrough/pacing";
 
@@ -15,7 +16,8 @@ import { PACING } from "../../src/app/lib/walkthrough/pacing";
 // THE consent guarantee under test: Mei may autonomously NAVIGATE the elder to
 // the pending request (step "acceptLink.open" — has `act`), but the ELDER must
 // tap Accept THEMSELVES (step "acceptLink.accept" — `waitFor: write-committed`,
-// `skippable: false`, NO `act` — read directly off
+// NO `act` — which is what actually guarantees consent (no act => not
+// autonomous => no Next button at all). Read directly off
 // src/app/lib/walkthrough/steps/accept_caregiver_link.ts, READ-ONLY). Mei never
 // auto-grants account access. Only after that real, RLS-enforced write does the
 // final act-less step ("acceptLink.verify") re-query care_links to confirm the
@@ -62,17 +64,19 @@ test("s26 caregiver-elder-consent: the elder's own tap (not Mei) flips care_link
   await resetPhaseLog(page); // clear BEFORE the phase under test
   await startWalkthrough(page, "accept_caregiver_link");
 
-  // step1 (acceptLink.open) probe, done IMMEDIATELY: autonomous (has `act`) ->
-  // per Walkthrough.tsx the Next button DOES render (gated only on
-  // `autonomous && !phaseError`, disabled until its own phase's minimum) for
-  // the ~NAVIGATE_MS+PRE_CLICK_MS window this step is live, before it
-  // auto-advances to step2. Verified live here, not assumed.
-  const nextBtn = page.getByRole("button", { name: "Next", exact: true });
-  await expect(nextBtn, "step1 HAS an act -> autonomous -> Next IS rendered").toBeVisible({ timeout: 5_000 });
+  // step1 (acceptLink.open) probe: autonomous (has `act`) -> per Walkthrough.tsx
+  // the Next button DOES render (gated only on `autonomous && !phaseError`,
+  // disabled until its own phase's minimum). It now HOLDS here until tapped
+  // rather than auto-advancing, so the probe is no longer racing a window.
+  const nextBtn = page.getByRole("button", { name: /^(Next|Done)$/ });
+  await expect(nextBtn, "step1 HAS an act -> autonomous -> Next IS rendered").toBeVisible({ timeout: 15_000 });
+  await tapWalkthroughNext(page);
 
   // step2 (acceptLink.accept): the pending-request card renders only once
-  // fetchPendingLinkRequests resolves — wait for the SPECIFIC fixture row's
-  // own button (exact id, tighter than the "^=" prefix other specs use).
+  // fetchPendingLinkRequests resolves — a real Supabase round-trip. The
+  // spotlight now keeps looking for it for MEASURE_TIMEOUT_MS and the step's
+  // click listener re-attaches until it appears; before that, losing this race
+  // left a black screen with no Exit and the tour stopped dead here.
   const accept = page.locator(`[data-walk="care-link-accept-${linkId}"]`);
   await expect(accept, "step2 accept button (this exact fixture row) visible").toBeVisible({ timeout: 15_000 });
 
@@ -125,7 +129,11 @@ test("s26 caregiver-elder-consent: the elder's own tap (not Mei) flips care_link
   // own pacing, so it does not by itself guarantee the reveal phase finished.
   await expect(nextBtn, "Next enabled once reveal's own pulse floor elapses").toBeEnabled({ timeout: 5_000 });
   await nextBtn.click();
-  await expect(replayBtn, "walkthrough completed after Next (last step)").toBeHidden({ timeout: 10_000 });
+  await expect(replayBtn, "dwell ended; the step still holds at its commit gate").toBeHidden({ timeout: 10_000 });
+  // That tap only ended the dwell. The commit gate needs its own tap — which on
+  // the last step reads "Done" and ends the walkthrough.
+  await finishWalkthrough(page);
+  await expect(nextBtn, "walkthrough completed after the commit tap").toHaveCount(0, { timeout: 10_000 });
 
   // Independent RE-CHECK: the ELDER's own tap — never Mei — flipped the row.
   await expect

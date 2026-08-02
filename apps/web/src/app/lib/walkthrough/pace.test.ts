@@ -4,9 +4,10 @@ import { onWalkthroughEvent, WALK_PHASE_EVENT } from "./bus";
 import { readPhaseLog, resetPhaseLog } from "./phaseLog";
 
 // The pacing contract every walkthrough wait depends on: paced() floors each
-// phase at its minimum (the minimums ARE the auto pace), Next can only shorten
-// what lies beyond a minimum, and real work (a verify re-query) is never cut
-// short — so the engine can neither rush an elderly user nor fake a result.
+// phase at its minimum, Next can only shorten what lies beyond a minimum, real
+// work (a verify re-query) is never cut short, and awaitNext() holds the step
+// indefinitely until the person taps — so the engine can neither rush an
+// elderly user, advance without them, nor fake a result.
 
 beforeEach(() => {
   vi.useFakeTimers();
@@ -144,5 +145,88 @@ describe("createPaceController — replay", () => {
     await vi.advanceTimersByTimeAsync(101);
     await p;
     expect(c.consumeReplay()).toBe(false);
+  });
+});
+
+// The terminal commit gate. Autonomous walkthrough steps no longer advance on
+// their own; awaitNext() is what holds them until the person is ready.
+describe("createPaceController — awaitNext() (terminal commit gate)", () => {
+  it("opens with canAdvance immediately so Next is tappable, and publishes the phase", async () => {
+    const c = createPaceController();
+    const seen: unknown[] = [];
+    const off = onWalkthroughEvent(WALK_PHASE_EVENT, d => seen.push(d));
+    settledFlag(c.awaitNext("ready"));
+    expect(c.state()).toEqual({ phase: "ready", canAdvance: true });
+    expect(seen).toContainEqual({ phase: "ready", canAdvance: true });
+    off();
+    c.cancel();
+  });
+
+  // Guards the setTimeout-clamp trap: browsers clamp delays above 2^31-1 ms to
+  // ~1ms, so implementing the gate as a very long sleep would resolve at once.
+  it("NEVER resolves on its own, no matter how much time passes", async () => {
+    const c = createPaceController();
+    const s = settledFlag(c.awaitNext("ready"));
+    await vi.advanceTimersByTimeAsync(60 * 60 * 1000);
+    expect(s.done).toBe(false);
+    c.cancel();
+  });
+
+  it("resolves on requestNext()", async () => {
+    const c = createPaceController();
+    const s = settledFlag(c.awaitNext("ready"));
+    await vi.advanceTimersByTimeAsync(10);
+    expect(s.done).toBe(false);
+    c.requestNext();
+    await vi.advanceTimersByTimeAsync(1);
+    expect(s.done).toBe(true);
+  });
+
+  // The load-bearing separation: a Next that merely fast-forwarded the PREVIOUS
+  // phase must not also satisfy the gate, or the whole gate vanishes on one tap.
+  it("is NOT satisfied by a Next that fast-forwarded an earlier phase", async () => {
+    const c = createPaceController();
+    const paced = settledFlag(c.paced("reveal", 100, () => c.dwell(5_000)));
+    await vi.advanceTimersByTimeAsync(150);
+    c.requestNext(); // ends the dwell early
+    await vi.advanceTimersByTimeAsync(5);
+    expect(paced.done).toBe(true);
+
+    const gate = settledFlag(c.awaitNext("ready"));
+    await vi.advanceTimersByTimeAsync(10_000);
+    expect(gate.done).toBe(false);
+
+    c.requestNext(); // the real commit tap
+    await vi.advanceTimersByTimeAsync(1);
+    expect(gate.done).toBe(true);
+  });
+
+  it("cancel() resolves the gate and leaves no phase", async () => {
+    const c = createPaceController();
+    const s = settledFlag(c.awaitNext("ready"));
+    c.cancel();
+    await vi.advanceTimersByTimeAsync(1);
+    expect(s.done).toBe(true);
+    expect(c.state()).toEqual({ phase: null, canAdvance: false });
+  });
+
+  it("records a phase-log entry with minMs 0 — the wait is the person's", async () => {
+    const c = createPaceController({ stepId: "t.step" });
+    settledFlag(c.awaitNext("ready"));
+    await vi.advanceTimersByTimeAsync(500);
+    c.requestNext();
+    await vi.advanceTimersByTimeAsync(1);
+    const entry = readPhaseLog().find(e => e.phase === "ready");
+    expect(entry).toBeDefined();
+    expect(entry!.minMs).toBe(0);
+    expect(entry!.stepId).toBe("t.step");
+  });
+
+  it("ignores requestReplay() while the gate is open (Replay is reveal-only)", async () => {
+    const c = createPaceController();
+    settledFlag(c.awaitNext("ready"));
+    c.requestReplay();
+    expect(c.consumeReplay()).toBe(false);
+    c.cancel();
   });
 });

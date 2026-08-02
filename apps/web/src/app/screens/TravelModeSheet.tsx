@@ -8,14 +8,7 @@ import { BottomSheet } from "../components/BottomSheet";
 import { useLanguage } from "../lib/languageContext";
 import { t } from "../lib/language";
 import { emitWalkthroughEvent } from "../lib/walkthrough/bus";
-
-const TIMEZONES = [
-  "Singapore (UTC+8)", "Malaysia (UTC+8)", "Thailand (UTC+7)", "Indonesia — Jakarta (UTC+7)",
-  "Japan (UTC+9)", "South Korea (UTC+9)", "China (UTC+8)", "Hong Kong (UTC+8)",
-  "Taiwan (UTC+8)", "Vietnam (UTC+7)", "Philippines (UTC+8)",
-  "Australia — Sydney (UTC+11)", "India (UTC+5:30)", "United Kingdom (UTC+0)",
-  "USA — New York (UTC-5)", "USA — Los Angeles (UTC-8)", "UAE — Dubai (UTC+4)",
-];
+import { TIMEZONES } from "../lib/constants";
 
 interface TravelPlan { startDate: string; endDate: string; timezone: string }
 

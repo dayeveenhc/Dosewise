@@ -70,8 +70,12 @@ export function buildVerifyRunner(deps: VerifyDeps): (verify: VerifyDirective) =
         });
       case "travel-plan-saved":
         return pollVerify(async () => {
-          const profile = await deps.fetchProfile(elderId);
-          return !!profile?.details.travelPlan?.startDate;
+          const plan = (await deps.fetchProfile(elderId))?.details.travelPlan;
+          // Every field, not just startDate. Checking startDate alone meant a
+          // travel plan saved with a BLANKED timezone (what an unmatched
+          // <select> value leaves behind) verified as a success, and Mei told
+          // the elder it had saved correctly. A partial plan is a failed plan.
+          return !!plan?.startDate && !!plan.endDate && !!plan.timezone?.trim();
         });
       case "profile-field":
         return pollVerify(async () => {

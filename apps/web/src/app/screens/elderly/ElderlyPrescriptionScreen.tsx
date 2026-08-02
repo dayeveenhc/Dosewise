@@ -1,9 +1,9 @@
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { Plus, BookOpen, ChevronDown, History, Check, RefreshCw, ShieldAlert } from "lucide-react";
 import { useAccessibility } from "../../accessibility.tsx";
 import type { Medication, Patient } from "../../types";
 import { to24h, formatClock, supplyDaysLeft, LOW_SUPPLY_DAYS, REFILL_PROMPT_DAYS } from "../../lib/medications";
-import { MED_PLAIN, MED_SIMPLE, MED_SHAPES, EYEDROP_STEPS } from "../../data/medications";
+import { MED_PLAIN, MED_SIMPLE, MED_SHAPES, EYEDROP_STEPS, localizeCatalogValue } from "../../data/medications";
 import { MedAvatar } from "../../components/shared";
 import { useLanguage } from "../../lib/languageContext";
 import { t } from "../../lib/language";
@@ -30,7 +30,7 @@ function groupByMedication(meds: Medication[]): GroupedMed[] {
   return out;
 }
 
-export function ElderlyPrescriptionScreen({ patient, onAddRx, onRequestRefill, justAddedMed }: {
+export function ElderlyPrescriptionScreen({ patient, onAddRx, onRequestRefill, justAddedMed, highlightIds }: {
   patient: Patient;
   onAddRx: () => void;
   // Opens Ask Mei with a refill message PRE-FILLED (never auto-sent — the
@@ -38,11 +38,23 @@ export function ElderlyPrescriptionScreen({ patient, onAddRx, onRequestRefill, j
 
   onRequestRefill: (medName: string) => void;
   justAddedMed?: string | null;
+  // Entity ids ChangeHighlight is currently trying to ring. Stopped medicines
+  // live behind a collapsed accordion, so a discontinue highlight had nothing
+  // to find and gave up silently — this lets the screen reveal its own content
+  // rather than requiring the highlight layer to know about our accordions.
+  highlightIds?: string[];
 }) {
   const { colourBlind, timeFormat } = useAccessibility();
   const { language } = useLanguage();
   const [helpOpen, setHelpOpen] = useState<number | null>(null);
   const [pastOpen, setPastOpen] = useState(false);
+  // Open the stopped list whenever the change being highlighted is in it. The
+  // ring is this app's proof that something really happened; an elder who stops
+  // a medicine used to get the write with no visible confirmation at all.
+  useEffect(() => {
+    if (!highlightIds?.length) return;
+    if ((patient.pastMedications ?? []).some(m => highlightIds.includes(m.id))) setPastOpen(true);
+  }, [highlightIds, patient.pastMedications]);
   const pastMedications = patient.pastMedications ?? [];
   // `patient.medications` is one entry per (medication, time-slot) — right for the
   // schedule, wrong here: a twice-daily pill is one prescription, not two. Group
@@ -140,7 +152,7 @@ export function ElderlyPrescriptionScreen({ patient, onAddRx, onRequestRefill, j
                         colour dot is gone. */}
                     <p className="text-[calc(14px*var(--dw-text,1))] font-semibold text-foreground leading-snug mt-1">{direction}</p>
                     <p className="text-[calc(13px*var(--dw-text,1))] text-muted-foreground leading-snug mt-0.5">
-                      {plain?.why ?? t(language, "prescription.forPurpose", { purpose: m.purpose.toLowerCase() })}
+                      {plain?.why ?? t(language, "prescription.forPurpose", { purpose: localizeCatalogValue(m.purpose, k => t(language, k)).toLowerCase() })}
                     </p>
                     {colourBlind && shape && (
                       <p className="text-[calc(13px*var(--dw-text,1))] text-muted-foreground mt-1">{shape.shape} · {shape.marking}</p>
@@ -218,9 +230,12 @@ export function ElderlyPrescriptionScreen({ patient, onAddRx, onRequestRefill, j
         })}
         </div>
 
-        {/* Stopped (archived) medications — always visible, grouped after the
-            active cards, each keyed by its real medication uuid so a
+        {/* Stopped (archived) medications — collapsed by default, grouped after
+            the active cards, each keyed by its real medication uuid so a
             discontinue_medication highlight lands on data-testid="medication-{id}".
+            The effect above force-opens this when such a highlight is pending:
+            a collapsed accordion means the row isn't in the DOM at all, and
+            ChangeHighlight polls for 5s and then gives up.
             Muted on purpose: stopped, never deleted. */}
         {pastMedications.length > 0 && (
           <div className="dw-surface overflow-hidden">
@@ -239,7 +254,7 @@ export function ElderlyPrescriptionScreen({ patient, onAddRx, onRequestRefill, j
                   <div key={m.id} data-testid={`medication-${m.id}`} className="px-4 py-3.5 flex items-center gap-2 opacity-80">
                     <div className="flex-1 min-w-0">
                       <p className="text-[calc(15px*var(--dw-text,1))] font-bold text-muted-foreground">{m.name} <span className="text-[calc(14px*var(--dw-text,1))] font-normal">{m.dose}</span></p>
-                      <p className="text-[calc(14px*var(--dw-text,1))] text-muted-foreground/80">{m.purpose}</p>
+                      <p className="text-[calc(14px*var(--dw-text,1))] text-muted-foreground/80">{localizeCatalogValue(m.purpose, k => t(language, k))}</p>
                     </div>
                     <span className="shrink-0 text-[calc(10px*var(--dw-text,1))] font-bold uppercase tracking-wide text-stone-600 bg-stone-100 border border-stone-200 rounded-full px-2 py-0.5">
                       {t(language, "prescription.stopped")}

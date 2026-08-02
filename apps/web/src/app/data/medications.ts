@@ -161,6 +161,60 @@ export const COMMON_DRUG_ALLERGIES: { value: string; labelKey: string }[] = [
   { value: "Certain antibiotics", labelKey: "catalog.drugAllergy.certainAntibiotics" },
 ];
 
+// The other half of the store-English/display-localized policy above. Until
+// now only the type-ahead DROPDOWNS were localized (via withCatalogLabels) —
+// every screen that renders an ALREADY-SAVED condition, allergy or medication
+// purpose printed the raw canonical English `value`, so switching the app's
+// language left all of that vocabulary in English.
+//
+// Lookup is by canonical value, case-insensitively, and MISSES FALL BACK to the
+// raw string — deliberately: conditions[] is a mixed bag of catalog values,
+// free text the person typed, and whatever Hermes's OCR extracted from a
+// report, and arbitrary text obviously cannot be translated.
+//
+// One map covers conditions, allergies, drug allergies AND medication purposes,
+// because MEDICATION_CATALOG.purposeKey draws on the same catalog.condition.*
+// vocabulary as COMMON_CONDITIONS.
+const CATALOG_LABEL_KEYS: Map<string, string> = (() => {
+  const map = new Map<string, string>();
+  const add = (value: string, labelKey: string) => {
+    const key = value.trim().toLowerCase();
+    if (key && !map.has(key)) map.set(key, labelKey);
+  };
+  for (const c of COMMON_CONDITIONS) add(c.value, c.labelKey);
+  for (const a of COMMON_ALLERGIES) add(a.value, a.labelKey);
+  for (const d of COMMON_DRUG_ALLERGIES) add(d.value, d.labelKey);
+  return map;
+})();
+
+/**
+ * The i18n key for a stored catalog value, or null when it isn't one of ours.
+ * Prefer `localizeCatalogValue` — this exists for callers that need to know
+ * whether a value is in the catalog at all.
+ */
+export function catalogLabelKey(value: string): string | null {
+  return CATALOG_LABEL_KEYS.get(value.trim().toLowerCase()) ?? null;
+}
+
+/**
+ * Render a stored condition / allergy / purpose in the app's language, falling
+ * back to the value itself for anything the person typed freehand.
+ *
+ * Pass `t` and the language in rather than importing them here: this module is
+ * plain data and several of its consumers are, too.
+ */
+export function localizeCatalogValue(
+  value: string,
+  translate: (key: string) => string,
+): string {
+  const key = catalogLabelKey(value);
+  if (!key) return value;
+  const translated = translate(key);
+  // t() returns the key itself when a language is missing an entry — never show
+  // "catalog.condition.diabetes" to a person.
+  return translated === key ? value : translated;
+}
+
 // Catalogue of common medications for the type-ahead. Picking one auto-fills the
 // usual purpose and a typical dose, which the user can still edit. `purpose` is
 // the canonical English value that gets stored; `purposeKey` (drawn from the

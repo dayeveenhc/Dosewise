@@ -26,7 +26,7 @@ export const SCENARIOS: ScenarioEntry[] = [
   { id: "s07", slug: "multi-named-doses", tag: "NEW-BE-FE", tools: ["log_doses"] },
   { id: "s08", slug: "discontinue-med", tag: "NEW-BE-FE", tools: ["discontinue_medication"] },
   { id: "s09", slug: "dosage-update", tag: "AUDIT", tools: ["update_medication_dosage"] },
-  { id: "s10", slug: "refill-request", tag: "AUDIT", taskName: "request_refill", tools: ["log_refill"] },
+  { id: "s10", slug: "refill-request", tag: "AUDIT", taskName: "request_refill", tools: ["request_refill"] },
   { id: "s11", slug: "change-dose-time", tag: "NEW-FE", tools: ["set_medication_reminder"] },
   { id: "s12", slug: "snooze-today", tag: "NEW-BE-FE", tools: ["snooze_dose"] },
   { id: "s13", slug: "weekday-pattern", tag: "NEW-FE", tools: ["set_medication_reminder"] },
@@ -49,4 +49,9 @@ export const SCENARIOS: ScenarioEntry[] = [
   { id: "s30", slug: "onboarding-resume", tag: "NEW-FE", taskName: "onboarding", tools: ["start_walkthrough"] },
   { id: "s31", slug: "handoff-trigger", tag: "TRIGGER", tools: [] },
   { id: "s32", slug: "feature-intro-nudge", tag: "TRIGGER", tools: ["start_walkthrough"] },
+  // s33 closes two structural blind spots in the 32 above: none of them ever
+  // ran a walkthrough TWICE on one elder (which is how a completed *_auto
+  // silently stopped being offered), and every one of them enters through the
+  // DEV hook from the home tab rather than through a real chat reply.
+  { id: "s33", slug: "walkthrough-rerun", tag: "AUDIT", taskName: "add_prescription_auto", tools: ["start_walkthrough"] },
 ];

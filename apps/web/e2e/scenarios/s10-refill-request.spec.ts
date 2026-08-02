@@ -8,7 +8,11 @@ import { PACING } from "../../src/app/lib/walkthrough/pacing";
 
 // s10 refill-request (AUDIT) — the user-driven `request_refill` walkthrough
 // (waitFor steps, no acts; consent-class → Next must NOT render) plus the real
-// `log_refill` tail. Owns: this spec + steps/request_refill.ts.
+// `request_refill` tail (2026-07-28: request_refill.ts step 3 waits on Hermes's
+// committed_actions containing request_refill — a REQUEST to the doctor, distinct
+// from log_refill's pill-COUNT update; the trigger phrase below asks for a refill,
+// not a count, so the routing and the walkthrough contract agree). Owns: this
+// spec + steps/request_refill.ts.
 const ARTIFACTS = "e2e/artifacts/s10";           // wiped per run (via --output)
 const SHOTS = "e2e/design-shots/scenarios/s10";  // durable, NOT wiped
 
@@ -29,7 +33,7 @@ async function assertWaitForStep(page: Page, bodyText: string, label: string) {
   await expect(page.getByRole("button", { name: "Next", exact: true }), `${label}: NO Next button (consent-class)`).toHaveCount(0);
 }
 
-test("s10 refill-request: 'I just picked up my metformin refill, 30 pills' -> log_refill + user-driven walkthrough (no Next)", async ({ page }) => {
+test("s10 refill-request: 'I need a refill for my metformin' -> request_refill (doctor thread) + user-driven walkthrough (no Next)", async ({ page }) => {
   test.setTimeout(180_000);
   mkdirSync(SHOTS, { recursive: true });
   await page.setViewportSize({ width: 1280, height: 900 });
@@ -52,31 +56,48 @@ test("s10 refill-request: 'I just picked up my metformin refill, 30 pills' -> lo
   const medId: string = med!.id;
   console.log(`[SEED] elder=${creds.userId} med=${medId}`);
 
-  // ── 2 TRIGGER (real refill tail) ──────────────────────────────────────────
+  // ── 2 TRIGGER (real refill-REQUEST tail) ──────────────────────────────────
   // Verbatim realistic phrase; ≤3 recorded attempts for LLM-routing variance.
-  const PHRASE = "I just picked up my metformin refill, 30 pills";
+  // "I need a refill for X" is request_refill's own documented trigger phrase
+  // (tools/refills.py's schema) — distinct from a pill-count report (log_refill).
+  const PHRASE = "I need a refill for my metformin";
   let turn = await agentTurn8901(jwt, PHRASE);
   saveTurnArtifact(ARTIFACTS, "turn-attempt-1", turn);
-  for (let attempt = 2; attempt <= 3 && !turn.tools_used.includes("log_refill"); attempt++) {
+  for (let attempt = 2; attempt <= 3 && !turn.tools_used.includes("request_refill"); attempt++) {
     console.log(`[TRIGGER] attempt ${attempt} (previous tools_used=${JSON.stringify(turn.tools_used)})`);
     turn = await agentTurn8901(jwt, PHRASE);
     saveTurnArtifact(ARTIFACTS, `turn-attempt-${attempt}`, turn);
   }
   expect(turn.http, "agent/turn HTTP status").toBe(200);
-  expect(turn.tools_used, "expected log_refill routed").toContain("log_refill");
-  const action = turn.actions.find(a => a.tool === "log_refill");
-  expect(action, "committed log_refill action present").toBeTruthy();
-  expect(action!.entity_type, "entity_type").toBe("refill_request");
-  expect(action!.entity_id, "entity_id == med uuid (so the med card resolves)").toBe(medId);
-  expect(action!.changed_fields?.pills_remaining, "changed_fields.pills_remaining present").toBeTruthy();
-  expect(action!.changed_fields!.pills_remaining.after, "pills_remaining.after").toBe(30);
-  expect(action!.refill_id, "refill_id (refills row id) carried for verification").toBeTruthy();
+  expect(turn.tools_used, "expected request_refill routed").toContain("request_refill");
+  const action = turn.actions.find(a => a.tool === "request_refill");
+  expect(action, "committed request_refill action present").toBeTruthy();
+  // entity_type="doctor_message": the request lands in the Ask-a-Doctor thread
+  // (the caregiver sees it too) — NOT the refills/pill-count table.
+  expect(action!.entity_type, "entity_type").toBe("doctor_message");
+  expect(action!.changed_fields?.question, "changed_fields.question present").toBeTruthy();
+  expect(String(action!.changed_fields!.question.after), "question names the medication").toContain("Metformin");
   console.log(`[TURN] action=${JSON.stringify(action)}`);
 
   // ── 3 RE-CHECK (independent Supabase re-read) ─────────────────────────────
-  const rows = await recheckDb(supa, "refills", { medication_id: medId });
-  expectRow(rows, { pills_remaining: 30, medication_id: medId, elder_id: creds.userId });
-  console.log(`[REREAD] refills row: ${JSON.stringify(rows)}`);
+  const rows = await recheckDb(supa, "doctor_questions", { elder_id: creds.userId });
+  expectRow(rows, { elder_id: creds.userId, source: "agent", status: "open" });
+  expect(String(rows[0].question), "doctor_questions row names Metformin").toContain("Metformin");
+  console.log(`[REREAD] doctor_questions row: ${JSON.stringify(rows)}`);
+  // No refills-table write happened — this is a REQUEST, not a pill count.
+  const refillRows = await recheckDb(supa, "refills", { medication_id: medId });
+  expect(refillRows, "request_refill never touches the refills/pill-count table").toHaveLength(0);
+
+  // Now seed a LOW supply — deliberately AFTER the assertion above, so it can
+  // still prove the request itself never wrote here. The request_refill
+  // WALKTHROUGH spotlights the per-card Request-refill button, and that button
+  // only exists on a low card (lib/medications.ts::isRunningLow; a med with no
+  // refills row defaults to 30/30). Without this the tour has nothing to point
+  // at — the "spotlights nothing" case MEMORY.md's 2026-07-29 entry flagged.
+  const { error: rErr } = await supa
+    .from("refills")
+    .insert({ medication_id: medId, elder_id: creds.userId, pills_remaining: 3, threshold: 10 });
+  expect(rErr, rErr?.message).toBeNull();
 
   // ── 4 UI + PACING ─────────────────────────────────────────────────────────
   await signIn(page, creds); // lands on Home (:5173)
@@ -87,7 +108,10 @@ test("s10 refill-request: 'I just picked up my metformin refill, 30 pills' -> lo
   // card remains, so the walkthrough spotlights a single, deterministic target.
   await page.locator('[data-tour="nav-prescriptions"]').click();
   await expect(page.locator(`[data-testid="medication-${medId}"]`), "real med card").toBeVisible({ timeout: 20_000 });
-  await expect(page.locator(REFILL_BTN), "med list settled to the one real med").toHaveCount(1, { timeout: 20_000 });
+  // Count the medication CARDS, not the Request-refill button: that button is
+  // gated on isRunningLow (lib/medications.ts) and this fixture seeds no
+  // `refills` row, which defaults to 30/30 — so it correctly never renders.
+  await expect(page.locator('[data-testid^="medication-"]'), "med list settled to the one real med").toHaveCount(1, { timeout: 20_000 });
 
   // 4a — WALKTHROUGH (user-driven). Start it from the AI tab — Mei's real trigger
   // point — so step 1's onEnter is exercised: it must switch to Prescriptions on
@@ -110,25 +134,27 @@ test("s10 refill-request: 'I just picked up my metformin refill, 30 pills' -> lo
   // Real user action: tap Request refill → opens Ask Mei with a pre-filled message.
   await page.locator(REFILL_BTN).click();
 
-  // Step 2: spotlight on the AI Send button, Next absent.
+  // Step 2: spotlight on the AI Send button, Next absent. Tapping Request refill
+  // (step 1) already pre-filled the composer via openAIPrefill(ai.refillRequestMsg)
+  // — the elder just reviews it and taps Send THEMSELVES (Mei never sends on their
+  // behalf). Verify the real pre-fill landed rather than overwriting it with our
+  // own text, so this exercises the actual pre-fill path, not a substitute.
   await expect(page.locator(SEND_BTN), "step 2 target visible").toBeVisible({ timeout: 15_000 });
   await assertWaitForStep(page, STEP2_TEXT, "step 2 send-message");
-  // The elder types the real refill count and taps Send themselves (Mei never
-  // sends on their behalf). The DOM click advances step 2 regardless of the turn;
-  // the turn's committed log_refill is what step 3 waits on.
   const composer = page.locator("textarea").first();
-  await composer.fill(PHRASE);
+  await expect(composer, "composer pre-filled with the real refill-request message").toHaveValue(/refill/i);
   await page.locator(SEND_BTN).click();
 
   // Step 3: spotlight still on Send, body switches to "confirmed", Next absent.
   await assertWaitForStep(page, STEP3_TEXT, "step 3 confirmed");
 
-  // Best-effort: step 3 auto-completes when the UI turn commits log_refill
-  // (agent-action-committed bus event). LLM/backend variance → soft; the real
-  // log_refill proof is section 2 (authoritative, against :8901).
+  // Best-effort: step 3 auto-completes when the UI turn commits request_refill
+  // (agent-action-committed bus event, per request_refill.ts's waitFor). LLM/
+  // backend variance → soft; the real request_refill proof is section 2
+  // (authoritative, against :8901).
   const exitBtn = page.getByRole("button", { name: "Exit walkthrough" });
   const completed = await exitBtn.waitFor({ state: "detached", timeout: 25_000 }).then(() => true).catch(() => false);
-  console.log(`[WALKTHROUGH] step 3 auto-completed via committed log_refill: ${completed}`);
+  console.log(`[WALKTHROUGH] step 3 auto-completed via committed request_refill: ${completed}`);
   if (!completed) await exitBtn.click(); // dismiss so the overlay can't mask the highlight
 
   // Phase-log shape for a user-driven walkthrough: honestly, ZERO walkthrough
@@ -140,26 +166,26 @@ test("s10 refill-request: 'I just picked up my metformin refill, 30 pills' -> lo
   expect(walkPhases.filter(e => ["field", "click", "act", "between-fields"].includes(e.phase)),
     "user-driven steps record NO paced field/click phases").toHaveLength(0);
 
-  // 4b — CHANGE HIGHLIGHT. Fire the REAL committed action from the AI tab (never
-  // Prescriptions — firing where medication-* testids already render latches the
-  // first sync poll onto pre-navigation nodes; see MEMORY.md 2026-07-26).
+  // 4b — CHANGE HIGHLIGHT. request_refill's entity_type is "doctor_message"
+  // (ENTITY_TARGETS routes it to the elderly AI tab's "Ask a doctor" sub-tab, NOT
+  // Prescriptions — mirrors s21-doctor-question.spec.ts's real pattern). Fire the
+  // REAL committed action from the AI tab.
   await page.locator('[data-tour="nav-ai"]').click();
   await expect(page.locator(SEND_BTN), "on AI tab before firing highlight").toBeVisible({ timeout: 10_000 });
   await resetPhaseLog(page); // isolate the dwell entry
   await page.evaluate(a => (window as unknown as { __dwHighlightChange: (x: unknown) => void }).__dwHighlightChange(a), action);
 
-  // ChangeHighlight navigates to Prescriptions and rings the med card (refill_request
-  // entity_id == medId → suffix-fallback resolves medication-{medId}).
-  const card = page.locator(`[data-testid="medication-${medId}"]`);
-  await expect(card, "med card present after highlight nav").toBeVisible({ timeout: 15_000 });
-  await expect(card, "med card ringed").toHaveClass(/change-highlight/, { timeout: 10_000 });
+  // ChangeHighlight opens the "Ask a doctor" sub-tab and rings the exact row's card.
+  const card = page.locator(`[data-testid="doctor_message-${action!.entity_id}"]`);
+  await expect(card, "doctor-question card present after highlight nav").toBeVisible({ timeout: 15_000 });
+  await expect(card, "doctor-question card ringed").toHaveClass(/change-highlight/, { timeout: 10_000 });
   const caption = page.locator('[data-testid="change-highlight-caption"]');
-  await expect(caption, "refill caption visible").toBeVisible({ timeout: 10_000 });
+  await expect(caption, "refill-request caption visible").toBeVisible({ timeout: 10_000 });
   await page.waitForTimeout(500); // let smooth scrollIntoView settle
   const captionText = ((await caption.textContent()) ?? "").trim();
   console.log(`[HIGHLIGHT] caption="${captionText}"`);
   expect(captionText, "caption names the medication").toContain("Metformin");
-  expect(captionText, "caption is a refill/supply caption").toMatch(/pill|30/i);
+  expect(captionText, "caption is an Added (new question) caption").toContain("Added:");
 
   // ── 5 SCREENSHOT ──────────────────────────────────────────────────────────
   await page.screenshot({ path: `${SHOTS}/highlight-refill-card-ringed.png`, fullPage: true });

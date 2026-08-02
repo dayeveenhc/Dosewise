@@ -91,6 +91,56 @@ async def test_update_dosage_confirm_without_proposal_refused():
     assert row[0]["dosage"] == "500mg"
 
 
+async def test_update_dosage_confirm_case_insensitive_name_match():
+    """Regression (C2): the user types 'metformin', Mei reads back the canonical
+    'Metformin' and confirms with that capitalized form. The confirm must still
+    match — a case-only difference used to be wrongly refused."""
+    tool = get_handler("update_medication_dosage")
+    db = _db()
+    ctx = _ctx(db)
+    # Propose with the lowercase form the user typed.
+    await tool(ctx, medication_name="metformin", dosage="1000mg", confirmed=False)
+    # The stash holds the CANONICAL name, so an echoed-back confirm matches.
+    assert ctx.session.pending_dosage == {"name": "Metformin", "dosage": "1000mg"}
+    out = await tool(ctx, medication_name="Metformin", dosage="1000mg", confirmed=True)
+    assert "Saved" in out
+    after = await db.select("medications", filters={"id": "eq.m1"})
+    assert after[0]["dosage"] == "1000mg"
+
+
+async def test_update_dosage_confirm_with_different_dose_is_refused():
+    """Safety: a confirm that carries a DIFFERENT dose than was proposed and read
+    back must NOT silently save it — that value never went through propose (nor the
+    dosage-jump warning). Refuse and leave the real proposal still pending."""
+    tool = get_handler("update_medication_dosage")
+    db = _db()
+    ctx = _ctx(db)
+    # Proposed and read back to the user: 1000mg.
+    await tool(ctx, medication_name="Metformin", dosage="1000mg", confirmed=False)
+    # The confirm turn arrives with a different dose (e.g. an LLM slip / a 10x typo).
+    out = await tool(ctx, medication_name="Metformin", dosage="2000mg", confirmed=True)
+    assert "Refused" in out
+    assert not db.updated  # nothing written
+    assert not ctx.committed_actions
+    # The med still holds the old dose; the genuine 1000mg proposal is still pending
+    # so a proper "yes" can still commit it.
+    row = await db.select("medications", filters={"id": "eq.m1"})
+    assert row[0]["dosage"] == "500mg"
+    assert ctx.session.pending_dosage == {"name": "Metformin", "dosage": "1000mg"}
+
+
+async def test_update_dosage_confirm_without_resupplying_dose_saves_proposed():
+    """A tap/short 'yes' that resupplies no dose still commits the proposed one."""
+    tool = get_handler("update_medication_dosage")
+    db = _db()
+    ctx = _ctx(db)
+    await tool(ctx, medication_name="Metformin", dosage="1000mg", confirmed=False)
+    out = await tool(ctx, medication_name="Metformin", dosage="", confirmed=True)
+    assert "Saved" in out
+    after = await db.select("medications", filters={"id": "eq.m1"})
+    assert after[0]["dosage"] == "1000mg"
+
+
 async def test_update_dosage_unknown_medication_does_not_propose():
     tool = get_handler("update_medication_dosage")
     db = FakeDB({"medications": []})

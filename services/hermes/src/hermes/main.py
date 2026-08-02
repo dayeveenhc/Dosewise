@@ -153,7 +153,12 @@ async def lifespan(app: FastAPI):
 # /profile/extract has no JWT/elder_id of its own (stateless, pre-account) so it
 # shares this same per-IP tier rather than a bespoke one — it still calls a paid
 # vision LLM and must not be reachable unbounded.
-_RATE_LIMITED_PATHS = {"/agent/turn", "/telegram/webhook", "/profile/extract"}
+_RATE_LIMITED_PATHS = {
+    "/agent/turn",
+    "/agent/turn/stream",
+    "/telegram/webhook",
+    "/profile/extract",
+}
 
 
 def create_app() -> FastAPI:

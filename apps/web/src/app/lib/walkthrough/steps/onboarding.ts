@@ -48,15 +48,15 @@ export const onboardingSteps: WalkthroughStep[] = [
 
   // ---- conditions ----
   { id: "wizard.conditions.add", screen: ON_WIZARD, selector: '[data-walk="wizard-conditions-taglist-add-btn"]',
-    instructionKey: "walk.wizard.conditions", skippable: true, waitFor: { type: "click", source: "dom" } },
+    instructionKey: "walk.wizard.conditions", waitFor: { type: "click", source: "dom" } },
   { id: "wizard.conditions.continue", screen: ON_WIZARD, selector: CONTINUE,
-    instructionKey: "walk.wizard.continueOrSkip", skippable: true, waitFor: stepTransition("allergies") },
+    instructionKey: "walk.wizard.continueOrSkip", waitFor: stepTransition("allergies") },
 
   // ---- allergies ----
   { id: "wizard.allergies.general", screen: ON_WIZARD, selector: '[data-walk="wizard-allergies-taglist-add-btn"]',
-    instructionKey: "walk.wizard.allergies", skippable: true, waitFor: { type: "click", source: "dom" } },
+    instructionKey: "walk.wizard.allergies", waitFor: { type: "click", source: "dom" } },
   { id: "wizard.allergies.drug", screen: ON_WIZARD, selector: '[data-walk="wizard-drug-allergies-taglist-add-btn"]',
-    instructionKey: "walk.wizard.drugAllergies", skippable: true, waitFor: { type: "click", source: "dom" } },
+    instructionKey: "walk.wizard.drugAllergies", waitFor: { type: "click", source: "dom" } },
   { id: "wizard.allergies.continue", screen: ON_WIZARD, selector: CONTINUE,
     instructionKey: "walk.wizard.continue", waitFor: stepTransition("routine") },
 
@@ -64,19 +64,24 @@ export const onboardingSteps: WalkthroughStep[] = [
   // since taps on the stepper only mutate the editor's local draft) ----
   { id: "wizard.routine.wakeTime", screen: ON_WIZARD, selector: '[data-walk="wizard-routine-wakeTime"]',
     instructionKey: "walk.wizard.routine.wakeTime",
-    waitFor: { type: "value-change", source: "app-event", event: "wizard-routine-wakeTime-changed" } },
+    waitFor: { type: "value-change", source: "app-event", event: "wizard-routine-wakeTime-changed" },
+    timeoutMs: 20000 },  // a signal that never arrives must surface, not hang
   { id: "wizard.routine.breakfast", screen: ON_WIZARD, selector: '[data-walk="wizard-routine-breakfast"]',
     instructionKey: "walk.wizard.routine.breakfast",
-    waitFor: { type: "value-change", source: "app-event", event: "wizard-routine-breakfast-changed" } },
+    waitFor: { type: "value-change", source: "app-event", event: "wizard-routine-breakfast-changed" },
+    timeoutMs: 20000 },  // a signal that never arrives must surface, not hang
   { id: "wizard.routine.lunch", screen: ON_WIZARD, selector: '[data-walk="wizard-routine-lunch"]',
     instructionKey: "walk.wizard.routine.lunch",
-    waitFor: { type: "value-change", source: "app-event", event: "wizard-routine-lunch-changed" } },
+    waitFor: { type: "value-change", source: "app-event", event: "wizard-routine-lunch-changed" },
+    timeoutMs: 20000 },  // a signal that never arrives must surface, not hang
   { id: "wizard.routine.dinner", screen: ON_WIZARD, selector: '[data-walk="wizard-routine-dinner"]',
     instructionKey: "walk.wizard.routine.dinner",
-    waitFor: { type: "value-change", source: "app-event", event: "wizard-routine-dinner-changed" } },
+    waitFor: { type: "value-change", source: "app-event", event: "wizard-routine-dinner-changed" },
+    timeoutMs: 20000 },  // a signal that never arrives must surface, not hang
   { id: "wizard.routine.sleepTime", screen: ON_WIZARD, selector: '[data-walk="wizard-routine-sleepTime"]',
     instructionKey: "walk.wizard.routine.sleepTime",
-    waitFor: { type: "value-change", source: "app-event", event: "wizard-routine-sleepTime-changed" } },
+    waitFor: { type: "value-change", source: "app-event", event: "wizard-routine-sleepTime-changed" },
+    timeoutMs: 20000 },  // a signal that never arrives must surface, not hang
   { id: "wizard.routine.continue", screen: ON_WIZARD, selector: CONTINUE,
     instructionKey: "walk.wizard.continue", waitFor: stepTransition("current-meds") },
 
@@ -85,20 +90,22 @@ export const onboardingSteps: WalkthroughStep[] = [
     instructionKey: "walk.wizard.addMedication", waitFor: { type: "click", source: "dom" } },
   { id: "wizard.currentmeds.times", screen: ON_WIZARD, selector: '[data-walk="wizard-medlist-timespicker"]',
     instructionKey: "walk.wizard.usualTimes",
-    waitFor: { type: "value-change", source: "app-event", event: "wizard-medlist-times-changed" } },
+    waitFor: { type: "value-change", source: "app-event", event: "wizard-medlist-times-changed" },
+    timeoutMs: 20000 },  // a signal that never arrives must surface, not hang
   { id: "wizard.currentmeds.add", screen: ON_WIZARD, selector: '[data-walk="wizard-medlist-add-btn"]',
     instructionKey: "walk.wizard.addToList", waitFor: { type: "click", source: "dom" } },
   { id: "wizard.currentmeds.continue", screen: ON_WIZARD, selector: CONTINUE,
-    instructionKey: "walk.wizard.continueOrSkip", skippable: true, waitFor: stepTransition("med-history") },
+    instructionKey: "walk.wizard.continueOrSkip", waitFor: stepTransition("med-history") },
 
   // ---- med-history (same MedList, extractKind="past") ----
   { id: "wizard.medhistory.open", screen: ON_WIZARD, selector: '[data-walk="wizard-medlist-open"]',
-    instructionKey: "walk.wizard.addPastMedication", skippable: true, waitFor: { type: "click", source: "dom" } },
+    instructionKey: "walk.wizard.addPastMedication", waitFor: { type: "click", source: "dom" } },
   { id: "wizard.medhistory.continue", screen: ON_WIZARD, selector: CONTINUE,
-    instructionKey: "walk.wizard.continueOrSkip", skippable: true, waitFor: stepTransition("done") },
+    instructionKey: "walk.wizard.continueOrSkip", waitFor: stepTransition("done") },
 
   // ---- done ----
   { id: "wizard.done.finish", screen: ON_WIZARD, selector: CONTINUE,
     instructionKey: "walk.wizard.goToDosewise",
-    waitFor: { type: "write-committed", source: "app-event", event: "wizard-finished" } },
+    waitFor: { type: "write-committed", source: "app-event", event: "wizard-finished" },
+    timeoutMs: 20000 },  // a signal that never arrives must surface, not hang
 ];

@@ -104,50 +104,98 @@ export interface ActContext {
   shouldFastForward?: () => boolean;
 }
 
+// Why the act ended. The orchestrator advances only on "done"/"cancelled" —
+// the other three are real breakage the person deserves to be told about
+// instead of watching Mei silently skip a step.
+//
+// DELIBERATELY scoped to "could this act be performed at all", NOT to "did the
+// click change anything". Several steps click a handler-less container ON
+// PURPOSE (language_voice_tour's language + read-aloud steps spotlight the
+// wrapper precisely so Mei never flips the person's own language setting) —
+// those are correct and must keep reporting "done".
+export type ActOutcome =
+  | "done"           // performed (incl. a deliberate no-op click on a container)
+  | "cancelled"      // overlay unmounted mid-act
+  | "target-missing" // selector never resolved within the poll budget
+  | "wrong-element"  // resolved to an element this act kind cannot drive
+  | "invalid-value"; // a select value matching no option — would WIPE the field
+
 /**
  * Perform one ActDirective, visibly, resolving when it's done. Emits
  * `walk-act-start` / `walk-act-done` on the bus so instrumented code (and the
- * overlay) can sequence the phases. Fails soft: a missing target or wrong
- * element type resolves without throwing, so one bad step can't wedge the run.
+ * overlay) can sequence the phases. Never throws — it reports an ActOutcome so
+ * the orchestrator can stop honestly instead of advancing past a step that
+ * didn't happen.
  */
-export async function performAct(act: ActDirective, ctx: ActContext): Promise<void> {
+export async function performAct(act: ActDirective, ctx: ActContext): Promise<ActOutcome> {
   emitWalkthroughEvent("walk-act-start", { kind: act.kind, selector: act.selector });
   try {
     const el = await waitForEl(act.selector, ctx.shouldCancel);
-    if (!el || ctx.shouldCancel()) return;
+    if (ctx.shouldCancel()) return "cancelled";
+    if (!el) return "target-missing";
     switch (act.kind) {
-      case "fill":
-        if (el instanceof HTMLInputElement || el instanceof HTMLTextAreaElement) {
-          try {
-            await preHighlight(el, PACING.FIELD_PREHIGHLIGHT_MS, ctx);
-            if (ctx.shouldCancel()) return;
-            await typeInto(el, act.value, ctx);
-          } finally {
-            el.classList.remove("walk-field-prehighlight");
-          }
+      case "fill": {
+        if (!(el instanceof HTMLInputElement || el instanceof HTMLTextAreaElement)) return "wrong-element";
+        try {
+          await preHighlight(el, PACING.FIELD_PREHIGHLIGHT_MS, ctx);
+          if (ctx.shouldCancel()) return "cancelled";
+          await typeInto(el, act.value, ctx);
+        } finally {
+          el.classList.remove("walk-field-prehighlight");
         }
-        break;
-      case "select":
-        if (el instanceof HTMLSelectElement) {
-          nativeSelectValue?.call(el, act.value);
+        return "done";
+      }
+      case "select": {
+        if (!(el instanceof HTMLSelectElement)) return "wrong-element";
+        // Assigning a value that matches no <option> sets selectedIndex = -1 and
+        // leaves value === "" — i.e. it WIPES the field, and the resulting change
+        // event makes React persist the empty string. Refuse instead: a step that
+        // can't select is honest breakage, not a silent data loss.
+        const match = matchOption(el, act.value);
+        if (!match) return "invalid-value";
+        // Same "look here" beat a fill gets — otherwise the value simply
+        // teleports and there is nothing for the person to follow.
+        try {
+          await preHighlight(el, PACING.FIELD_PREHIGHLIGHT_MS, ctx);
+          if (ctx.shouldCancel()) return "cancelled";
+          nativeSelectValue?.call(el, match);
           el.dispatchEvent(new Event("change", { bubbles: true }));
+        } finally {
+          el.classList.remove("walk-field-prehighlight");
         }
-        break;
-      case "click":
+        return "done";
+      }
+      case "click": {
         try {
           await preHighlight(el, PACING.PRE_CLICK_MS, ctx);
-          if (ctx.shouldCancel()) return;
+          if (ctx.shouldCancel()) return "cancelled";
           await pressPulse(el, ctx.shouldCancel);
         } finally {
           el.classList.remove("walk-field-prehighlight");
         }
-        if (!ctx.shouldCancel()) el.click();
-        break;
-      case "upload":
-        if (el instanceof HTMLInputElement) await driveUpload(el, act.asset);
-        break;
+        if (ctx.shouldCancel()) return "cancelled";
+        el.click();
+        return "done";
+      }
+      case "upload": {
+        if (!(el instanceof HTMLInputElement)) return "wrong-element";
+        await driveUpload(el, act.asset);
+        return "done";
+      }
     }
   } finally {
     emitWalkthroughEvent("walk-act-done", { kind: act.kind, selector: act.selector });
   }
+}
+
+// Resolve a requested select value against the element's real options. Exact
+// match first, then case/whitespace-insensitive — options written as
+// `<option>Japan (UTC+9)</option>` carry no value attribute, so their value IS
+// their text content and is easy to reproduce with the wrong casing.
+function matchOption(el: HTMLSelectElement, value: string): string | null {
+  const opts = Array.from(el.options);
+  const exact = opts.find(o => o.value === value);
+  if (exact) return exact.value;
+  const norm = value.trim().toLowerCase();
+  return opts.find(o => o.value.trim().toLowerCase() === norm)?.value ?? null;
 }

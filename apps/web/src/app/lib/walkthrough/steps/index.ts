@@ -10,8 +10,8 @@ import { editProfileAutoSteps } from "./edit_profile_auto";
 import { acceptCaregiverLinkSteps } from "./accept_caregiver_link";
 import { addDoctorQuestionAutoSteps } from "./add_doctor_question_auto";
 import {
-  checkScheduleSteps, logDoseSteps, undoDoseSteps, languageVoiceSteps,
-  reminderSettingsSteps, emergencyContactSteps, textSizeSteps,
+  checkScheduleSteps, logDoseSteps, undoDoseSteps,
+  reminderSettingsSteps, textSizeSteps,
 } from "./narrated";
 import { languageVoiceTourSteps } from "./language_voice_tour";
 import { notificationsTourSteps } from "./notifications_tour";
@@ -54,9 +54,7 @@ export function resolveWalkthroughSteps(
     case "check_schedule": return checkScheduleSteps;
     case "log_dose": return logDoseSteps;
     case "undo_dose": return undoDoseSteps;
-    case "language_voice": return languageVoiceSteps;
     case "reminder_settings": return reminderSettingsSteps;
-    case "emergency_contact": return emergencyContactSteps;
     case "text_size": return textSizeSteps;
     // Spotlight tours (static, highlight-only; params ignored).
     case "language_voice_tour": return languageVoiceTourSteps;
@@ -67,4 +65,27 @@ export function resolveWalkthroughSteps(
     case "weekly_summary_tour": return weeklySummaryTourSteps;
     default: return [];
   }
+}
+
+/**
+ * Which app shell a task's steps actually target, DERIVED from the steps
+ * themselves rather than declared alongside them — every step already carries
+ * `screen.mode`, so there is no second source of truth to drift out of sync
+ * when a step file changes.
+ *
+ * Hermes offers every task name to both shells (prompts.py builds its list from
+ * the flat TASK_NAMES with no role filter), so an elder can be offered a
+ * caregiver-only tour. Mounting one anyway used to walk straight into a step
+ * whose target can never exist. Callers use this to decline honestly instead.
+ */
+export function walkthroughShellFor(
+  taskName: WalkthroughTaskName,
+  role: "elder" | "caregiver",
+): "elder" | "caregiver" | "onboarding" | null {
+  const steps = resolveWalkthroughSteps(taskName, role);
+  const mode = steps[0]?.screen.mode;
+  if (mode === "elderly") return "elder";
+  if (mode === "caregiver") return "caregiver";
+  if (mode === "onboarding") return "onboarding";
+  return null;
 }

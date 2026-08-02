@@ -13,13 +13,9 @@ const ON_AI: WalkthroughStep["screen"] = { mode: "caregiver", screen: "ai" };
 // untouched). So this tour only shows the person around; there is nothing to
 // verify or reveal because nothing real changes or gets written.
 //
-// Every step is user-driven (waitFor, never `act`) → Walkthrough.tsx classes
-// the tour as non-autonomous, so it renders Exit but NO Next button (the whole
-// Next/Replay block is gated on `autonomous`, which requires an act or an
-// act-less verify/reveal tail — this tour has neither). Because nothing is
-// paced (no PaceController is ever instantiated for waitFor steps), the tour
-// records ZERO walkthrough phase-log entries — the same honest shape as
-// language_voice_tour / notifications_tour.
+// Every step is `act` → Walkthrough.tsx classes each as autonomous, so each
+// gets a PaceController, records phase-log entries, and holds at its commit gate
+// until the person taps Next (Done on the last). Nothing advances on a timer.
 //
 // Step 1 has NO onEnter: its whole point is the person tapping the AI tab to
 // travel there themselves (the caregiver BottomNav is always mounted, so it
@@ -27,21 +23,31 @@ const ON_AI: WalkthroughStep["screen"] = { mode: "caregiver", screen: "ai" };
 // are present no matter the entry point (a harmless no-op once step 1's tap
 // has already switched the screen, or when a walkthrough session resumes
 // mid-tour after a reload) — matching language_voice_tour's per-step onEnter.
+// AI-automated (2026-07-28): Mei auto-advances the spotlight herself at the slow
+// PACING rate — the person just watches. Purely view/mock (static WEEKLY_DATA),
+// so auto-clicking through to open the summary sheet writes nothing.
 export const weeklySummaryTourSteps: WalkthroughStep[] = [
   {
     id: "weekly.go-to-askmei",
     screen: ON_AI,
     selector: '[data-tour="nav-ai"]', // caregiver BottomNav — always mounted
     instructionKey: "walk.weeklySummaryTour.step1",
-    waitFor: { type: "click", source: "dom" },
+    act: { kind: "click", selector: '[data-tour="nav-ai"]' },
   },
   {
     id: "weekly.open-quickhelp",
     screen: ON_AI,
     onEnter: ON_AI,
-    selector: '[data-tour="cg-askmei"]', // Quick help launcher row — existing, reused (also the onboarding GuidedTour's cg-askmei target)
+    // The button itself, not its wrapping row (data-tour="cg-askmei" — also the
+    // onboarding GuidedTour's target, which stays on the row since a real user's
+    // click always lands on the actual button and bubbles to satisfy a native
+    // waitFor listener there). An AUTONOMOUS act:click calls el.click() directly
+    // on the selector, which does nothing on a plain container with no handler —
+    // it must target the real clickable element (mirrors travel_mode_auto.ts's
+    // identical gotcha/fix for the elder-side Quick Help button).
+    selector: '[data-walk="cg-quickhelp-btn"]',
     instructionKey: "walk.weeklySummaryTour.step2",
-    waitFor: { type: "click", source: "dom" },
+    act: { kind: "click", selector: '[data-walk="cg-quickhelp-btn"]' },
   },
   {
     id: "weekly.tap-tile",
@@ -49,6 +55,6 @@ export const weeklySummaryTourSteps: WalkthroughStep[] = [
     onEnter: ON_AI,
     selector: '[data-walk="cg-weeklysummary-tile"]',
     instructionKey: "walk.weeklySummaryTour.step3",
-    waitFor: { type: "click", source: "dom" },
+    act: { kind: "click", selector: '[data-walk="cg-weeklysummary-tile"]' },
   },
 ];

@@ -12,38 +12,37 @@ const ON_SETTINGS: WalkthroughStep["screen"] = { mode: "elderly", tab: "settings
 // Supabase. So this tour only shows the person around; the value changes are
 // their own, made client-side.
 //
-// Every step is user-driven (waitFor, never `act`) → the overlay classes the
-// tour as non-autonomous, so it renders Exit but NO Next button (the whole
-// Next/Replay block in Walkthrough.tsx is gated on `autonomous`). Because
-// nothing is paced (no PaceController is instantiated for waitFor steps), the
-// tour records ZERO walkthrough phase-log entries — the honest shape a
-// user-driven tour has (mirrors notifications_tour / request_refill).
+// Every step is `act` → the overlay classes each as autonomous, so each gets a
+// PaceController, records phase-log entries, and holds at its commit gate until
+// the person taps Next (Done on the last). Nothing advances on a timer.
 //
 // Step 1 has NO onEnter: its whole point is the person tapping Settings to
 // travel there (the bottom nav is always mounted, so it needs no switch first).
 // Steps 2–3 carry onEnter so their Settings-only targets are present no matter
 // the entry point (a harmless no-op once step 1's tap has switched the tab),
 // matching notifications_tour's per-step onEnter.
+// AI-automated (2026-07-28): Mei auto-advances the spotlight herself at the slow
+// PACING rate — the person just watches. She clicks the CONTAINER of each control
+// (the card, the select) rather than toggling/changing the real setting, so the
+// tour never silently flips Read-Aloud or switches the app's language on the
+// person's behalf — it only shows them where these live.
 export const languageVoiceTourSteps: WalkthroughStep[] = [
   {
     id: "langvoice.go-to-settings",
     screen: ON_SETTINGS,
     selector: '[data-tour="nav-settings"]', // ElderlyApp bottom nav — always mounted
     instructionKey: "walk.languageVoiceTour.step1",
-    waitFor: { type: "click", source: "dom" },
+    act: { kind: "click", selector: '[data-tour="nav-settings"]' },
   },
   {
     id: "langvoice.section",
     screen: ON_SETTINGS,
     onEnter: ON_SETTINGS,
-    // Spotlights the whole Voice & Language card, which contains the Read-Aloud
-    // toggle. "acknowledge" is satisfied by a real click anywhere in the card —
-    // the person taps the Read-Aloud toggle itself (a descendant button), which
-    // both flips voiceOutput and, bubbling to this card, advances the step
-    // (Walkthrough.tsx treats click|acknowledge identically).
+    // Click the card CONTAINER (not the Read-Aloud toggle button inside it), so
+    // the spotlight advances without flipping voiceOutput.
     selector: '[data-tour="elder-language"]',
     instructionKey: "walk.languageVoiceTour.step2",
-    waitFor: { type: "acknowledge", source: "dom" },
+    act: { kind: "click", selector: '[data-tour="elder-language"]' },
   },
   {
     id: "langvoice.pick-language",
@@ -51,9 +50,8 @@ export const languageVoiceTourSteps: WalkthroughStep[] = [
     onEnter: ON_SETTINGS,
     selector: '[data-walk="elder-language-select"]',
     instructionKey: "walk.languageVoiceTour.step3",
-    // A native <select>: "select-change" advances only on a genuine value change
-    // (the person picking a language), not a bare tap — so the tour completing
-    // is itself evidence the language actually changed.
-    waitFor: { type: "select-change", source: "dom" },
+    // Click the <select> to spotlight it and advance — deliberately NOT a
+    // `select` act, so the person's chosen language is never changed for them.
+    act: { kind: "click", selector: '[data-walk="elder-language-select"]' },
   },
 ];

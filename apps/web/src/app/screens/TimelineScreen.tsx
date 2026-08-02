@@ -3,7 +3,6 @@ import { ChevronLeft, ChevronRight, Clock, Send, Check } from "lucide-react";
 import type { Patient, Medication, MedStatus } from "../types";
 import { StatusPill, MedAvatar } from "../components/shared";
 import { MED_SIMPLE } from "../data/medications";
-import { DASH_DAYS } from "../lib/constants";
 import { useLanguage } from "../lib/languageContext";
 import { t } from "../lib/language";
 
@@ -125,7 +124,7 @@ export function TimelineScreen({ patient, justAddedMed, onSendReminder }: { pati
                 `}
               >
                 <p className={`text-[calc(10px*var(--dw-text,1))] font-semibold ${todayDay ? "text-primary" : selectedDay_ ? "text-primary" : "text-muted-foreground"}`}>
-                  {DASH_DAYS[d.getDay()]}
+                  {t(language, `day.${d.getDay()}`)}
                 </p>
                 <p className={`text-sm font-bold ${todayDay || selectedDay_ ? "text-primary" : "text-foreground"}`}>
                   {d.getDate()}
@@ -223,7 +222,7 @@ export function TimelineScreen({ patient, justAddedMed, onSendReminder }: { pati
             <span />
             {weekDays.map((d, i) => (
               <div key={i} className="flex flex-col items-center">
-                <span className={`text-[calc(9px*var(--dw-text,1))] font-semibold ${isToday(d) ? "text-primary" : "text-muted-foreground"}`}>{DASH_DAYS[d.getDay()]}</span>
+                <span className={`text-[calc(9px*var(--dw-text,1))] font-semibold ${isToday(d) ? "text-primary" : "text-muted-foreground"}`}>{t(language, `day.${d.getDay()}`)}</span>
                 <span className={`text-[calc(11px*var(--dw-text,1))] font-bold ${isToday(d) ? "text-primary" : "text-foreground"}`}>{d.getDate()}</span>
               </div>
             ))}

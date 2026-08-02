@@ -1,7 +1,7 @@
 import { useState } from "react";
 import { X, AlertTriangle, Trash2, Star, Check, Plus } from "lucide-react";
 import type { Patient, Contact } from "../types";
-import { COMMON_ALLERGIES, COMMON_DRUG_ALLERGIES } from "../data/medications";
+import { COMMON_ALLERGIES, COMMON_DRUG_ALLERGIES, localizeCatalogValue } from "../data/medications";
 import { withCatalogLabels } from "./setup/GuidedSetupWizard";
 import { useLanguage } from "../lib/languageContext";
 import { t } from "../lib/language";
@@ -151,7 +151,7 @@ export function EditProfileSheet({ patient, onClose, onSave }: EditProfileSheetP
                 <div className="flex flex-wrap gap-2 mb-3">
                   {conditions.map((c, i) => (
                     <span key={i} className="inline-flex items-center gap-1.5 bg-secondary border border-primary/20 text-primary rounded-xl px-2.5 py-1 text-xs font-medium">
-                      {c}
+                      {localizeCatalogValue(c, k => t(language, k))}
                       <button onClick={() => setConditions(prev => prev.filter((_, j) => j !== i))} className="text-primary/60 hover:text-destructive transition-colors">
                         <X size={10} />
                       </button>

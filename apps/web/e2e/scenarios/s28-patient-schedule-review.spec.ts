@@ -1,9 +1,10 @@
-import { expect, test, type Page } from "@playwright/test";
+import { expect, test } from "@playwright/test";
 import { mkdirSync } from "node:fs";
 import {
-  agentTurn8901, anonClient, readPhaseLog, recheckDb, resetPhaseLog,
-  saveTurnArtifact, signIn, startWalkthrough,
+  agentTurn8901, anonClient, assertPhaseMins, readPhaseLog, recheckDb,
+  resetPhaseLog, saveTurnArtifact, signIn, startWalkthrough, advanceWalkthroughToStep, finishWalkthrough,
 } from "../helpers";
+import { PACING } from "../../src/app/lib/walkthrough/pacing";
 
 // s28 patient-schedule-review (VIEW) — a caregiver asks Mei about "my patient's
 // schedule" in chat, then tours the real Timeline screen. Two things are
@@ -53,24 +54,8 @@ async function createThrowawayCaregiver(): Promise<CaregiverCreds> {
 
 // patient_schedule_tour anchors (steps/patient_schedule_tour.ts) + per-step copy
 // (language.ts's real walk.patientScheduleTour.step1-3 strings).
-const NAV_TIMELINE = '[data-tour="nav-timeline"]';
 const PATIENT_SWITCHER = '[data-tour="cg-patientswitcher"]';
 const WEEK_STRIP = '[data-walk="cg-week-strip"]';
-const STEP1_TEXT = "Tap Schedule";
-const STEP2_TEXT = "switch which person";
-const STEP3_TEXT = "shows each day's doses";
-
-// The consent-class invariant (identical to s19/s20): a waitFor step is NEVER
-// paced, so the callout shows Exit but MUST NOT render a Next button
-// (Walkthrough.tsx gates the whole Next/Replay block on `autonomous`, false for
-// every waitFor step — patient_schedule_tour's 3 steps are all waitFor, no
-// `act`). Assert the callout IS present (Exit visible) so the absence of Next
-// is meaningful, not just an unmounted overlay.
-async function assertWaitForStep(page: Page, bodyText: string, label: string) {
-  await expect(page.getByText(bodyText, { exact: false }), `${label}: callout body`).toBeVisible({ timeout: 15_000 });
-  await expect(page.getByRole("button", { name: "Exit walkthrough" }), `${label}: Exit present`).toBeVisible();
-  await expect(page.getByRole("button", { name: "Next", exact: true }), `${label}: NO Next button (consent-class)`).toHaveCount(0);
-}
 
 // Calibrated against soul.md's actual "caregiver chat — whose record you touch"
 // wording ("say so honestly ... view-only today ... offer add_care_note") AND
@@ -180,68 +165,42 @@ test("s28 patient-schedule-review: caregiver asks about 'my patient's schedule' 
   const dosesAfterEdit = await recheckDb(supa, "doses", { elder_id: creds.userId });
   expect(dosesAfterEdit, "no dose rows created either").toHaveLength(0);
 
-  // ── 4 UI + PACING — the Timeline tour ─────────────────────────────────────
+  // ── 4 UI + PACING — the Timeline tour (AI-auto-advanced, 2026-07-28) ──────
   await signIn(page, creds); // baseURL :5173, lands on caregiver Dashboard (__dwStartWalkthrough now registers in App.tsx's caregiver branch too)
   await resetPhaseLog(page); // clear BEFORE the phase under test
   await startWalkthrough(page, "patient_schedule_tour");
 
-  // Step 1: spotlight the always-mounted Schedule (timeline) nav; Next absent.
-  await expect(page.locator(NAV_TIMELINE), "step 1 nav target").toBeVisible({ timeout: 15_000 });
-  await assertWaitForStep(page, STEP1_TEXT, "step 1 go-to-schedule");
-  await page.locator(NAV_TIMELINE).click();
-
-  // Real-data proof, independent of the tour's own spotlighting: the moment the
-  // Timeline mounts, App.tsx's screen-effect refetches medications scoped to
-  // the signed-in CAREGIVER's own id (fetchElderMedications) and replaces the
-  // mock patient list wholesale -- so exactly the one real seeded Lisinopril
-  // renders, never the 6-item mock demo list.
+  // Step 1 auto-taps the Schedule (timeline) nav → Timeline mounts. Real-data
+  // proof, independent of the tour's own spotlighting: App.tsx's screen-effect
+  // refetches medications scoped to the signed-in CAREGIVER's own id
+  // (fetchElderMedications) and replaces the mock patient list wholesale — so
+  // exactly the one real seeded Lisinopril renders, never the 6-item mock list.
   await expect(page.locator(`[data-testid="medication-${medId}"]`), "real seeded medication renders on the Timeline (caregiver's own data)").toBeVisible({ timeout: 20_000 });
   await expect(page.locator('[data-testid^="medication-"]'), "mock demo meds fully replaced by the one real row").toHaveCount(1, { timeout: 20_000 });
 
-  // Step 2: spotlight the patient switcher; Next absent. Tapping it both opens
-  // its (cosmetic, single-patient) dropdown and satisfies the acknowledge --
-  // React's own onClick and the native waitFor listener fire off the SAME
-  // physical click on the SAME <button>, so there is no way to satisfy this
-  // step without also opening the dropdown.
-  await expect(page.locator(PATIENT_SWITCHER), "step 2 patient switcher target").toBeVisible({ timeout: 15_000 });
-  await assertWaitForStep(page, STEP2_TEXT, "step 2 patient-switcher");
+  // Steps 2-3: Mei taps the patient switcher herself, then the week strip is
+  // pulse-revealed (it's a plain container with no click handler, so the step
+  // reveals rather than pretending to click it). Mei's taps are PROGRAMMATIC
+  // (el.click(), firing the element's own handler directly), so the known
+  // PatientSwitcher dropdown-overlap that blocks a real pointer click does not
+  // affect it. Each step then waits for the person's Next.
+  await advanceWalkthroughToStep(page, 2);
   await page.screenshot({ path: `${SHOTS}/walkthrough-step2-patient-switcher.png`, fullPage: true });
-  await page.locator(PATIENT_SWITCHER).click();
-
-  // FINDING (confirmed empirically, patch-queued -- out of this scenario's file
-  // scope, components/shared.tsx is not owned here): PatientSwitcher's dropdown
-  // has no click-outside-to-dismiss handler, and its absolutely-positioned list
-  // overlaps the week strip below in this compact phone-frame layout -- a first
-  // attempt at the step-3 click below hung for the full test timeout with
-  // Playwright reporting the still-open "Scan patient's QR code" dropdown row
-  // intercepting the pointer event. A real sighted caregiver would face the
-  // identical block and would need to dismiss the dropdown themselves before
-  // continuing (there is no tour copy telling them to) -- so this closing tap
-  // models realistic recovery, not a papered-over test-only workaround.
-  await page.locator(PATIENT_SWITCHER).click();
-
-  // Step 3: spotlight the week strip; Next absent. Tapping it finishes the tour
-  // (last step) -- the click lands on a day cell / header control and bubbles
-  // to the container's own acknowledge listener (Walkthrough.tsx: no distinct
-  // waitFor.selector was set, so it listens on step.selector itself).
-  await expect(page.locator(WEEK_STRIP), "step 3 week strip target").toBeVisible({ timeout: 15_000 });
-  await assertWaitForStep(page, STEP3_TEXT, "step 3 week-strip");
+  await advanceWalkthroughToStep(page, 3);
   await page.screenshot({ path: `${SHOTS}/walkthrough-step3-week-strip.png`, fullPage: true });
-  await page.locator(WEEK_STRIP).click();
 
-  // Tour complete: overlay gone (no Exit).
-  await expect(page.getByRole("button", { name: "Exit walkthrough" }), "walkthrough overlay dismissed").toHaveCount(0, { timeout: 15_000 });
+  // Tapping through the rest completes it: overlay gone (no Exit).
+  await finishWalkthrough(page);
+  await expect(page.getByRole("button", { name: "Exit walkthrough" }), "tour completes once tapped through").toHaveCount(0, { timeout: 20_000 });
 
-  // Phase-log shape for a fully user-driven tour: honestly ZERO walkthrough
-  // phases. All 3 steps are waitFor (never `act`), so Walkthrough.tsx's
-  // `autonomous` flag is false throughout -- no PaceController is ever
-  // instantiated, and orchestrate.ts's runActStep (the sole producer of
-  // "walkthrough"-surface phase-log entries) never runs. Same honest zero
-  // shape as s19/s20's sibling VIEW tours.
+  // Phase-log shape for an autonomous tour: PACED walkthrough phases (the inverse
+  // of the old user-driven zero). All 3 steps are act:click with no onEnter, so
+  // click phases only (no navigate).
   const walkLog = await readPhaseLog(page);
   const walkPhases = walkLog.filter(e => e.surface === "walkthrough");
   console.log(`[PHASELOG] walkthrough entries=${JSON.stringify(walkPhases.map(e => `${e.surface}/${e.phase}`))}`);
-  expect(walkPhases, "user-driven tour records NO paced walkthrough phases").toHaveLength(0);
+  expect(walkPhases.length, "autonomous tour records paced walkthrough phases").toBeGreaterThan(0);
+  assertPhaseMins(walkLog, [{ surface: "walkthrough", phase: "click", min: PACING.PRE_CLICK_MS }]);
 
   // ── 4b CONVERSATIONAL SCHEDULE ANSWER (live UI proof) ─────────────────────
   // The same schedule ask, sent live through the real caregiver AskMeiScreen

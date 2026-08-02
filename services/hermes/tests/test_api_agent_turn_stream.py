@@ -64,6 +64,8 @@ async def test_tool_events_stream_before_the_final_event(monkeypatch):
             "tools_used": ["add_prescription"],
             "actions": [{"tool": "add_prescription", "summary": "Metformin 500mg"}],
             "walkthrough": None,
+            "choices": None,
+            "awaiting_confirmation": False,
         },
     ]
 
@@ -85,6 +87,8 @@ async def test_no_tool_calls_still_ends_with_a_final_event(monkeypatch):
             "tools_used": [],
             "actions": [],
             "walkthrough": None,
+            "choices": None,
+            "awaiting_confirmation": False,
         }
     ]
 

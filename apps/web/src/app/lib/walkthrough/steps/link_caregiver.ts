@@ -6,8 +6,9 @@ import type { WalkthroughStep } from "../types";
 // scans the elder's QR and sends a request (ScanLinkSheet.tsx); the elder
 // shows their QR, then later opens Notifications and accepts. Per
 // supabase/migrations/0005_care_links_consent_hardening.sql, the elder's own
-// accept tap is the ONLY code path that can ever activate the link — that
-// step is deliberately non-skippable.
+// accept tap is the ONLY code path that can ever activate the link — which is
+// why that step carries no `act`: no act means the overlay never classes it as
+// autonomous, so it renders no Next and Mei cannot advance past it.
 
 export const caregiverLinkRequestSteps: WalkthroughStep[] = [
   {
@@ -40,7 +41,6 @@ export const caregiverLinkRequestSteps: WalkthroughStep[] = [
     screen: { mode: "caregiver", screen: "dashboard" },
     selector: '[data-walk="scanlink-relationship-chips"] button',
     instructionKey: "walk.link.pickRelationship",
-    skippable: true, // relationship is optional — createLinkRequest defaults it
     waitFor: { type: "click", source: "dom" },
   },
   {
@@ -51,6 +51,7 @@ export const caregiverLinkRequestSteps: WalkthroughStep[] = [
     // Gated on createLinkRequest resolving "sent"/"already_pending" — the
     // "already_active"/"self"/"error" branches must NOT satisfy this.
     waitFor: { type: "write-committed", source: "app-event", event: "care-link-request-sent" },
+    timeoutMs: 20000, // a signal that never arrives must surface, not hang
   },
 ];
 
@@ -61,7 +62,25 @@ export const elderLinkSteps: WalkthroughStep[] = [
     onEnter: { mode: "elderly", tab: "settings" },
     selector: '[data-tour="nav-settings"]',
     instructionKey: "walk.link.goToSettings",
-    waitFor: { type: "navigation", source: "dom", to: { mode: "elderly", tab: "settings" } },
+    // Mei taps Settings herself (mirrors accept_caregiver_link.ts's first step).
+    // This was a `navigation` waitFor whose `to` equalled its own `screen`, and
+    // the overlay's guard is `sameScreen(cur, to) && !sameScreen(cur, screen)`
+    // — with to === screen that is `X && !X`, i.e. NEVER true. Combined with an
+    // onEnter that pre-navigated there, the step could not be satisfied even in
+    // principle: the elder side of link_caregiver was dead at step 1.
+    act: { kind: "click", selector: '[data-tour="nav-settings"]' },
+  },
+  {
+    // Mei reveals the code first. Without this step the next one spotlighted
+    // `elder-qr-gotit`, which only mounts inside `{showQr && …}` — and nothing
+    // anywhere pointed at the button that flips it, so the flow dead-ended here
+    // with a "can't find that" and only Exit. Same class as the deleted
+    // `elder-emergency-section` anchor.
+    id: "link.elder.reveal-qr",
+    screen: { mode: "elderly", tab: "settings" },
+    selector: '[data-walk="elder-qr-show"]',
+    instructionKey: "walk.link.revealQr",
+    act: { kind: "click", selector: '[data-walk="elder-qr-show"]' },
   },
   {
     id: "link.elder.show-qr",
@@ -81,7 +100,8 @@ export const elderLinkSteps: WalkthroughStep[] = [
     onEnter: { mode: "elderly", tab: "notifications" },
     selector: '[data-tour="nav-notifications"]',
     instructionKey: "walk.link.openNotifications",
-    waitFor: { type: "navigation", source: "dom", to: { mode: "elderly", tab: "notifications" } },
+    // Same unsatisfiable-navigation fix as the Settings step above.
+    act: { kind: "click", selector: '[data-tour="nav-notifications"]' },
   },
   {
     id: "link.elder.accept",
@@ -90,7 +110,7 @@ export const elderLinkSteps: WalkthroughStep[] = [
     // attribute-prefix selector matches whichever request is showing.
     selector: '[data-walk^="care-link-accept-"]',
     instructionKey: "walk.link.acceptRequest",
-    skippable: false, // the sole consent-activation step in the whole system
     waitFor: { type: "write-committed", source: "app-event", event: "care-link-activated" },
+    timeoutMs: 20000, // a signal that never arrives must surface, not hang
   },
 ];

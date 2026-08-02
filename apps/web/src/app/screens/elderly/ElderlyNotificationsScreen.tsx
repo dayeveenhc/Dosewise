@@ -7,7 +7,7 @@ import { t } from "../../lib/language";
 import { fetchPendingLinkRequests, respondToLinkRequest, type PendingLinkRequest } from "../../lib/careLinks";
 import { emitWalkthroughEvent } from "../../lib/walkthrough/bus";
 
-export function ElderlyNotificationsScreen({ careMessages, elderId, doctorQuestions, onAddDoctorQ, onMarkAnswered, onDeleteQuestion, onDismissMessage, onReplyMessage, openQuestionsSignal }: {
+export function ElderlyNotificationsScreen({ careMessages, elderId, doctorQuestions, onAddDoctorQ, onMarkAnswered, onDeleteQuestion, onDismissMessage, onReplyMessage, openQuestionsSignal, walkthroughResetSignal }: {
   careMessages: Message[];
   elderId?: string;
   // Questions for the doctor moved here from the Ask Mei screen: this tab is
@@ -23,6 +23,11 @@ export function ElderlyNotificationsScreen({ careMessages, elderId, doctorQuesti
   // ChangeHighlight has to be able to reach its card even if Messages is
   // showing. Ignore the initial 0 so it can't steal focus on mount.
   openQuestionsSignal?: number;
+  // Bumped when a walkthrough starts. notifications_tour's step 2 points at the
+  // demo low-stock row and its step 3 DISMISSES it, so replaying the tour used
+  // to dead-end on its own previous run. Restore the row (and the Messages tab
+  // the tour opens on) so it can be shown again.
+  walkthroughResetSignal?: number;
 }) {
   const { language } = useLanguage();
   const [requests, setRequests] = useState<PendingLinkRequest[]>([]);
@@ -39,6 +44,23 @@ export function ElderlyNotificationsScreen({ careMessages, elderId, doctorQuesti
   useEffect(() => {
     if (openQuestionsSignal) setTab("questions");
   }, [openQuestionsSignal]);
+
+  useEffect(() => {
+    if (!walkthroughResetSignal) return;
+    // Restore the demo alert (notifications_tour's own step 3 dismisses it, so
+    // replaying the tour used to dead-end on its previous run) and close the
+    // question composer (add_doctor_question_auto opens it itself, and its step
+    // targets the Add button, which only exists while it is closed).
+    //
+    // Deliberately does NOT touch `tab`: a ChangeHighlight can navigate here and
+    // open the Questions tab (openQuestionsSignal) in the same beat a
+    // walkthrough starts, and forcing Messages back would unmount the very card
+    // the highlight is trying to ring. The tour's own anchors don't need it —
+    // the demo alert sits ABOVE the tab strip, and the doctor-question flow
+    // clicks its tab itself.
+    setRefillMockDismissed(false);
+    setShowQInput(false);
+  }, [walkthroughResetSignal]);
 
   useEffect(() => {
     if (!elderId) return;
@@ -61,6 +83,12 @@ export function ElderlyNotificationsScreen({ careMessages, elderId, doctorQuesti
     }
   };
 
+  // Demo/seed messages carry a key prefix so their role/body/time follow the
+  // language setting; anything real (a caregiver's actual message) has no key
+  // and renders exactly as written.
+  const localized = (msg: Message, field: "role" | "body" | "time") =>
+    msg.i18nKey ? t(language, `${msg.i18nKey}.${field}`) : msg[field];
+
   const sendReply = (id: number) => {
     const text = replyText.trim();
     if (!text) return;
@@ -69,8 +97,19 @@ export function ElderlyNotificationsScreen({ careMessages, elderId, doctorQuesti
     setReplyingTo(null);
   };
 
-  const flagged  = doctorQuestions.filter(q => !q.answered && q.addedAt.includes("Mei"));
-  const manual   = doctorQuestions.filter(q => !q.answered && !q.addedAt.includes("Mei"));
+  // Split on the STRUCTURED source, never on searching the label for "Mei" —
+  // that string-sniff meant localizing the label silently dropped every question
+  // into the manual list.
+  const flagged  = doctorQuestions.filter(q => !q.answered && q.source === "agent");
+  const manual   = doctorQuestions.filter(q => !q.answered && q.source !== "agent");
+  // "Added by Mei · 14:05" / "Added · Today", composed here so both halves are
+  // in the person's language. An unparseable timestamp yields just the prefix.
+  // Seeded demo questions carry a key so they follow the language setting; a
+  // real one (typed by the person, or queued by Mei) renders as written.
+  const questionText = (q: DoctorQ) => (q.i18nKey ? t(language, q.i18nKey) : q.question);
+  const addedLabel = (q: DoctorQ) =>
+    [t(language, q.source === "agent" ? "ai.addedByMei" : "ai.added"), q.addedAt]
+      .filter(Boolean).join(" · ");
   const answered = doctorQuestions.filter(q => q.answered);
 
   const qActions = (q: DoctorQ) => (
@@ -182,7 +221,7 @@ export function ElderlyNotificationsScreen({ careMessages, elderId, doctorQuesti
               </div>
               <div className="flex-1 min-w-0">
                 <p className="text-[calc(17px*var(--dw-text,1))] font-bold text-foreground break-words leading-tight">{msg.author}</p>
-                <p className="text-[calc(14px*var(--dw-text,1))] text-muted-foreground">{msg.role} · {msg.time}</p>
+                <p className="text-[calc(14px*var(--dw-text,1))] text-muted-foreground">{localized(msg, "role")} · {localized(msg, "time")}</p>
               </div>
               <button
                 onClick={() => onDismissMessage(msg.id)}
@@ -192,7 +231,7 @@ export function ElderlyNotificationsScreen({ careMessages, elderId, doctorQuesti
                 <X size={18} />
               </button>
             </div>
-            <p className="text-[calc(15px*var(--dw-text,1))] text-foreground leading-relaxed">{msg.body}</p>
+            <p className="text-[calc(15px*var(--dw-text,1))] text-foreground leading-relaxed">{localized(msg, "body")}</p>
             {!msg.isMe && (replyingTo === msg.id ? (
               <div className="mt-3">
                 <textarea
@@ -236,8 +275,8 @@ export function ElderlyNotificationsScreen({ careMessages, elderId, doctorQuesti
                     <Brain size={13} className="text-warn" />
                     <p className="text-[calc(12px*var(--dw-text,1))] text-warn-fg font-bold uppercase tracking-wide">{t(language, "ai.fromChatWithMei")}</p>
                   </div>
-                  <p className="text-[calc(15px*var(--dw-text,1))] text-foreground leading-relaxed">{q.question}</p>
-                  <p className="text-[calc(14px*var(--dw-text,1))] text-warn-fg/80 mt-1">{q.addedAt}</p>
+                  <p className="text-[calc(15px*var(--dw-text,1))] text-foreground leading-relaxed">{questionText(q)}</p>
+                  <p className="text-[calc(14px*var(--dw-text,1))] text-warn-fg/80 mt-1">{addedLabel(q)}</p>
                   {qActions(q)}
                 </div>
               ))}
@@ -251,8 +290,8 @@ export function ElderlyNotificationsScreen({ careMessages, elderId, doctorQuesti
                   <Circle size={9} className="text-primary fill-primary" />
                 </div>
                 <div className="flex-1 min-w-0">
-                  <p className="text-[calc(15px*var(--dw-text,1))] text-foreground leading-relaxed">{q.question}</p>
-                  <p className="text-[calc(14px*var(--dw-text,1))] text-muted-foreground mt-1">{q.addedAt}</p>
+                  <p className="text-[calc(15px*var(--dw-text,1))] text-foreground leading-relaxed">{questionText(q)}</p>
+                  <p className="text-[calc(14px*var(--dw-text,1))] text-muted-foreground mt-1">{addedLabel(q)}</p>
                 </div>
               </div>
               {qActions(q)}
@@ -300,7 +339,7 @@ export function ElderlyNotificationsScreen({ careMessages, elderId, doctorQuesti
                   <div className="w-5 h-5 rounded-full bg-taken flex items-center justify-center shrink-0 mt-0.5">
                     <Check size={11} className="text-white" strokeWidth={3} />
                   </div>
-                  <p className="text-[calc(14px*var(--dw-text,1))] text-muted-foreground line-through leading-relaxed flex-1">{q.question}</p>
+                  <p className="text-[calc(14px*var(--dw-text,1))] text-muted-foreground line-through leading-relaxed flex-1">{questionText(q)}</p>
                   <button onClick={() => onDeleteQuestion(q.id)} aria-label={t(language, "common.delete")} className="shrink-0 w-9 h-9 flex items-center justify-center rounded-lg text-muted-foreground active:text-destructive active:bg-destructive/10 transition-all">
                     <Trash2 size={16} />
                   </button>

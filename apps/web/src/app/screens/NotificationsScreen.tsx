@@ -40,10 +40,10 @@ export function NotificationsScreen({ notifications, patient, onMarkAllRead, onD
       <div className="flex items-center justify-between mb-4">
         <div>
           <h2 className="font-['Fraunces'] text-xl font-semibold text-foreground">{t(language, "nav.notifications")}</h2>
-          {unread > 0 && <p className="text-xs text-muted-foreground">{unread} unread</p>}
+          {unread > 0 && <p className="text-xs text-muted-foreground">{t(language, "notifications.unreadCount", { count: unread })}</p>}
         </div>
         {unread > 0 && (
-          <button onClick={markAllRead} className="text-xs text-primary font-semibold">Mark all read</button>
+          <button onClick={markAllRead} className="text-xs text-primary font-semibold">{t(language, "notifications.markAllRead")}</button>
         )}
       </div>
 

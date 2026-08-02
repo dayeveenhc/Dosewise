@@ -16,7 +16,16 @@ const FALLBACK_RATE_LIMIT = "You're sending messages a little too fast. Please w
 const FALLBACK_UNREACHABLE = "I can't reach the assistant right now. Please check your connection and try again in a moment.";
 
 function fallback(reply: string, rateLimited = false): AgentTurnResponse {
-  return { reply, tools_used: [], actions: [], walkthrough: null, rateLimited };
+  // awaiting_confirmation is explicitly false: a sign-out/network/rate-limit
+  // fallback must never paint confirm buttons under a reply nothing proposed.
+  return { reply, tools_used: [], actions: [], walkthrough: null, choices: null, awaiting_confirmation: false, rateLimited };
+}
+
+// A tappable answer button the agent offered this turn (offer_choices tool):
+// `label` is shown, `value` is sent as the person's next message when tapped.
+export interface AgentChoice {
+  label: string;
+  value: string;
 }
 
 // One field's before/after on a committed write. `before` is null for a
@@ -68,6 +77,13 @@ interface AgentTurnResponse {
   tools_used: string[];
   actions: AgentAction[];
   walkthrough: WalkthroughPayload | null;
+  // Tappable answer buttons the agent offered this turn (offer_choices), or null.
+  choices?: AgentChoice[] | null;
+  // True when a tool PROPOSED something this turn and is waiting on a yes/no
+  // (Hermes session.awaiting_confirmation). Deterministic, unlike `choices`,
+  // which only exists if the model chose to call offer_choices — so the chat
+  // synthesizes its own localized Yes/No pair from this when `choices` is empty.
+  awaiting_confirmation?: boolean;
   // True only when this reply is the client-side rate-limit fallback (HTTP
   // 429), so the UI can render it as a system notice instead of a normal
   // agent answer.
@@ -108,7 +124,10 @@ export async function agentTurn(
   message: string,
   imageBase64?: string,
   pdfBase64?: string,
-  completedWalkthroughs?: string[]
+  completedWalkthroughs?: string[],
+  // Which shell is asking. Hermes only offers walkthroughs that can actually
+  // run in it — the two shells have entirely different screens.
+  appRole?: "elder" | "caregiver"
 ): Promise<AgentTurnResponse> {
   try {
     const { data: { session } } = await supabase.auth.getSession();
@@ -127,6 +146,7 @@ export async function agentTurn(
       pdf_base64: pdfBase64,
       reply_language: replyLanguage,
       completed_walkthroughs: completedWalkthroughs ?? [],
+      app_role: appRole ?? "elder",
     });
     if (!resp.ok) {
       // Distinguish the failure classes that used to collapse into one message.
@@ -138,10 +158,12 @@ export async function agentTurn(
     }
     const data = await resp.json();
     return {
-      reply: data.reply,
+      reply: data.reply ?? "",
       tools_used: data.tools_used ?? [],
       actions: data.actions ?? [],
       walkthrough: data.walkthrough ?? null,
+      choices: data.choices ?? null,
+      awaiting_confirmation: data.awaiting_confirmation ?? false,
     };
   } catch (err) {
     // Network failure, CORS rejection, or malformed JSON — the request never got
@@ -158,10 +180,16 @@ export interface AgentTurnEvent {
   type: "tool_start" | "tool_end" | "final";
   tool?: string;
   is_error?: boolean;
+  // tool_end only: whether THIS dispatch actually committed a write (a tool can
+  // run and return without writing — a propose/clarify turn). The chat screens
+  // gate screen-navigation on this so a mere proposal doesn't yank the UI.
+  committed?: boolean;
   reply?: string;
   tools_used?: string[];
   actions?: AgentAction[];
   walkthrough?: WalkthroughPayload | null;
+  choices?: AgentChoice[] | null;
+  awaiting_confirmation?: boolean;
 }
 
 // Streaming variant of agentTurn — same contract and fallback behaviour, but
@@ -174,7 +202,10 @@ export async function agentTurnStream(
   onEvent: (event: AgentTurnEvent) => void,
   imageBase64?: string,
   pdfBase64?: string,
-  completedWalkthroughs?: string[]
+  completedWalkthroughs?: string[],
+  // Which shell is asking. Hermes only offers walkthroughs that can actually
+  // run in it — the two shells have entirely different screens.
+  appRole?: "elder" | "caregiver"
 ): Promise<AgentTurnResponse> {
   try {
     const { data: { session } } = await supabase.auth.getSession();
@@ -191,6 +222,7 @@ export async function agentTurnStream(
       pdf_base64: pdfBase64,
       reply_language: replyLanguage,
       completed_walkthroughs: completedWalkthroughs ?? [],
+      app_role: appRole ?? "elder",
     });
     if (!resp.ok || !resp.body) {
       const detail = await resp.text().catch(() => "");
@@ -221,6 +253,8 @@ export async function agentTurnStream(
             tools_used: event.tools_used ?? [],
             actions: event.actions ?? [],
             walkthrough: event.walkthrough ?? null,
+            choices: event.choices ?? null,
+            awaiting_confirmation: event.awaiting_confirmation ?? false,
           };
         } else {
           onEvent(event);

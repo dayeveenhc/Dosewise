@@ -22,9 +22,7 @@ export type WalkthroughTaskName =
   | "check_schedule"
   | "log_dose"
   | "undo_dose"
-  | "language_voice"
   | "reminder_settings"
-  | "emergency_contact"
   | "text_size"
   // Spotlight tours (2026-07-26): highlight-and-narrate only — the user taps
   // every step themselves, nothing autonomous. First three are elder-mode,
@@ -59,11 +57,12 @@ export type WalkthroughScreen =
 // click that started it; a camera decode; a chat turn's committed action).
 export type WaitFor =
   | { type: "click"; source: "dom"; selector?: string }
-  | { type: "input"; source: "dom"; on: "change" | "blur"; validate?: "nonEmpty" | { pattern: string } }
+  // `selector` narrows the LISTENER to the real control when the step
+  // spotlights a labelled wrapper around it (the text-size slider).
+  | { type: "input"; source: "dom"; selector?: string; on: "change" | "blur"; validate?: "nonEmpty" | { pattern: string } }
   | { type: "select-change"; source: "dom" }
   | { type: "toggle"; source: "dom"; expected?: boolean }
   | { type: "value-change"; source: "app-event"; event: string }
-  | { type: "navigation"; source: "dom"; to: WalkthroughScreen }
   | { type: "step-transition"; source: "app-event"; event: string; toStep: string }
   | { type: "automatic-detection"; source: "app-event"; event: string }
   | { type: "agent-action-committed"; source: "app-event"; tool: string }
@@ -126,6 +125,18 @@ export interface RevealDirective {
   caption?: { verb: string; text: string };
 }
 
+// One row of the "check these details" summary shown inside the callout before
+// a manual Save. Declared as label + SELECTOR, never as a captured value: the
+// card reads the LIVE form, so it always shows what is actually there —
+// including anything the person retyped after tapping Change. A value snapshot
+// taken when the steps were built would go stale on the first edit and assert
+// something the form no longer contains, which is precisely the mistake this
+// review step exists to catch.
+export interface ReviewField {
+  labelKey: string; // through t() — reuse the form's own label key
+  selector: string; // the same selector the fill act used
+}
+
 export interface WalkthroughStep {
   id: string;
   screen: WalkthroughScreen;
@@ -144,9 +155,32 @@ export interface WalkthroughStep {
   act?: ActDirective;
   verify?: VerifyDirective;
   reveal?: RevealDirective;
-  skippable?: boolean; // default true; false for the caregiver-link consent/accept step
+  // Show the live values of these fields in the callout so the person can
+  // actually CHECK what Mei filled in before committing it.
+  review?: ReviewField[];
   timeoutMs?: number;
 }
+
+/**
+ * The autonomous family: Mei fills the real form and the patient taps Save.
+ * These are NOT one-time introductions — they are HOW the write is performed —
+ * so they must never be recorded as "already shown". Recording
+ * add_prescription_auto as done is what made adding a SECOND medicine skip the
+ * walkthrough entirely and become a silent direct write.
+ *
+ * Mirrors services/hermes/src/hermes/tools/walkthrough.py::AUTONOMOUS_TASKS,
+ * which is the load-bearing owner (it subtracts these from the
+ * completed_walkthroughs the client forwards). This copy only stops the client
+ * writing entries that would mean nothing.
+ */
+export const AUTONOMOUS_TASKS: ReadonlySet<WalkthroughTaskName> = new Set([
+  "add_prescription_auto",
+  "add_condition_auto",
+  "travel_mode_auto",
+  "edit_profile_auto",
+  "add_doctor_question_auto",
+  "accept_caregiver_link",
+] as const);
 
 export const WALKTHROUGH_TASK_LABELS: Record<WalkthroughTaskName, string> = {
   onboarding: "walk.taskLabel.onboarding",
@@ -162,9 +196,7 @@ export const WALKTHROUGH_TASK_LABELS: Record<WalkthroughTaskName, string> = {
   check_schedule: "walk.taskLabel.checkSchedule",
   log_dose: "walk.taskLabel.logDose",
   undo_dose: "walk.taskLabel.undoDose",
-  language_voice: "walk.taskLabel.languageVoice",
   reminder_settings: "walk.taskLabel.reminderSettings",
-  emergency_contact: "walk.taskLabel.emergencyContact",
   text_size: "walk.taskLabel.textSize",
   language_voice_tour: "walk.taskLabel.languageVoiceTour",
   notifications_tour: "walk.taskLabel.notificationsTour",

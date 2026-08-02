@@ -3,9 +3,10 @@ import { mkdirSync } from "node:fs";
 import { setTimeout as sleep } from "node:timers/promises";
 import type { SupabaseClient } from "@supabase/supabase-js";
 import {
-  agentTurn8901, anonClient, readPhaseLog, recheckDb, resetPhaseLog,
-  saveTurnArtifact, signIn, startWalkthrough,
+  agentTurn8901, anonClient, assertPhaseMins, readPhaseLog, recheckDb,
+  resetPhaseLog, saveTurnArtifact, signIn, startWalkthrough, advanceWalkthroughToStep, finishWalkthrough,
 } from "../helpers";
+import { PACING } from "../../src/app/lib/walkthrough/pacing";
 
 // s29 weekly-summary (VIEW) — a PURE spotlight tour of the caregiver's Weekly
 // Summary (AskMeiScreen.tsx's Quick help launcher -> weekly-summary tile ->
@@ -73,22 +74,8 @@ async function waitForCompletedWalkthrough(
 const NAV_AI = '[data-tour="nav-ai"]';
 const QUICKHELP_ROW = '[data-tour="cg-askmei"]';
 const SUMMARY_TILE = '[data-walk="cg-weeklysummary-tile"]';
-const STEP1_TEXT = "Tap Ask Mei.";                                    // walk.weeklySummaryTour.step1
-const STEP2_TEXT = "Tap Quick help to see what Mei can do.";          // walk.weeklySummaryTour.step2
-const STEP3_TEXT = "Tap Weekly Summary to see how the week went.";    // walk.weeklySummaryTour.step3
 
-// The view-only-class invariant (identical to s20/s10/s19): a waitFor step is
-// NEVER paced, so the callout shows Exit but MUST NOT render a Next button
-// (Walkthrough.tsx gates the whole Next/Replay block on `autonomous`, false
-// for every waitFor step). Assert the callout IS present (Exit visible) so the
-// absence of Next is meaningful, not just an unmounted overlay.
-async function assertWaitForStep(page: import("@playwright/test").Page, bodyText: string, label: string) {
-  await expect(page.getByText(bodyText, { exact: false }), `${label}: callout body`).toBeVisible({ timeout: 15_000 });
-  await expect(page.getByRole("button", { name: "Exit walkthrough" }), `${label}: Exit present`).toBeVisible();
-  await expect(page.getByRole("button", { name: "Next", exact: true }), `${label}: NO Next button (view-only tour)`).toHaveCount(0);
-}
-
-test("s29 weekly-summary: caregiver-driven Weekly Summary tour (no Next) -> 100% mock summary sheet, no write, no highlight", async ({ page }) => {
+test("s29 weekly-summary: AI-auto-advanced Weekly Summary tour -> 100% mock summary sheet, no write, no highlight", async ({ page }) => {
   test.setTimeout(120_000);
   mkdirSync(SHOTS, { recursive: true });
   await page.setViewportSize({ width: 1280, height: 900 });
@@ -133,45 +120,26 @@ test("s29 weekly-summary: caregiver-driven Weekly Summary tour (no Next) -> 100%
   await expect(page.locator(".change-highlight"), "no highlight ring before the tour").toHaveCount(0);
   await expect(page.locator('[data-testid="change-highlight-caption"]'), "no highlight caption before the tour").toHaveCount(0);
 
-  // resetPhaseLog first so the log holds only this interaction. All 3 steps
-  // are waitFor (user-driven) -> NO PaceController is ever instantiated for
-  // them (Walkthrough.tsx: `autonomous = !!(step.act || ...)`, false here) ->
-  // the tour records NO walkthrough phase-log entries at all (asserted below;
-  // same honest zero shape as s20 — the field/click/act/navigate phases only
-  // exist inside the autonomous act path in orchestrate.ts, never taken).
+  // resetPhaseLog first so the log holds only this interaction. All 3 steps are
+  // act:click now (2026-07-28) → autonomous → the tour SELF-DRIVES: it opens Ask
+  // Mei, taps Quick help, then taps the Weekly Summary tile, opening the mock
+  // sheet. We do NOT tap — the person just watches.
   await resetPhaseLog(page);
   await startWalkthrough(page, "weekly_summary_tour");
 
-  // Step 1: spotlight the always-mounted AI nav tab; Next absent. The person
-  // taps it themselves to travel there.
-  await assertWaitForStep(page, STEP1_TEXT, "step 1 go-to-askmei");
-  await page.locator(NAV_AI).click();
+  // It travels to the AI tab and spotlights the Quick help launcher on the way.
+  await advanceWalkthroughToStep(page, 2);
 
-  // Step 2: spotlight the Quick help row; Next absent. The row also wraps a
-  // "Clear chat" button (clicking THAT would also bubble-satisfy the ancestor
-  // waitFor, but wouldn't open the popup) — so drive the real, instructed
-  // action specifically: the "Quick help" button itself.
-  await expect(page.locator(QUICKHELP_ROW), "step 2 quick-help row target").toBeVisible({ timeout: 15_000 });
-  await assertWaitForStep(page, STEP2_TEXT, "step 2 open-quickhelp");
-  await page.getByRole("button", { name: "Quick help" }).click();
-
-  // Step 3: spotlight the Weekly Summary tile; Next absent. Screenshot here
-  // per the deliverable (a tour step spotlighting the summary tile) BEFORE
-  // acting, so the shot shows the spotlight, not the after-state.
-  await expect(page.locator(SUMMARY_TILE), "step 3 weekly-summary tile target").toBeVisible({ timeout: 15_000 });
-  await assertWaitForStep(page, STEP3_TEXT, "step 3 tap-tile");
+  // It reaches and spotlights the Weekly Summary tile; screenshot the spotlight
+  // (the deliverable) before the final tap.
+  await advanceWalkthroughToStep(page, 3);
   await page.waitForTimeout(500); // let smooth scrollIntoView settle
   await page.screenshot({ path: `${SHOTS}/walkthrough-step3-summary-tile.png`, fullPage: true });
 
-  // Real user tap: opens the mock Weekly Summary sheet AND — this being the
-  // tour's LAST step — satisfies the walkthrough's final waitFor in the same
-  // click (the native listener on this exact node fires during the same
-  // synchronous dispatch, before React's re-render removes the popup).
-  await page.locator(SUMMARY_TILE).click();
-
-  // Tour complete: overlay gone (no Exit) — the SAME click that opened the
-  // sheet also completed the tour.
-  await expect(page.getByRole("button", { name: "Exit walkthrough" }), "walkthrough overlay dismissed").toHaveCount(0, { timeout: 15_000 });
+  // Tapping through the rest completes it: Mei's final tap opens the mock Weekly
+  // Summary sheet and the overlay unmounts.
+  await finishWalkthrough(page);
+  await expect(page.getByRole("button", { name: "Exit walkthrough" }), "tour completes once tapped through").toHaveCount(0, { timeout: 20_000 });
 
   // The sheet + its 100% mock content (AIScreen.tsx, fed by data/patients.ts's
   // PATIENTS[0]/WEEKLY_DATA — no fetch, no Supabase read of any kind).
@@ -180,16 +148,17 @@ test("s29 weekly-summary: caregiver-driven Weekly Summary tour (no Next) -> 100%
   await expect(page.getByText("82%", { exact: false }).first(), "mock adherence figure rendered").toBeVisible();
   await expect(page.getByText("Celecoxib frequently missed at noon", { exact: false }).first(), "mock AI insight rendered").toBeVisible();
 
-  // Phase-log shape for a fully user-driven tour: honestly ZERO walkthrough
-  // phases — no navigate/field/click/act entries either, since none of this
-  // tour's steps carry `act` (or a waitFor-less verify/reveal), so
-  // Walkthrough.tsx's autonomous flag is false for all 3 and orchestrate.ts's
-  // runActStep (the only place that ever calls PaceController.paced(), the
-  // sole producer of "walkthrough" phase-log entries) never runs.
+  // Phase-log shape for an autonomous tour: PACED walkthrough phases (the inverse
+  // of the old user-driven zero). Three act:click steps (steps 2-3 carry onEnter →
+  // a navigate settle), so click + navigate phases are present, each floored.
   const walkLog = await readPhaseLog(page);
   const walkPhases = walkLog.filter(e => e.surface === "walkthrough");
   console.log(`[PHASELOG] walkthrough entries=${JSON.stringify(walkPhases.map(e => `${e.surface}/${e.phase}`))}`);
-  expect(walkPhases, "user-driven tour records NO paced walkthrough phases").toHaveLength(0);
+  expect(walkPhases.length, "autonomous tour records paced walkthrough phases").toBeGreaterThan(0);
+  assertPhaseMins(walkLog, [
+    { surface: "walkthrough", phase: "click", min: PACING.PRE_CLICK_MS },
+    { surface: "walkthrough", phase: "navigate", min: PACING.NAVIGATE_MS },
+  ]);
 
   // ── 3 NO-WRITE / NO-HIGHLIGHT PROOF (replaces a DB re-check) ──────────────
   // The point of a 100% mock scenario: viewing it commits nothing, rings

@@ -6,7 +6,7 @@ import { saveProfile, markWalkthroughCompleted } from "../../lib/profile";
 import { addMedication, archiveMedication, to24h } from "../../lib/medications";
 import { extractProfile, fileToBase64 } from "../../lib/hermes";
 import { normalizeAllergies } from "../../lib/changeHighlight";
-import { MEDICATION_CATALOG, COMMON_CONDITIONS, COMMON_ALLERGIES, COMMON_DRUG_ALLERGIES } from "../../data/medications";
+import { MEDICATION_CATALOG, COMMON_CONDITIONS, COMMON_ALLERGIES, COMMON_DRUG_ALLERGIES, localizeCatalogValue } from "../../data/medications";
 import { TimeField, TimesPicker, defaultDoseTime } from "../../components/TimesPicker";
 import type { RoutineTimes } from "../../components/TimesPicker";
 import type { PrefillMed, Role, WizardPrefill } from "../../lib/profile";
@@ -162,8 +162,16 @@ export function TagList({ label, placeholder, items, suggestions, extractField, 
   };
   const { language } = useLanguage();
   const q = value.trim().toLowerCase();
+  // Match on the localized label OR the canonical English value: filtering on
+  // the label alone meant that in Chinese "diab" matched nothing, and deduping
+  // on an exact-case value let someone re-add an entry they already had under
+  // different capitalisation.
+  const chosen = new Set(items.map(i => i.trim().toLowerCase()));
   const matches = q && suggestions
-    ? suggestions.filter(s => s.label.toLowerCase().includes(q) && !items.includes(s.value)).slice(0, 6)
+    ? suggestions
+        .filter(s => (s.label.toLowerCase().includes(q) || s.value.toLowerCase().includes(q))
+          && !chosen.has(s.value.trim().toLowerCase()))
+        .slice(0, 6)
     : [];
   return (
     <div className="mb-5" data-walk={dataWalk}>
@@ -172,7 +180,7 @@ export function TagList({ label, placeholder, items, suggestions, extractField, 
         <div className="flex flex-wrap gap-2 mb-2.5">
           {items.map((it, i) => (
             <span key={i} className="inline-flex items-center gap-1.5 bg-secondary border border-primary/20 text-primary rounded-xl px-2.5 py-1.5 text-sm font-medium">
-              {it}
+              {localizeCatalogValue(it, k => t(language, k))}
               <button onClick={() => onRemove(i)} className="text-primary/60 hover:text-destructive transition-colors">
                 <X size={12} />
               </button>

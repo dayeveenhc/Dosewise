@@ -71,7 +71,12 @@ export function GuidedTour({ steps, onFinish }: { steps: TourStep[]; onFinish: (
   const top = calloutTop(rect, containerHeight, calloutHeight);
 
   return (
-    <div ref={rootRef} className="absolute inset-0 z-[200]">
+    // pointer-events-none so the spotlighted control underneath stays tappable
+    // (the callout re-enables events for its own buttons) — without this the
+    // whole tour reads as a locked dark screen: e.g. the font-size step dimmed
+    // the slider but swallowed every tap, so "change text size" did nothing.
+    // Matches the autonomous Walkthrough overlay (components/Walkthrough.tsx).
+    <div ref={rootRef} className="absolute inset-0 z-[200] pointer-events-none">
       {!rect && <div className="absolute inset-0 bg-black/75" />}
       {rect && (
         // A single mask with both holes — two independent 9999px box-shadow
@@ -110,7 +115,10 @@ export function GuidedTour({ steps, onFinish }: { steps: TourStep[]; onFinish: (
         labelKey="tour.meiLabel"
         onHeight={setCalloutHeight}
       >
-        <button onClick={onFinish} className="text-xs text-muted-foreground font-medium px-2 py-2 shrink-0">
+        {/* Real button chrome, not bare clickable text — the way out of a tour
+            has to look like something you can press. Matches Back's treatment
+            while staying visually secondary to Next. */}
+        <button onClick={onFinish} className="h-9 px-3 rounded-xl border border-border bg-card text-muted-foreground text-xs font-semibold shrink-0">
           {t(language, "tour.skip")}
         </button>
         {index > 0 && (

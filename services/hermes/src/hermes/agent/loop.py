@@ -74,6 +74,7 @@ async def run_agent_turn(
     history: list | None = None,
     reply_language: str | None = None,
     completed_walkthroughs: list[str] | None = None,
+    app_role: str | None = None,
     on_event: OnEvent | None = None,
 ) -> tuple[str, list[str], list]:
     """Run one turn. Returns (reply_text, tools_used, updated_messages)."""
@@ -96,6 +97,7 @@ async def run_agent_turn(
         medical_profile=medical_profile,
         onboarding=onboarding,
         completed_walkthroughs=completed_walkthroughs,
+        app_role=app_role,
     )
 
     eff = llm.effective_provider()
@@ -164,6 +166,13 @@ async def _dispatch_tool(
     if on_event:
         await on_event({"type": "tool_start", "tool": name})
     handler = get_handler(name)
+    # A tool RUNNING is not a tool WRITING: log_dose/undo_dose/etc. return
+    # normally (is_error=False) on their "asked a question / nothing to do"
+    # paths without committing anything. The web client uses tool_end to
+    # navigate the screen, so it must know whether THIS dispatch actually
+    # committed — else a mere propose/clarify turn wrongly yanks the UI to the
+    # result screen. Snapshot the committed-actions length across the handler.
+    pre_committed = len(ctx.committed_actions)
     if handler is None:
         output, is_error = f"Unknown tool '{name}'.", True
     else:
@@ -172,8 +181,11 @@ async def _dispatch_tool(
         except Exception as exc:  # surface tool failures to the model, don't crash
             log.exception("tool %s failed", name)
             output, is_error = f"Tool error: {exc}", True
+    committed = len(ctx.committed_actions) > pre_committed
     if on_event:
-        await on_event({"type": "tool_end", "tool": name, "is_error": is_error})
+        await on_event(
+            {"type": "tool_end", "tool": name, "is_error": is_error, "committed": committed}
+        )
     return output, is_error
 
 

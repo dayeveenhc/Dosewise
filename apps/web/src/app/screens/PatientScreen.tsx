@@ -2,7 +2,7 @@ import { Activity, AlertTriangle, Info, Star, User, Phone, Plus, Trash2, History
 import { slugify } from "../lib/changeHighlight";
 import type { Patient } from "../types";
 import { Card, SectionHeader, MedAvatar } from "../components/shared";
-import { MED_FREQUENCY } from "../data/medications";
+import { MED_FREQUENCY, localizeCatalogValue } from "../data/medications";
 import type { Medication } from "../types";
 import { useLanguage } from "../lib/languageContext";
 import { t } from "../lib/language";
@@ -79,7 +79,7 @@ export function PatientScreen({ patient, justAddedMed, onEditProfile, onAddPresc
           {patient.conditions.length > 0 ? patient.conditions.map((c, i) => (
             <div key={i} className="flex items-center gap-3 px-4 py-3">
               <Activity size={15} className="text-primary shrink-0" />
-              <span className="text-sm text-foreground font-medium">{c}</span>
+              <span className="text-sm text-foreground font-medium">{localizeCatalogValue(c, k => t(language, k))}</span>
             </div>
           )) : (
             <div className="px-4 py-4 text-sm text-muted-foreground">{t(language, "common.noConditionsRecorded")} <button onClick={onEditProfile} className="text-primary underline">{t(language, "common.addOne")}</button></div>
@@ -121,7 +121,7 @@ export function PatientScreen({ patient, justAddedMed, onEditProfile, onAddPresc
                     </span>
                   )}
                 </p>
-                <p className="text-[calc(11px*var(--dw-text,1))] text-muted-foreground">{m.purpose} · {m.times.join(" & ")}</p>
+                <p className="text-[calc(11px*var(--dw-text,1))] text-muted-foreground">{localizeCatalogValue(m.purpose, k => t(language, k))} · {m.times.join(" & ")}</p>
                 {MED_FREQUENCY[m.name] && (
                   <p className="text-[calc(11px*var(--dw-text,1))] text-muted-foreground">{MED_FREQUENCY[m.name]}</p>
                 )}
@@ -163,7 +163,7 @@ export function PatientScreen({ patient, justAddedMed, onEditProfile, onAddPresc
                 </div>
                 <div className="flex-1 min-w-0">
                   <p className="text-sm font-semibold text-muted-foreground">{m.name} <span className="text-xs font-normal">{m.dose}</span></p>
-                  <p className="text-[calc(11px*var(--dw-text,1))] text-muted-foreground/80">{m.purpose}</p>
+                  <p className="text-[calc(11px*var(--dw-text,1))] text-muted-foreground/80">{localizeCatalogValue(m.purpose, k => t(language, k))}</p>
                 </div>
               </div>
             ))}

@@ -556,7 +556,11 @@ async def update_medication_dosage(
         raw_old = med.get("dosage")
         old = raw_old or "an unrecorded dose"
         if ctx.session is not None:
-            ctx.session.pending_dosage = {"name": medication_name, "dosage": dosage}
+            # Stash the CANONICAL med name (not the raw query) so a confirm that
+            # echoes back the "Metformin" we just displayed still matches a
+            # "metformin" the user originally typed — mirrors discontinue_medication
+            # / set_allergy_severity, which also stash+compare the resolved name.
+            ctx.session.pending_dosage = {"name": med["name"], "dosage": dosage}
             ctx.session.awaiting_confirmation = True
         warning = _dosage_warning(raw_old, dosage)
         return (
@@ -566,14 +570,32 @@ async def update_medication_dosage(
         )
 
     # confirmed=true: guard that a matching proposal exists in this session.
-    pending = match_pending(ctx, "pending_dosage", "name", medication_name)
-    if pending is None:
+    # Read the slot directly and compare case-insensitively against the canonical
+    # name we stashed — match_pending's exact-string compare used to wrongly refuse
+    # a confirm that echoed the displayed "Metformin" when the user typed
+    # "metformin" (case-only mismatch). Same normalization the sibling tools use.
+    pending = getattr(ctx.session, "pending_dosage", None) if ctx.session else None
+    stashed = ((pending or {}).get("name") or "").strip().lower()
+    if pending is None or stashed != (medication_name or "").strip().lower():
         return (
             "Refused to save: no matching pending dosage change was confirmed. Propose "
             "the change first (confirmed=false) and get the user's explicit yes."
         )
-    # A tap/short "yes" that doesn't resupply the dose still saves the one read back.
-    dosage = dosage or pending.get("dosage")
+    # Commit ONLY the dose that was proposed and read back to the user. A confirm
+    # turn that resupplies a DIFFERENT dose must not silently save it — that would
+    # write an un-agreed value and skip the _dosage_warning the propose ran. A
+    # tap/short "yes" resupplies nothing and lands on the proposed dose anyway; a
+    # genuinely different dose is refused so it goes back through propose→confirm.
+    proposed_dosage = (pending.get("dosage") or "").strip()
+    incoming = (dosage or "").strip()
+    if incoming and proposed_dosage and incoming.lower() != proposed_dosage.lower():
+        return (
+            "Refused to save: the dose in this confirmation "
+            f"('{incoming}') doesn't match the one I proposed and read back "
+            f"('{proposed_dosage}'). Propose the new dose again (confirmed=false) "
+            "so the user can confirm it."
+        )
+    dosage = proposed_dosage or dosage
 
     meds = await find_medications(ctx, medication_name, columns="id,name,dosage")
     if not meds:

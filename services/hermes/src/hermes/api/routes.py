@@ -49,6 +49,12 @@ class AgentTurnRequest(BaseModel):
     # re-offer a walkthrough already done. Client-supplied, stateless on Hermes,
     # same trust model as reply_language.
     completed_walkthroughs: list[str] = []
+    # Which app shell is asking: "elder" (default) or "caregiver". The two
+    # shells render entirely different screens, so a walkthrough offered to the
+    # wrong one can only ever spotlight elements that don't exist there.
+    # Client-supplied and stateless, same trust model as reply_language;
+    # Telegram omits it and gets the elder default, correct for that channel.
+    app_role: str | None = None
 
 
 class AgentTurnResponse(BaseModel):
@@ -61,6 +67,16 @@ class AgentTurnResponse(BaseModel):
     # Set when start_walkthrough was called this turn — {"task_name": str} — so the
     # client can mount the spotlight overlay. None on every other turn.
     walkthrough: dict | None = None
+    # Set when offer_choices was called this turn — [{"label", "value"}] — so the
+    # client can render tappable answer buttons under the reply. None otherwise.
+    choices: list[dict] | None = None
+    # True when a tool PROPOSED something this turn and is waiting on a yes/no
+    # (session.awaiting_confirmation — the same signal Telegram uses to attach its
+    # ✅/✖ keyboard, channels/telegram.py). Deterministic, unlike `choices` above,
+    # which only appears if the model elects to call offer_choices. The web client
+    # synthesizes its own localized Yes/No buttons from this when `choices` is
+    # empty, so a confirm is never a "type the word yes" dead end.
+    awaiting_confirmation: bool = False
 
 
 def _authenticate_and_check_rate_limit(
@@ -135,7 +151,7 @@ def _prepare_message(
 
 
 def _build_context(
-    app, elder_id: str, image_bytes: bytes | None
+    app, elder_id: str, image_bytes: bytes | None, app_role: str | None = None
 ) -> tuple[ToolContext, SessionState]:
     """Reuse (or create) this elder's persistent session so pending_proposal and the
     message history carry across requests — otherwise scan-propose-confirm can
@@ -151,7 +167,22 @@ def _build_context(
     # slot at propose time and binds it to the matched proposal only.
     if image_bytes is not None:
         state.pending_image = image_bytes
-    ctx = ToolContext(supabase=app.supabase, elder_id=elder_id, session=state)
+    # Per-TURN on the web. The propose→confirm guards live entirely in the
+    # pending_* slots (tools/base.py::match_pending), never in this flag, so
+    # clearing it here makes it mean exactly "a tool proposed something during
+    # THIS turn" — which is what the client needs to decide whether to paint
+    # Yes/No buttons. Left sticky it would sit true across every later turn
+    # (nothing on the web path clears it; _clear_pending is Telegram-only) and
+    # paint a confirm affordance under replies that asked nothing. A "yes" typed
+    # two turns later still commits, because that reads the stashed proposal.
+    # Telegram is untouched: it runs off app.state.registry, not http_sessions.
+    state.awaiting_confirmation = False
+    ctx = ToolContext(
+        supabase=app.supabase,
+        elder_id=elder_id,
+        session=state,
+        app_role=app_role or "elder",
+    )
     return ctx, state
 
 
@@ -166,7 +197,7 @@ async def agent_turn(body: AgentTurnRequest, request: Request) -> AgentTurnRespo
         return prepared
     message, image_bytes = prepared
 
-    ctx, state = _build_context(app, elder_id, image_bytes)
+    ctx, state = _build_context(app, elder_id, image_bytes, body.app_role)
     try:
         reply, tools_used, state.messages = await run_agent_turn(
             app.llm_client,
@@ -176,6 +207,7 @@ async def agent_turn(body: AgentTurnRequest, request: Request) -> AgentTurnRespo
             history=state.messages,
             reply_language=body.reply_language,
             completed_walkthroughs=body.completed_walkthroughs,
+            app_role=body.app_role,
         )
     except Exception:
         # A provider/DB error mid-turn used to surface as a bare HTTP 500, which
@@ -194,6 +226,8 @@ async def agent_turn(body: AgentTurnRequest, request: Request) -> AgentTurnRespo
         tools_used=tools_used,
         actions=ctx.committed_actions,
         walkthrough=ctx.walkthrough,
+        choices=ctx.choices,
+        awaiting_confirmation=bool(getattr(state, "awaiting_confirmation", False)),
     )
 
 
@@ -217,7 +251,7 @@ async def agent_turn_stream(body: AgentTurnRequest, request: Request) -> Streami
         return StreamingResponse(_early_events(), media_type="text/event-stream")
     message, image_bytes = prepared
 
-    ctx, state = _build_context(app, elder_id, image_bytes)
+    ctx, state = _build_context(app, elder_id, image_bytes, body.app_role)
     queue: asyncio.Queue = asyncio.Queue()
 
     async def on_event(event: dict) -> None:
@@ -233,6 +267,7 @@ async def agent_turn_stream(body: AgentTurnRequest, request: Request) -> Streami
                 history=state.messages,
                 reply_language=body.reply_language,
                 completed_walkthroughs=body.completed_walkthroughs,
+                app_role=body.app_role,
                 on_event=on_event,
             )
             await queue.put(
@@ -242,10 +277,18 @@ async def agent_turn_stream(body: AgentTurnRequest, request: Request) -> Streami
                     "tools_used": tools_used,
                     "actions": ctx.committed_actions,
                     "walkthrough": ctx.walkthrough,
+                    "choices": ctx.choices,
+                    "awaiting_confirmation": bool(
+                        getattr(state, "awaiting_confirmation", False)
+                    ),
                 }
             )
         except Exception:
             log.exception("agent turn (stream) failed for elder_id=%s", elder_id)
+            # Same KEY SET as the success branch above — this used to omit
+            # `choices` entirely, so the two `final` shapes diverged and the
+            # client only survived it by defaulting a missing key. Nothing may
+            # render a confirm affordance under an error reply.
             await queue.put(
                 {
                     "type": "final",
@@ -253,6 +296,8 @@ async def agent_turn_stream(body: AgentTurnRequest, request: Request) -> Streami
                     "tools_used": [],
                     "actions": [],
                     "walkthrough": None,
+                    "choices": None,
+                    "awaiting_confirmation": False,
                 }
             )
         finally:

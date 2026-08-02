@@ -63,6 +63,9 @@ const STORAGE_KEY = "dosewise:accessibility";
 // `--dw-text` below is what actually resizes the app's text. Scaling type
 // rather than the whole UI (`zoom`) is deliberate: the layouts are tuned to a
 // fixed 390px frame, and zooming the surface pushed cards off the edge of it.
+// The elder shell ALSO proportionally zooms its content area from this
+// setting (ElderlyApp.tsx contentZoom, via CONTENT_ZOOM below) for the same
+// reason — px utilities don't follow --dw-text either.
 const FONT_SIZE_PX: Record<FontSize, string> = {
   small: "13px",
   normal: "15px",
@@ -76,6 +79,19 @@ const FONT_SIZE_PX: Record<FontSize, string> = {
 // drift the first time either end was adjusted.
 const BASE_FONT_PX = Number.parseFloat(FONT_SIZE_PX.normal);
 const textScale = (size: FontSize) => String(Number.parseFloat(FONT_SIZE_PX[size]) / BASE_FONT_PX);
+
+// The proportional content-area zoom each shell applies from the Text-size
+// setting (see the note above — px utilities don't follow --font-size, so the
+// slider needs this to actually move the reading surface). "large" is the
+// default → 1 (no change out of the box). Shared by BOTH shells so the elder
+// and caregiver Text-size sliders behave identically.
+export const CONTENT_ZOOM: Record<FontSize, number> = {
+  small: 0.85,
+  normal: 0.92,
+  large: 1,
+  xlarge: 1.12,
+  xxlarge: 1.25,
+};
 
 const CONTRAST_CLASS: Record<ContrastMode, string | null> = {
   normal: null,
@@ -173,4 +189,10 @@ export function useAccessibility() {
   const ctx = useContext(AccessibilityContext);
   if (!ctx) throw new Error("useAccessibility must be used within AccessibilityProvider");
   return ctx;
+}
+
+// The content-area zoom scale for the current Text-size setting. Both shells use
+// this so their sliders scale the reading surface identically.
+export function useContentZoom(): number {
+  return CONTENT_ZOOM[useAccessibility().fontSize];
 }

@@ -81,7 +81,13 @@ test("s06 bulk-missed: 'tick all my missed doses' -> one bulk action rings all t
   // commits ONE bulk action. ≤3 attempt-pairs for LLM-routing variance; every
   // raw turn is saved. An attempt is accepted only when it exercises the whole
   // propose→confirm contract cleanly (propose wrote nothing; confirm = 3 entities).
-  const PHRASE_A = "I missed my morning medicines — please tick all my missed doses";
+  // NO time-of-day word here. Saying "morning" made the agent (correctly) pass
+  // slot="morning" to resolve_missed_doses, whose day-part window is a bounded
+  // ±60min around 08:00 — while this fixture seeds slots 3h/2h/1h ago, which
+  // only land inside that window when the SGT hour is EXACTLY 10. The tool was
+  // right; the phrase and the fixture disagreed. Time-scoped resolution is a
+  // separate concern and is not what this scenario is testing.
+  const PHRASE_A = "Please tick all my missed doses";
   const PHRASE_B = "yes";
   let propose: TurnResult | undefined;
   let confirm: TurnResult | undefined;
@@ -103,10 +109,14 @@ test("s06 bulk-missed: 'tick all my missed doses' -> one bulk action rings all t
     console.log(`[TRIGGER] attempt ${attempt}: proposed=${proposed} rowsAfterPropose=${rows.length} ` +
       `confirmTools=${JSON.stringify(b.tools_used)} bulkEntities=${act?.entities?.length ?? 0}`);
 
-    if (proposed && rows.length === 0 && act && (act.entities?.length ?? 0) === 3) {
-      propose = a; confirm = b; bulk = act; rowsAfterPropose = rows;
-      break;
-    }
+    // Record each stage independently so a failure names the stage that ACTUALLY
+    // missed. These were only assigned inside the all-or-nothing accept below,
+    // so a clean propose followed by a bad confirm still reported "no clean
+    // propose turn" — which sent me looking in the wrong place entirely.
+    if (proposed) { propose = a; rowsAfterPropose = rows; }
+    if (act) { confirm = b; bulk = act; }
+
+    if (proposed && rows.length === 0 && act && (act.entities?.length ?? 0) === 3) break;
   }
 
   expect(propose, "a clean propose turn (resolve_missed_doses routed, no writes)").toBeTruthy();

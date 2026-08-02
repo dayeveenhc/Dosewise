@@ -58,5 +58,6 @@ export const travelModeSetupSteps: WalkthroughStep[] = [
     // await saveProfile()), never the click — that button is also disabled
     // while dates are incomplete, so click timing alone isn't a safe signal.
     waitFor: { type: "write-committed", source: "app-event", event: "travel-plan-saved" },
+    timeoutMs: 20000, // a signal that never arrives must surface, not hang
   },
 ];

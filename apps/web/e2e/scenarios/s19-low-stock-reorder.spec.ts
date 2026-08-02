@@ -1,9 +1,9 @@
-import { expect, test, type Page } from "@playwright/test";
+import { expect, test } from "@playwright/test";
 import { mkdirSync } from "node:fs";
 import {
   agentTurn8901, anonClient, assertPhaseMins, createThrowawayElder,
   expectRow, readPhaseLog, recheckDb, resetPhaseLog, saveTurnArtifact, signIn,
-  startWalkthrough,
+  startWalkthrough, advanceWalkthroughToStep, finishWalkthrough,
 } from "../helpers";
 import { PACING } from "../../src/app/lib/walkthrough/pacing";
 
@@ -19,25 +19,9 @@ const SHOTS = "e2e/design-shots/scenarios/s19";  // durable, NOT wiped
 // notifications_tour anchors (steps/notifications_tour.ts) + per-step copy.
 const NAV_NOTIF = '[data-tour="nav-notifications"]';
 const REFILL_ROW = '[data-walk="notif-refill-row"]';
-const ACK_BTN = '[data-walk="notif-ack-btn"]';
 const SEND_BTN = '[data-walk="elder-ai-send-button"]';
-const REFILL_BTN = '[data-walk="med-request-refill-btn"]';
-const STEP1_TEXT = "Tap Notifications";                                    // walk.notificationsTour.step1
-const STEP2_TEXT = "Alerts like this appear when a medicine is running low"; // walk.notificationsTour.step2
-const STEP3_TEXT = "Tap Got it";                                          // walk.notificationsTour.step3
 
-// The consent-class invariant (identical to s10): a waitFor step is NEVER paced,
-// so the callout shows Exit but MUST NOT render a Next button (Walkthrough.tsx
-// gates the whole Next/Replay block on `autonomous`, false for every waitFor
-// step). Assert the callout IS present (Exit visible) so the absence of Next is
-// meaningful, not just an unmounted overlay.
-async function assertWaitForStep(page: Page, bodyText: string, label: string) {
-  await expect(page.getByText(bodyText, { exact: false }), `${label}: callout body`).toBeVisible({ timeout: 15_000 });
-  await expect(page.getByRole("button", { name: "Exit walkthrough" }), `${label}: Exit present`).toBeVisible();
-  await expect(page.getByRole("button", { name: "Next", exact: true }), `${label}: NO Next button (consent-class)`).toHaveCount(0);
-}
-
-test("s19 low-stock-reorder: mock low-stock tour (no Next) + real 'reorder my metformin' -> log_refill", async ({ page }) => {
+test("s19 low-stock-reorder: mock low-stock tour (AI-auto-advanced) + real 'reorder my metformin' -> log_refill", async ({ page }) => {
   test.setTimeout(180_000);
   mkdirSync(SHOTS, { recursive: true });
   await page.setViewportSize({ width: 1280, height: 900 });
@@ -96,46 +80,41 @@ test("s19 low-stock-reorder: mock low-stock tour (no Next) + real 'reorder my me
   // ── 4 UI + PACING ─────────────────────────────────────────────────────────
   await signIn(page, creds); // lands on Home (:5173)
 
-  // 4a — WALKTHROUGH (the MOCK acknowledge flow, user-driven). Start from Home so
-  // step 1's "Tap Notifications" is a real transition. resetPhaseLog first so the
-  // log holds only this interaction. These are waitFor steps → NO PaceController →
-  // the tour records NO phases at all (asserted below).
+  // 4a — WALKTHROUGH (the MOCK acknowledge flow, now AI-AUTO-ADVANCED, 2026-07-28).
+  // Start from Home so step 1's nav to Notifications is a real transition.
+  // resetPhaseLog first so the log holds only this interaction. Every step is
+  // act:click → autonomous → the tour SELF-DRIVES (no user taps) and records
+  // paced phases.
   await resetPhaseLog(page);
   await startWalkthrough(page, "notifications_tour");
 
-  // Step 1: spotlight the always-mounted Notifications nav; Next absent. The
-  // person taps it themselves to travel to the alert.
-  await expect(page.locator(NAV_NOTIF), "step 1 nav target").toBeVisible({ timeout: 15_000 });
-  await assertWaitForStep(page, STEP1_TEXT, "step 1 go-to-notifications");
+  // Step 1 spotlights the always-mounted Notifications nav. Mei performs each
+  // step's tap herself, but a step never advances on its own — the person taps
+  // Next when they're ready, which is what advanceWalkthroughUntil supplies.
+  await expect(page.locator(NAV_NOTIF), "step 1 nav target spotlit").toBeVisible({ timeout: 15_000 });
   await page.screenshot({ path: `${SHOTS}/walkthrough-step1-tap-notifications.png`, fullPage: true });
-  await page.locator(NAV_NOTIF).click();
 
-  // Step 2: spotlight the mock low-stock ROW; Next absent. The person taps the
-  // alert to read it — a NON-button descendant (the title <p>), so it does NOT
-  // hit the Got it button (that would dismiss the card early and unmount step 3).
-  await expect(page.locator(REFILL_ROW), "step 2 mock alert row").toBeVisible({ timeout: 15_000 });
-  await assertWaitForStep(page, STEP2_TEXT, "step 2 refill-row");
+  // It travels to Notifications and spotlights the mock low-stock alert row.
+  await advanceWalkthroughToStep(page, 2);
   await page.screenshot({ path: `${SHOTS}/walkthrough-step2-refill-row.png`, fullPage: true });
-  await page.locator(`${REFILL_ROW} p`).first().click();
 
-  // Step 3: spotlight the Got it button; Next absent. Tapping it dismisses the
-  // mock card AND completes the tour (last step).
-  await expect(page.locator(ACK_BTN), "step 3 ack button").toBeVisible({ timeout: 15_000 });
-  await assertWaitForStep(page, STEP3_TEXT, "step 3 ack");
-  await page.locator(ACK_BTN).click();
+  // Tapping through the rest completes it: the final step's Got it tap dismisses
+  // the mock card (purely local — no backend), and the overlay unmounts.
+  await finishWalkthrough(page);
+  await expect(page.getByRole("button", { name: "Exit walkthrough" }), "tour completes once tapped through").toHaveCount(0, { timeout: 20_000 });
+  await expect(page.locator(REFILL_ROW), "mock alert dismissed by the Got-it tap").toHaveCount(0);
 
-  // Tour complete: overlay gone (no Exit) and the mock alert dismissed (the ack
-  // is purely local — no backend, as this is a MOCK notification).
-  await expect(page.getByRole("button", { name: "Exit walkthrough" }), "walkthrough overlay dismissed").toHaveCount(0, { timeout: 15_000 });
-  await expect(page.locator(REFILL_ROW), "mock alert dismissed by Got it").toHaveCount(0);
-
-  // Phase-log shape for a user-driven tour: honestly ZERO walkthrough phases —
-  // waitFor steps never instantiate a PaceController, so there are no
-  // navigate/field/click/act phases to record (same honest shape as s10).
+  // Phase-log shape for an autonomous tour: PACED walkthrough phases (the inverse
+  // of the old user-driven zero). Three act:click steps (steps 2-3 carry onEnter →
+  // a navigate settle), so click + navigate phases are present, each floored.
   const walkLog = await readPhaseLog(page);
   const walkPhases = walkLog.filter(e => e.surface === "walkthrough");
   console.log(`[PHASELOG] walkthrough entries=${JSON.stringify(walkPhases.map(e => `${e.surface}/${e.phase}`))}`);
-  expect(walkPhases, "user-driven tour records NO paced walkthrough phases").toHaveLength(0);
+  expect(walkPhases.length, "autonomous tour records paced walkthrough phases").toBeGreaterThan(0);
+  assertPhaseMins(walkLog, [
+    { surface: "walkthrough", phase: "click", min: PACING.PRE_CLICK_MS },
+    { surface: "walkthrough", phase: "navigate", min: PACING.NAVIGATE_MS },
+  ]);
 
   // 4b — CHANGE HIGHLIGHT (the real reorder result, proven on the UI). First
   // settle the real med list on Prescriptions: the elder shell shows the demo
@@ -144,7 +123,11 @@ test("s19 low-stock-reorder: mock low-stock tour (no Next) + real 'reorder my me
   // rings a single, deterministic target.
   await page.locator('[data-tour="nav-prescriptions"]').click();
   await expect(page.locator(`[data-testid="medication-${medId}"]`), "real med card").toBeVisible({ timeout: 20_000 });
-  await expect(page.locator(REFILL_BTN), "med list settled to the one real med").toHaveCount(1, { timeout: 20_000 });
+  // Count the medication CARDS, not the Request-refill button. That button is
+  // gated on isRunningLow (lib/medications.ts), and this fixture seeds no
+  // `refills` row — which defaults to 30/30, so the button correctly never
+  // renders and this could not have been asserting what it claimed.
+  await expect(page.locator('[data-testid^="medication-"]'), "med list settled to the one real med").toHaveCount(1, { timeout: 20_000 });
 
   // Fire the REAL committed action from the AI tab (never Prescriptions — firing
   // where medication-* testids already render latches the first sync poll onto

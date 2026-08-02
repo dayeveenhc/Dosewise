@@ -18,6 +18,12 @@ export function addDoctorQuestionAutoSteps(p: WalkthroughParams = {}): Walkthrou
     {
       id: "autoDoctorQ.openTab",
       screen: { mode: "elderly", tab: "ai" },
+      // Honour the declared screen. Without this the step never navigated and
+      // only worked because its target is a GLOBAL nav button that exists on
+      // every tab — the same shape as the elder-cat-medicines break (a step
+      // whose declared screen and actual entry state were not enforced to
+      // agree, which held right up until someone launched it from elsewhere).
+      onEnter: { mode: "elderly", tab: "ai" },
       selector: '[data-tour="nav-notifications"]',
       instructionKey: "walk.autoDoctorQ.openTab",
       // Driving the real nav button (rather than jumping the tab in state) is
@@ -49,11 +55,25 @@ export function addDoctorQuestionAutoSteps(p: WalkthroughParams = {}): Walkthrou
       act: { kind: "fill", selector: Q_INPUT, value: question },
     },
     {
-      id: "autoDoctorQ.save",
+      // MANUAL CONFIRM: Mei filled the question in, but the person taps Save
+      // THEMSELVES — nothing is committed on autopilot. This used to be an
+      // `act: click` on the real Save button with verify/reveal riding the same
+      // step, so the doctor_questions row was written before the person had any
+      // say; the terminal gate opened AFTER the write, far too late to be
+      // consent. Now matches the shape its four *_auto siblings all document.
+      id: "autoDoctorQ.confirm",
       screen: ON_REMINDERS,
       selector: '[data-walk="elder-doctor-q-save"]',
+      instructionKey: "walk.confirmSave",
+      waitFor: { type: "click", source: "dom" },
+      review: [{ labelKey: "walk.review.question", selector: Q_INPUT }],
+    },
+    {
+      // Act-less Verify tail: re-query doctor_questions before claiming success.
+      id: "autoDoctorQ.verify",
+      screen: ON_REMINDERS,
+      selector: '[data-walk="elder-doctor-questions"]',
       instructionKey: "walk.autoDoctorQ.save",
-      act: { kind: "click", selector: '[data-walk="elder-doctor-q-save"]' },
       verify: { kind: "doctor-question-exists", question },
       reveal: { screen: ON_REMINDERS, selector: '[data-walk="elder-doctor-questions"]' },
     },

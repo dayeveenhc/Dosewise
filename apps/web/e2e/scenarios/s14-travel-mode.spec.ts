@@ -3,6 +3,7 @@ import { mkdirSync } from "node:fs";
 import {
   agentTurn8901, anonClient, assertPhaseMins, createThrowawayElder,
   readPhaseLog, recheckAccessibility, resetPhaseLog, saveTurnArtifact, signIn, startWalkthrough,
+  advanceWalkthroughUntil, advanceWalkthroughToStep, finishWalkthrough,
 } from "../helpers";
 import { PACING } from "../../src/app/lib/walkthrough/pacing";
 
@@ -78,10 +79,32 @@ test("s14 travel-mode: 'set up travel mode' -> travel_mode_auto walkthrough save
   // must not depend on the LLM's param choices).
   await startWalkthrough(page, "travel_mode_auto", { start_date: START_DATE, end_date: END_DATE, timezone: TIMEZONE });
 
+  // Steps 1-3 (open the category, the Travel Mode tile, the enable toggle) each
+  // hold at their commit gate until the person taps Next, so tap through to the
+  // start-date fill before waiting on its animation.
+  await advanceWalkthroughToStep(page, 4);
+
   // Screenshot 1 — date mid-fill: the start-date field is spotlighted + being
   // filled (its pre-highlight ring is present through the whole fill window).
   await page.waitForSelector('[data-walk="travel-start-date"].walk-field-prehighlight', { state: "attached", timeout: 30_000 });
   await page.screenshot({ path: `${SHOTS}/1-date-mid-fill.png`, fullPage: true });
+
+  // Fills + timezone select done → the run PAUSES at the manual-Save confirm step
+  // (waitFor on the real "travel-plan-saved" write event, no Next) — nothing
+  // commits on autopilot (2026-07-28 contract). The person taps Save THEMSELVES;
+  // that save emits the event and advances to Verify. Wait for the confirm
+  // callout, then tap Save.
+  // Each autonomous step now holds at its commit gate until the person taps
+  // Next, so tap through the fills + timezone select to reach the confirm step.
+  await advanceWalkthroughUntil(page, () => page.getByText("tap Save yourself", { exact: false }).isVisible());
+  await expect(page.getByText("tap Save yourself", { exact: false }), "manual-Save confirm step reached").toBeVisible({ timeout: 40_000 });
+
+  // The timezone really landed on a real option — a value matching no <option>
+  // used to blank the field, and the old Verify (startDate only) called that a
+  // success. performAct now refuses such a value outright.
+  await expect(page.locator('[data-walk="travel-timezone-select"]'), "timezone resolved to a real option").toHaveValue(TIMEZONE);
+
+  await page.locator('[data-walk="travel-save-button"]').click();
 
   // The reveal phase begins when the save Verify passes; the Replay control is
   // shown only then. Screenshot the (pre-replay) reveal, then press Replay ONCE
@@ -111,7 +134,6 @@ test("s14 travel-mode: 'set up travel mode' -> travel_mode_auto walkthrough save
   const log = await readPhaseLog(page);
   assertPhaseMins(log, [
     { surface: "walkthrough", phase: "field", min: PACING.FIELD_MIN_MS },
-    { surface: "walkthrough", phase: "between-fields", min: PACING.BETWEEN_FIELDS_MS },
     { surface: "walkthrough", phase: "click", min: PACING.PRE_CLICK_MS },
     { surface: "walkthrough", phase: "verify", min: PACING.VERIFY_MIN_MS },
     { surface: "walkthrough", phase: "reveal", min: PACING.REVEAL_PULSE_MS },

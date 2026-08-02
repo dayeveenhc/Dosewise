@@ -37,7 +37,20 @@ hermes/agent/loop.py`), reached by two independent channels:
   directly from the browser by `apps/web/src/app/lib/hermes.ts::agentTurn()`.
   This is the **primary demo surface**. Auth: the client forwards its Supabase
   session JWT (`{message, jwt, image_base64?, pdf_base64?, reply_language?}` →
-  `{reply, tools_used, actions}`). `reply_language` (the app's Voice&Language
+  `{reply, tools_used, actions, walkthrough?, choices?}`). `choices` (2026-07-28,
+  from `offer_choices`) is `[{label,value}]` the chat renders as tappable answer
+  buttons; a tap sends the `value` as the next turn. **`awaiting_confirmation`
+  (2026-08-02) is the DETERMINISTIC companion**: every propose→confirm tool
+  already sets `session.awaiting_confirmation` (Telegram's ✅/✖ keyboard rides
+  the same flag), so when the model didn't call `offer_choices` the web client
+  synthesizes its own **localized** Yes/No pair — the client owns that text
+  because a tapped value becomes the person's own chat bubble and their next
+  message, and Hermes holds no translation table. It is reset **per turn** in
+  `_build_context` (the flag is otherwise sticky across the persistent
+  `http_sessions` state and would paint confirm buttons under unrelated replies).
+  `lib/chatChoices.ts::buttonsFor`/`lastInteractiveIndex` is the shared decision:
+  anchoring on "the last message that HAS buttons" rather than
+  `messages.length-1` is what lets a turn both commit and ask a follow-up. `reply_language` (the app's Voice&Language
   setting) is threaded into the system prompt so Mei replies in it. `actions` is
   the list of writes the agent **actually committed** this turn (`{tool, summary}`),
   populated from `ToolContext.committed_actions` — the reliable "a write really
@@ -73,6 +86,26 @@ tritanopia` classes onto `<html>`, each overriding those same variables — whic
 is why hardcoded palette classes break accessibility, not just consistency. The
 elder header is app-name-centred (help left, profile right) and the bottom nav
 is oversized (26px icons, 13px bold labels) in both modes.
+**`lib/language.ts` has a key-parity test — keep all six maps identical.**
+`t()` falls back to English on a missing key, so a gap is invisible at runtime:
+it simply renders English to someone who chose Tamil. 174 keys had drifted out of
+all five non-English maps that way, including the ENTIRE `walk.*` corpus — which
+is why every guided walkthrough ran in English regardless of the setting.
+`language.test.ts` now asserts identical key sets, no duplicates, and identical
+`{placeholders}` per key. Chat history persistence is per shell
+(`mei-chat:{id}` / `mei-chat-cg:{id}`) with an **idle** 30-min TTL refreshed on
+every message, and the elder chat restores its view mode from the restored
+thread — returning to Ask Mei lands you back in the conversation, not the tiles.
+
+**Stored medical vocabulary is English; DISPLAY is localized.**
+`data/medications.ts::localizeCatalogValue(value, translate)` maps a stored
+canonical value (conditions, allergies, drug allergies, and medication purposes —
+one map, since `MEDICATION_CATALOG.purposeKey` shares the `catalog.condition.*`
+vocabulary) to its translated label, falling back to the raw string for anything
+free-text. Use it at every render site; the type-ahead's `withCatalogLabels` only
+covers the dropdown. Real medical facts have **no mock fallback** — an elder with
+an empty profile shows an empty list, never `data/patients.ts`'s demo conditions.
+
 Gates: `npm run build` (transpile-only), `npm run typecheck` (`tsc --noEmit` —
 a pragmatic non-strict `tsconfig.json`, added as a refactor safety net since the
 build doesn't type-check), `npm test` (vitest), `npm run e2e` (Playwright).
@@ -105,6 +138,23 @@ normally forbids touching `services/hermes/` or `supabase/`**; cross-cutting
 work across that boundary needs explicit user sign-off (as happened for the
 Hermes wiring — see MEMORY.md).
 
+**Every step shows the same action row.** Autonomous steps render Next (Done on
+the last); user-driven `waitFor` steps render `components/WalkthroughWaitPill.tsx`
+in the same slot — a NON-interactive indicator naming the real control ("Waiting
+for you: Add Lisinopril"), derived from the target's own accessible name so it
+can't drift from the UI. It is a `<div>` on purpose: `getByRole("button")`
+matches disabled buttons too, and the consent specs prove their invariant by
+asserting no advance control exists. Mei still cannot advance a consent step.
+
+**The overlay's callout is rendered UNCONDITIONALLY — never gate it on the
+spotlight having been measured.** It is the only host of the Exit button, so
+gating it (as it was until 2026-08-02) strands the user on an opaque scrim with
+no way out whenever a target is missing, renamed, or slow to mount. The measure
+retry is a 4000ms budget matching `actor.ts::waitForEl`, the `waitFor` DOM
+listener polls until its anchor exists, a step's `timeoutMs` is honoured, and an
+act that could not be performed at all (target absent / wrong element type / a
+select value matching no option) STOPS the run rather than advancing past it.
+
 Mei can also run a **Guided Walkthrough**: a scripted, spotlight-and-narrate
 overlay (`components/Walkthrough.tsx`) that highlights one screen element at a
 time, but never fills/taps/submits on the user's behalf — every step ends
@@ -114,6 +164,76 @@ actions no generic listener can tell apart, e.g. an async write's real
 success). Started by Hermes's `start_walkthrough` tool (task name only — step
 content stays client-side); see MEMORY.md's 2026-07-22 entry for the full
 architecture and known gaps.
+
+**An `*_auto` walkthrough is NOT a one-time introduction (2026-08-02).** It is
+*how the write is performed* — Mei fills the real form and the patient taps Save.
+`walkthrough.py::AUTONOMOUS_TASKS` is subtracted from `completed_walkthroughs`
+in `prompts.py`, so those tasks stay offerable forever and neither shell writes
+them via `markWalkthroughCompleted`. The "already shown" prompt block limits what
+Mei may *volunteer*, never what she may *do* on a direct request. Getting this
+wrong made adding a SECOND medicine skip the walkthrough entirely and become a
+silent direct write.
+
+**A wrong-shell walkthrough is refused at DISPATCH, not just client-side.**
+`ToolContext.app_role` (set from the request in `_build_context`) lets
+`start_walkthrough` return a recoverable refusal via `tasks_for_role`, instead of
+queuing a task the client then declines to `console.warn` — which is what made
+"what's my weekly summary?" land on the chat page with Mei promising a
+walkthrough that never appeared. `app_role` is client-supplied and used ONLY for
+this UI affordance, never for authorization. Both shells'
+`handleWalkthroughStart` now also **return a refusal reason** the chat renders.
+
+**A walkthrough resets the screens it needs.** `screenResetSignal` (mirroring
+`openQuestionsSignal`) is bumped on start; Ask Mei returns to its help tiles,
+Settings to its hub, Reminders restores the demo alert. A step's `onEnter` can
+only switch bottom-nav tabs, so a screen already mounted in another internal
+state never reset — and chat is exactly where a walkthrough is launched from.
+
+**Autonomous steps do NOT auto-advance (2026-08-02).** Mei performs each step's
+action at the `PACING` minimums, then the step HOLDS at a terminal commit gate
+(`pace.ts::awaitNext`, a timer-less waiter) until the person taps Next — "Done"
+on the last step. Within a phase, a Next after that phase's minimum still only
+shortens the dwell; `nextRequested` keeps the two meanings separate so one tap
+can never do both. `PACING` itself is unchanged — the gate does the anti-rush job.
+
+**The autonomous `*_auto` walkthroughs (2026-07-28) also END with a manual
+user-tapped Save**, not an autonomous submit: the fill steps stay animated/auto,
+but the terminal step is a `waitFor` on the real Save button (skippable:false, no
+Next), followed by an act-less verify/reveal tail — nothing commits on autopilot
+(mirrors `accept_caregiver_link.ts`). That confirm step now also carries a
+`review` list, rendering the live field values in the callout with a Change
+button (`components/WalkthroughReview.tsx`) so the person can actually check what
+Mei typed before committing it. The former spotlight-only tours
+(language_voice/notifications/emergency/weekly_summary/patient_schedule/
+caregiver_view_toggle) are now **AI-driven** (their `waitFor` steps became
+`act:click`, except where the target is a handler-less container, which is an
+act-less `reveal` instead — a tour must never claim an interaction that didn't
+happen) — except consent steps (emergency Call, caregiver-link accept) which stay
+user-tapped, and `onboarding` (real signup) which stays manual. **All six now
+have real in-app launchers** (elder: Ask Mei category rows; caregiver: the Ask
+Mei Quick-help sheet) — until 2026-08-02 they had NO entry point anywhere, which
+is why the weekly-summary walkthrough looked like it simply didn't exist. The
+resolver —
+`lib/walkthrough/steps/index.ts::resolveWalkthroughSteps(task, role, params)`
+over `steps/*.ts`, one file per task, 21 task names total (static step files and
+`*_auto` param-builders alike) — accepts `role` but uses it only for
+`link_caregiver` (a pure `switch(taskName)` otherwise). The cross-shell guard is
+`walkthroughShellFor(task, role)` in the same file, which **derives** the shell
+from the resolved steps' own first `screen.mode` rather than declaring it
+separately (so it cannot drift from the step files); both shells'
+`handleWalkthroughStart` refuse a wrong-shell task instead of mounting an overlay
+that can only spotlight elements which don't exist. Hermes filters the same way
+at source via `tools/walkthrough.py::tasks_for_role`, driven by the `app_role`
+the client sends on `/agent/turn`.
+
+In-progress walkthrough position (`lib/walkthroughState.ts`, sessionStorage,
+30-min TTL) is keyed by **`{shell}:{userId}`** (`shell: "elder"|"caregiver"`,
+2026-08-02) — required because a caregiver previewing their own elder view
+(`caregiver_view_toggle_tour`) uses the SAME userId in both shells; keying by
+userId alone let a caregiver-shell session leak into `ElderlyApp`'s
+restore-on-mount, whose completion handler then re-wrote `profiles.role` to
+`"elder"` on that same account (see MEMORY.md). `App.tsx` always passes
+`"caregiver"`, `ElderlyApp.tsx` always passes `"elder"`.
 
 A **Guided Auto-Navigation** mode is layered on top (2026-07-23): a step can
 instead carry an `act` (Mei performs the fill/tap/upload/submit herself, visibly
@@ -150,6 +270,13 @@ against a double-save when Verify merely raced); a real write failure keeps the
 honest `walk.verifyFailed`. The elder sheet's `onAdded` tab-switch is gated on
 `!walkthroughTask` so it doesn't fight the Home reveal. MEMORY.md's 2026-07-24
 entry has the why.
+
+**A screen that hides content behind a collapsed section must reveal it for a
+highlight.** `ChangeHighlight` polls ~5s for `data-testid="{entity_type}-{id}"`
+and then gives up; a collapsed accordion means the row isn't in the DOM at all,
+so a discontinued medicine got the write with no ring and no caption. The screen
+owns the fix (`ElderlyPrescriptionScreen` takes `highlightIds` and opens its own
+"Past medications" list), not the highlight layer.
 
 **Proof-of-change is the `ChangeHighlight` layer.** Its keystone: every write
 tool's `committed_actions` entry carries **what** changed —
@@ -237,7 +364,25 @@ FastAPI service, `uv`-managed. Key files:
   Telegram-specific button taps) so both channels get accurate answers.
 - `tools/` — one file per tool (medications, profile, symptoms, drug_info,
   interactions, schedule, doses, refills, caregiver, doctor, escalation,
-  videos, walkthrough, verify), registered via `tools/base.py`. **25 tools.**
+  videos, walkthrough, verify, choices), registered via `tools/base.py`. **28 tools.**
+  `caregiver` registers three: `message_caregiver`, `add_care_note`, and
+  **`list_caregivers`** (2026-08-02 — read-only "who is my emergency contact?").
+  The elder CANNOT read their caregiver's `profiles` row (RLS is
+  caregiver→elder, not the reverse), so the name comes from
+  `care_links.permissions.requested_by_name`; seeded/provisioned links carry no
+  such key, so the unnamed fallback is a normal path. **No phone number exists
+  anywhere in the schema** — the tool says so rather than inventing one, and
+  `ElderlySettingsScreen`'s emergency card now reads the same `care_links` data
+  (it used to render `data/patients.ts`'s fixture contact + phone on every real
+  account, contradicting Mei).
+  `refills` registers three: `check_refills`, `log_refill` (updates the pill
+  COUNT), and **`request_refill`** (2026-07-28 — a refill REQUEST; inserts a
+  `doctor_questions` row so it lands in the Ask-a-Doctor thread the caregiver
+  also sees, `entity_type="doctor_message"`; distinct from `log_refill`).
+  `choices` registers **`offer_choices`** (2026-07-28 — NOT a write; sets
+  `ctx.choices=[{label,value}]`, surfaced on the agent-turn response so the web
+  chat renders tappable answer buttons under Mei's reply, and prompts guide the
+  agent to use it for yes/no confirms + guided clarifying questions).
   `medications` registers five: `add_prescription`, `set_medication_reminder`,
   `update_medication_dosage` (propose→confirm dose EDIT), **`discontinue_medication`**
   (2026-07-27, propose→confirm, sets `archived=true` — never deletes), `list_medications`.

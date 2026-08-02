@@ -1,11 +1,12 @@
 import { useEffect, useRef, useState } from "react";
 import type { ChangeEvent } from "react";
-import { Send, TrendingUp, Plane, Check, Sparkles, ChevronUp, Camera, FileText, Pill, Globe, Mic, Volume2, X, Trash2, AlertTriangle } from "lucide-react";
+import { Send, TrendingUp, Plane, Check, Sparkles, ChevronUp, Camera, FileText, Pill, Globe, Mic, Volume2, X, Trash2, AlertTriangle, CalendarDays, Users } from "lucide-react";
 import type { Patient, Screen } from "../types";
 import { agentTurnStream, fileToBase64 } from "../lib/hermes";
 import type { AgentTurnEvent, AgentAction } from "../lib/hermes";
 import { firstRoutableAction, ACTION_TARGETS } from "../lib/agentActions";
 import { firstHighlightable } from "../lib/changeHighlight";
+import { buttonsFor, lastInteractiveIndex } from "../lib/chatChoices";
 import { emitWalkthroughEvent } from "../lib/walkthrough/bus";
 import { fetchProfile } from "../lib/profile";
 import type { WalkthroughTaskName, WalkthroughParams } from "../lib/walkthrough/types";
@@ -20,7 +21,30 @@ import { ConfirmDialog } from "../components/ConfirmDialog";
 import { PhotoSourceSheet } from "../components/PhotoSourceSheet";
 import { BottomSheet } from "../components/BottomSheet";
 
-interface ChatMsg { id: number; role: "user" | "agent"; text: string; time: string; isConfirmation?: boolean; isRateLimited?: boolean; image?: string }
+interface ChatMsg { id: number; role: "user" | "agent"; text: string; time: string; isConfirmation?: boolean; isRateLimited?: boolean; image?: string; choices?: { label: string; value: string }[]; awaitingConfirmation?: boolean }
+
+// Chat history survives leaving this screen (it unmounts on every caregiver
+// navigation), via sessionStorage — same contract as the elder chat, which had
+// this and the caregiver side did not: every trip to the dashboard and back
+// silently threw the whole conversation away.
+const SESSION_TTL_MS = 30 * 60 * 1000;
+
+// See ElderlyAIScreen: at most one transient "working on it" bubble per turn,
+// so a fixed id lets us replace it in place. Never persisted — it is UI state.
+const LIVE_STEP_ID = -1;
+
+function loadChatSession(key: string): { messages: ChatMsg[]; startedAt: number } | null {
+  if (typeof window === "undefined") return null;
+  try {
+    const raw = sessionStorage.getItem(key);
+    if (!raw) return null;
+    const parsed = JSON.parse(raw) as { messages: ChatMsg[]; startedAt: number };
+    if (Date.now() - parsed.startedAt > SESSION_TTL_MS) return null;
+    return parsed;
+  } catch {
+    return null;
+  }
+}
 
 const nowLabel = () => new Date().toLocaleTimeString("en-SG", { hour: "2-digit", minute: "2-digit" });
 
@@ -54,10 +78,23 @@ function FeatureBtn({ icon: Icon, label, onClick, className = "", "data-walk": d
   );
 }
 
-export function AskMeiScreen({ patient, elderId, onUpdatePatient, onNavigate, onMedsChanged, onMedAdded, onHighlightChange, onWalkthroughStart }: { patient: Patient; elderId?: string; onUpdatePatient: (p: Patient) => void; onNavigate?: (screen: Screen) => void; onMedsChanged?: () => void | Promise<void>; onMedAdded?: (name: string) => void; onHighlightChange?: (action: AgentAction) => void; onWalkthroughStart?: (taskName: WalkthroughTaskName, params?: WalkthroughParams) => void }) {
+export function AskMeiScreen({ patient, elderId, onUpdatePatient, onNavigate, onMedsChanged, onMedAdded, onHighlightChange, onWalkthroughStart }: { patient: Patient; elderId?: string; onUpdatePatient: (p: Patient) => void; onNavigate?: (screen: Screen) => void; onMedsChanged?: () => void | Promise<void>; onMedAdded?: (name: string) => void; onHighlightChange?: (action: AgentAction) => void; onWalkthroughStart?: (taskName: WalkthroughTaskName, params?: WalkthroughParams) => string | null | void }) {
   const { language, setLanguage } = useLanguage();
   const { voiceOutput, setVoiceOutput } = useAccessibility();
-  const [messages, setMessages] = useState<ChatMsg[]>(() => [
+  // Keyed by the signed-in account, and separate from the elder chat's key: a
+  // caregiver previewing the elder view is the SAME uid in both shells, so one
+  // shared key would cross the two conversations (the same class of bug the
+  // walkthrough session key was namespaced by shell to fix).
+  const storageKey = `mei-chat-cg:${elderId ?? "anon"}`;
+  const restored = loadChatSession(storageKey);
+  const startedAtRef = useRef<number>(restored?.startedAt ?? Date.now());
+  const greeting = (): ChatMsg => ({
+    id: Date.now(),
+    role: "agent",
+    text: t(language, "ai.greeting", { name: patient.name }),
+    time: nowLabel(),
+  });
+  const [messages, setMessages] = useState<ChatMsg[]>(() => restored?.messages ?? [
     {
       id: 1,
       role: "agent",
@@ -85,8 +122,39 @@ export function AskMeiScreen({ patient, elderId, onUpdatePatient, onNavigate, on
   const rxLibraryRef = useRef<HTMLInputElement>(null);
   const [pickerFor, setPickerFor] = useState<null | "rx" | "report">(null);
   const recognitionRef = useRef<any>(null);
+  // This screen unmounts when the caregiver leaves it. A chat turn is a live
+  // network call — guard its post-await continuation so a turn they walked away
+  // from can't navigate/highlight a screen they're no longer looking at.
+  const mountedRef = useRef(true);
+  useEffect(() => () => { mountedRef.current = false; }, []);
 
   const uniqueMeds = [...new Set(patient.medications.map(m => m.name))];
+  // Which message hosts the answer buttons this turn (see lib/chatChoices.ts).
+  const interactiveIndex = lastInteractiveIndex(messages);
+
+  // Persist the thread so it survives leaving and returning to this screen.
+  // Sending/receiving is activity, so the idle window restarts here — a live
+  // conversation is never expired mid-use.
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    startedAtRef.current = Date.now();
+    const persistable = messages
+      .filter(m => m.id !== LIVE_STEP_ID)
+      .map(m => (m.image?.startsWith("blob:") ? { ...m, image: undefined } : m));
+    sessionStorage.setItem(storageKey, JSON.stringify({ messages: persistable, startedAt: startedAtRef.current }));
+  }, [messages, storageKey]);
+
+  // The greeting is built once at mount, so switching language used to leave it
+  // stranded in the old one until the chat was cleared. Re-render it in place
+  // while it is still the ONLY message (never rewrite a real conversation).
+  useEffect(() => {
+    setMessages(prev =>
+      prev.length === 1 && prev[0].role === "agent" && !prev[0].choices
+        ? [{ ...prev[0], text: t(language, "ai.greeting", { name: patient.name }) }]
+        : prev
+    );
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [language, patient.name]);
 
   // Fetched once so agent turns can tell Mei which walkthroughs this caregiver
   // has already been shown — a stale read until the next remount is accepted,
@@ -143,10 +211,15 @@ export function AskMeiScreen({ patient, elderId, onUpdatePatient, onNavigate, on
     rec.start();
   };
 
-  // Sentinel id for the single transient "working on it" bubble a live turn may
-  // show — always at most one at a time, so a fixed id lets us update/replace it
-  // in place rather than accumulating one bubble per tool call.
-  const LIVE_STEP_ID = -1;
+  // Mirror of the elder shell's: a tile launch must surface a refusal too, or
+  // tapping it does nothing at all and reads as the app being broken.
+  const startWalk = (task: WalkthroughTaskName) => {
+    setQuickOpen(false);
+    const refusal = onWalkthroughStart?.(task);
+    if (!refusal) return;
+    setMessages(prev => [...prev, { id: Date.now(), role: "agent", text: t(language, refusal), time: nowLabel(), isConfirmation: true }]);
+    scrollToBottom();
+  };
 
   const send = async (text: string, imageBase64?: string, pdfBase64?: string, displayImage?: string) => {
     const trimmed = text.trim();
@@ -171,7 +244,14 @@ export function AskMeiScreen({ patient, elderId, onUpdatePatient, onNavigate, on
           { id: LIVE_STEP_ID, role: "agent", text: t(language, "ai.workingOnLabel", { label }), time: nowLabel(), isConfirmation: true },
         ]);
         scrollToBottom();
-      } else if (event.type === "tool_end" && !event.is_error && !navigated && !target.confirmFirst) {
+      } else if (event.type === "tool_end") {
+        // Clear the chip UNCONDITIONALLY — it used to be dropped only in the
+        // committed branch, so a propose turn (the one that ends by asking
+        // "shall I save it?") kept "Updating your medicines…" above the question.
+        setMessages(prev => prev.filter(m => m.id !== LIVE_STEP_ID));
+        // Navigate only once the tool actually COMMITTED a write this dispatch —
+        // a propose/clarify turn writes nothing and must not yank the screen.
+        if (event.is_error || !event.committed || navigated || target.confirmFirst) return;
         navigated = true;
         const done = t(language, target.doneKey);
         const label = t(language, target.labelKey);
@@ -181,16 +261,27 @@ export function AskMeiScreen({ patient, elderId, onUpdatePatient, onNavigate, on
         ]);
         scrollToBottom();
         // Screen-transition settle shared with the walkthrough engine.
-        if (onNavigate) setTimeout(() => onNavigate(target.caregiver), PACING.NAVIGATE_MS);
+        if (onNavigate) setTimeout(() => { if (mountedRef.current) onNavigate(target.caregiver); }, PACING.NAVIGATE_MS);
       }
     };
 
-    const { reply, actions, walkthrough, rateLimited } = await agentTurnStream(trimmed, onEvent, imageBase64, pdfBase64, completedWalkthroughs);
-    setMessages(prev => [...prev, { id: Date.now() + 1, role: "agent", text: reply, time: nowLabel(), isRateLimited: rateLimited }]);
+    const { reply, actions, walkthrough, choices, awaiting_confirmation, rateLimited } = await agentTurnStream(trimmed, onEvent, imageBase64, pdfBase64, completedWalkthroughs, "caregiver");
+    // Caregiver left this screen mid-turn: don't touch parent state or navigate a
+    // screen they're no longer on (the callbacks below survive this unmount).
+    if (!mountedRef.current) return;
+    setMessages(prev => [...prev.filter(m => m.id !== LIVE_STEP_ID), { id: Date.now() + 1, role: "agent", text: reply, time: nowLabel(), isRateLimited: rateLimited, choices: choices ?? undefined, awaitingConfirmation: awaiting_confirmation }]);
     setSending(false);
     scrollToBottom();
     speak(reply);
-    if (walkthrough) onWalkthroughStart?.(walkthrough.task_name as WalkthroughTaskName, walkthrough.params);
+    if (walkthrough) {
+      const refusal = onWalkthroughStart?.(walkthrough.task_name as WalkthroughTaskName, walkthrough.params);
+      // Say why nothing happened rather than leaving Mei's "I'll show you now"
+      // hanging (mirror of the elder chat).
+      if (refusal) {
+        setMessages(prev => [...prev, { id: Date.now() + 3, role: "agent", text: t(language, refusal), time: nowLabel(), isConfirmation: true }]);
+        scrollToBottom();
+      }
+    }
     // Gated for a walkthrough's "agent-action-committed" step: the real
     // committed_actions this turn, never tools_used (mirrors ElderlyAIScreen).
     if (actions.length) emitWalkthroughEvent("agent-action-committed", { tools: actions.map(a => a.tool) });
@@ -225,7 +316,7 @@ export function AskMeiScreen({ patient, elderId, onUpdatePatient, onNavigate, on
         const label = t(language, routed.target.labelKey);
         setMessages(prev => [...prev, { id: Date.now() + 2, role: "agent", text: t(language, "ai.openingLabel", { done, detail, label }), time: nowLabel(), isConfirmation: true }]);
         scrollToBottom();
-        if (onNavigate) setTimeout(() => onNavigate(routed.target.caregiver), 1200);
+        if (onNavigate) setTimeout(() => { if (mountedRef.current) onNavigate(routed.target.caregiver); }, 1200);
       }
     }
   };
@@ -240,7 +331,8 @@ export function AskMeiScreen({ patient, elderId, onUpdatePatient, onNavigate, on
   };
 
   const clearChat = () => {
-    setMessages([{ id: Date.now(), role: "agent", text: t(language, "ai.greeting", { name: patient.name }), time: nowLabel() }]);
+    startedAtRef.current = Date.now();
+    setMessages([greeting()]);
     setShowClearConfirm(false);
   };
 
@@ -276,6 +368,7 @@ export function AskMeiScreen({ patient, elderId, onUpdatePatient, onNavigate, on
       <div className="px-4 pt-2.5 pb-1 shrink-0 flex items-center gap-2" data-tour="cg-askmei">
         <button
           onClick={() => setQuickOpen(true)}
+          data-walk="cg-quickhelp-btn"
           className="flex items-center gap-2 rounded-xl bg-primary text-primary-foreground px-3.5 py-2.5 shadow-sm active:scale-[0.97] transition-transform"
         >
           <Sparkles size={15} className="shrink-0" />
@@ -302,7 +395,7 @@ export function AskMeiScreen({ patient, elderId, onUpdatePatient, onNavigate, on
       )}
 
       <div ref={scrollRef} className="flex-1 overflow-y-auto scrollbar-none px-4 py-3 space-y-3 border-t border-border">
-        {messages.map(msg => msg.isRateLimited ? (
+        {messages.map((msg, i) => msg.isRateLimited ? (
           <div key={msg.id} className="flex justify-center">
             <div className="flex items-center gap-1.5 bg-warn-bg border border-warn-border text-warn-fg rounded-full px-3.5 py-1.5">
               <AlertTriangle size={13} className="text-warn shrink-0" />
@@ -330,6 +423,22 @@ export function AskMeiScreen({ patient, elderId, onUpdatePatient, onNavigate, on
               <div className={`rounded-2xl px-4 py-3 ${msg.role === "user" ? "bg-primary text-primary-foreground rounded-tr-sm" : "bg-card border border-border rounded-tl-sm"}`}>
                 <p className={`text-[calc(15px*var(--dw-text,1))] leading-relaxed whitespace-pre-line ${msg.role === "user" ? "text-primary-foreground" : "text-foreground"}`}>{renderWithBold(msg.text)}</p>
               </div>
+              {/* Tappable answer buttons — the agent's own (offer_choices) or a
+                  synthesized Yes/No when a confirm is pending, anchored on the
+                  last message that HAS buttons (see lib/chatChoices.ts). */}
+              {i === interactiveIndex && !sending && buttonsFor(msg, language).length > 0 && (
+                <div className="flex flex-wrap gap-2 mt-1">
+                  {buttonsFor(msg, language).map((c, ci) => (
+                    <button
+                      key={ci}
+                      onClick={() => send(c.value)}
+                      className="px-4 py-2 rounded-full bg-primary/10 border border-primary/30 text-primary text-[calc(14px*var(--dw-text,1))] font-semibold active:scale-95 transition-transform"
+                    >
+                      {c.label}
+                    </button>
+                  ))}
+                </div>
+              )}
               <p className="text-[calc(10px*var(--dw-text,1))] text-muted-foreground px-1">{msg.time}</p>
             </div>
           </div>
@@ -486,6 +595,18 @@ export function AskMeiScreen({ patient, elderId, onUpdatePatient, onNavigate, on
               <FeatureBtn icon={FileText}   label={t(language, "ai.updateProfile")}       onClick={() => { setQuickOpen(false); setPickerFor("report"); }} />
               <FeatureBtn icon={Pill}       label={t(language, "ai.askAboutMed")}         onClick={() => setShowMedPicker(v => !v)} />
               <FeatureBtn icon={Globe}      label={t(language, "ai.languageVoice")}       onClick={() => { setQuickOpen(false); setShowLangSheet(true); }} />
+            </div>
+
+            {/* "Show me how" tours. These three exist in the step library and in
+                Hermes's TASK_NAMES but had NO entry point anywhere in the app —
+                the only way to reach them was a chat turn that happened to
+                trigger start_walkthrough, which is why the weekly-summary
+                walkthrough looked like it simply didn't work. */}
+            <p className="text-xs text-muted-foreground font-semibold px-0.5 pt-3.5 pb-2">{t(language, "ai.showMeHow")}</p>
+            <div className="grid grid-cols-2 gap-2">
+              <FeatureBtn icon={TrendingUp}   label={t(language, "ai.rowWeeklySummaryTour")} data-walk="cg-weeklysummary-tour" onClick={() => startWalk("weekly_summary_tour")} />
+              <FeatureBtn icon={CalendarDays} label={t(language, "ai.rowPatientScheduleTour")} onClick={() => startWalk("patient_schedule_tour")} />
+              <FeatureBtn icon={Users}        label={t(language, "ai.rowCaregiverViewTour")} onClick={() => startWalk("caregiver_view_toggle_tour")} />
             </div>
 
             {showMedPicker && (

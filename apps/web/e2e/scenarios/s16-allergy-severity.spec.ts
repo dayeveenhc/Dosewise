@@ -112,7 +112,10 @@ test("s16 allergy-severity: 'My penicillin allergy is severe, not mild' -> propo
   }, action as unknown as Record<string, unknown>);
 
   await expect(chip, "allergy chip ringed").toHaveClass(/change-highlight/, { timeout: 10_000 });
-  await expect(chip.locator("em"), "severity chip shows 'severe'").toHaveText("severe");
+  // The chip now renders the TRANSLATED severity label (severity.severe), not
+  // the raw backend enum value — that word used to be the one piece of the
+  // allergy row that never changed language.
+  await expect(chip.locator("em"), "severity chip shows the localized 'severe'").toHaveText("Severe");
   const caption = page.locator('[data-testid="change-highlight-caption"]');
   await expect(caption, "change caption visible").toBeVisible();
   await page.waitForTimeout(500); // let smooth scrollIntoView settle

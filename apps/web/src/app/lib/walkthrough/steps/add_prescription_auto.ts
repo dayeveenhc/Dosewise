@@ -49,15 +49,34 @@ export function addPrescriptionAutoSteps(p: WalkthroughParams = {}): Walkthrough
       act: { kind: "fill", selector: '[data-walk="rx-purpose"] input', value: purpose },
     },
     {
-      id: "autoRx.submit",
+      // MANUAL CONFIRM: Mei filled everything, but the person taps Save THEMSELVES
+      // — nothing is committed on autopilot. A waitFor step (no act, no Next
+      // button), so the run pauses here until the real tap. Mirrors the consent
+      // pattern in accept_caregiver_link.ts.
+      id: "autoRx.confirm",
+      screen: ON_RX,
+      selector: '[data-walk="rx-submit"]',
+      instructionKey: "walk.confirmSave",
+      waitFor: { type: "click", source: "dom" },
+      // Show what Mei actually typed, read live from these exact fields — the
+      // SAME selectors the fill acts above used, so the card and the actor can
+      // never disagree about which field is which. Tapping Change focuses the
+      // first one; nothing here can save.
+      review: [
+        { labelKey: "wizard.medicationName", selector: '[data-walk="rx-name"] input' },
+        { labelKey: "prescription.dose", selector: '[data-walk="rx-dose"]' },
+        { labelKey: "prescription.purposeCondition", selector: '[data-walk="rx-purpose"] input' },
+      ],
+    },
+    {
+      // Act-less Verify tail: re-query the real medication list (host polls
+      // fetchElderMedications) — the write's own "Saved" is never trusted. On
+      // pass, Reveal navigates to the Home timeline, where ElderlyHomeScreen's
+      // justAddedMed pulse-highlights the new dose card as proof.
+      id: "autoRx.verify",
       screen: ON_RX,
       selector: '[data-walk="rx-submit"]',
       instructionKey: "walk.autoRx.submit",
-      act: { kind: "click", selector: '[data-walk="rx-submit"]' },
-      // Re-query the real medication list (host polls fetchElderMedications) — the
-      // write's own "Saved" is never trusted. On pass, Reveal navigates to the Home
-      // timeline, where ElderlyHomeScreen's own justAddedMed pulse-highlights the
-      // new dose card as proof (so the person lands on their schedule, not a list).
       verify: { kind: "medication-exists", name },
       reveal: { screen: { mode: "elderly", tab: "home" }, selector: '[data-tour="elder-schedule"]' },
     },

@@ -30,10 +30,12 @@ def test_all_tools_registered():
         "add_doctor_question",
         "message_caregiver",
         "add_care_note",
+        "list_caregivers",
         "show_instruction_video",
         "request_human_help",
         "check_refills",
         "log_refill",
+        "request_refill",
         "check_drug_interactions",
         "show_schedule",
         "update_medical_profile",
@@ -41,6 +43,7 @@ def test_all_tools_registered():
         "add_symptom",
         "start_walkthrough",
         "verify_medication_exists",
+        "offer_choices",
     }
 
 

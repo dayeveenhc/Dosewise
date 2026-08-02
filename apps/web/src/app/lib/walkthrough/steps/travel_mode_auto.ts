@@ -1,3 +1,4 @@
+import { resolveTimezone } from "../../constants";
 import type { WalkthroughParams, WalkthroughStep } from "../types";
 
 // Guided Auto-Navigation — autonomous Travel Mode setup. Mei opens the sheet,
@@ -14,7 +15,12 @@ const ON_AI: WalkthroughStep["screen"] = { mode: "elderly", tab: "ai" };
 export function travelModeAutoSteps(p: WalkthroughParams = {}): WalkthroughStep[] {
   const startDate = p.start_date?.trim() || "2026-08-01";
   const endDate = p.end_date?.trim() || "2026-08-07";
-  const timezone = p.timezone?.trim() || "Japan (UTC+9)";
+  // The timezone param is free text from Hermes, but the <select>'s options
+  // carry no value attribute — their value IS their exact label, so anything
+  // that isn't a character-for-character match would blank the field rather
+  // than miss. Resolve "Asia/Tokyo"/"Tokyo"/"JST"/"UTC+9" to the real option
+  // first, and fall back to the demo default when it can't be resolved at all.
+  const timezone = resolveTimezone(p.timezone) || "Japan (UTC+9)";
   return [
   {
     id: "autoTravel.open",
@@ -62,11 +68,23 @@ export function travelModeAutoSteps(p: WalkthroughParams = {}): WalkthroughStep[
     act: { kind: "select", selector: '[data-walk="travel-timezone-select"]', value: timezone },
   },
   {
-    id: "autoTravel.save",
+    // MANUAL CONFIRM: the person taps Save themselves. TravelModeSheet emits the
+    // real "travel-plan-saved" write-committed event on a successful save, so we
+    // wait on that (a truer success signal than the raw click). No act/Next —
+    // nothing is written on autopilot. Mirrors accept_caregiver_link.ts.
+    id: "autoTravel.confirm",
+    screen: ON_AI,
+    selector: '[data-walk="travel-save-button"]',
+    instructionKey: "walk.confirmSave",
+    waitFor: { type: "write-committed", source: "app-event", event: "travel-plan-saved" },
+    timeoutMs: 20000, // a signal that never arrives must surface, not hang
+  },
+  {
+    // Act-less Verify tail: re-query the saved travel plan before claiming success.
+    id: "autoTravel.verify",
     screen: ON_AI,
     selector: '[data-walk="travel-save-button"]',
     instructionKey: "walk.autoTravel.save",
-    act: { kind: "click", selector: '[data-walk="travel-save-button"]' },
     verify: { kind: "travel-plan-saved" },
     reveal: { screen: ON_AI, selector: '[data-walk="travel-save-button"]' },
   },

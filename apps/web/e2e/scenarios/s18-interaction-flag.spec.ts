@@ -121,7 +121,9 @@ test("s18 interaction-flag: 'Is it safe to take ibuprofen with what I'm already 
   // none). The authoritative no-write proof is the re-check above.
   await signIn(page, creds); // baseURL :5173, lands on Home
   await page.locator('[data-tour="nav-ai"]').click(); // open the chat
-  const composer = page.getByPlaceholder(/type or tap the mic/i);
+  // The composer's placeholder is ai.askAnything ("Ask me anything") — the
+  // 2026-07-29 elderly revamp replaced the old "type or tap the mic" copy.
+  const composer = page.getByPlaceholder(/ask me anything/i);
   await expect(composer, "elder chat composer is present").toBeVisible();
   await resetPhaseLog(page); // clear BEFORE the conversational turn under test
 
@@ -129,11 +131,14 @@ test("s18 interaction-flag: 'Is it safe to take ibuprofen with what I'm already 
   await page.locator('[data-walk="elder-ai-send-button"]').click();
   // The elder's message echoes immediately.
   await expect(page.getByText(PHRASE), "user message echoed in chat").toBeVisible();
-  // Wait for Mei's conversational reply to land: greeting + user echo + reply =
-  // 3 message bubbles. A read-only check queues no "working on it"/confirmation
-  // bubble, so exactly 3. (Defensive network budget for a live LLM + OpenFDA turn.)
+  // Wait for Mei's conversational reply to land: user echo + reply = 2 message
+  // bubbles. A read-only check queues no "working on it"/confirmation bubble.
+  // This asserted 3 because the elder chat used to seed a canned greeting
+  // bubble; the 2026-07-29 revamp removed it (buildGreeting is gone and the
+  // thread starts empty), so 3 was unreachable. The old 120s budget turned that
+  // deterministic miss into a 2-minute hang — 30s is plenty for one live turn.
   await expect(page.locator("p.whitespace-pre-line"), "Mei replied in the chat")
-    .toHaveCount(3, { timeout: 120_000 });
+    .toHaveCount(2, { timeout: 30_000 });
   // Give the app one screen-transition settle: a committed write would navigate
   // within PACING.NAVIGATE_MS. Nothing did — this stays a chat.
   await page.waitForTimeout(PACING.NAVIGATE_MS);

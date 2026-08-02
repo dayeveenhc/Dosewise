@@ -21,6 +21,7 @@ export function SpotlightCallout({
   counterKey,
   labelKey,
   onHeight,
+  panel,
   children,
 }: {
   stepIndex: number;
@@ -32,6 +33,12 @@ export function SpotlightCallout({
   counterKey: string; // "walk.stepCounter" | "tour.stepCounter"
   labelKey: string;   // "walk.meiLabel" | "tour.meiLabel"
   onHeight?: (h: number) => void;
+  // An optional detail block between the body and the actions row (the
+  // "check these details" review card). Deliberately domain-neutral so the
+  // passive product tour can use it too. NOT in the measure deps below — a
+  // ReactNode is a fresh object every render; the ResizeObserver is what keeps
+  // onHeight honest when this grows or a value inside it changes.
+  panel?: ReactNode;
   children?: ReactNode; // action buttons (Exit, or Skip/Back/Next)
 }) {
   const { language } = useLanguage();
@@ -82,6 +89,8 @@ export function SpotlightCallout({
       <p className={`text-sm leading-relaxed ${title ? "mt-1" : "mt-3"} ${error ? "text-destructive font-medium" : "text-muted-foreground"}`}>
         {body}
       </p>
+
+      {panel}
 
       {children && <div className="flex items-center gap-1.5 mt-3">{children}</div>}
     </div>

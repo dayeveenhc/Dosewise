@@ -9,6 +9,625 @@ letting this grow forever — it's a memory aid, not an audit log.
 
 ---
 
+## 2026-08-02 (latest) — 8 reported defects, 6 root causes. The headline one was a PROMPT rail, not the engine.
+
+**"Now even the guided walkthrough for adding medicine doesn't work — what's
+going on?"** The engine was fine. The previous pass's anti-nagging rail in
+`prompts.py` said: *"Walkthroughs this patient has ALREADY been shown … DO NOT
+offer to show, guide, walk, or take them through it again."* Once
+`add_prescription_auto` completed once it landed in
+`profiles.accessibility.completedWalkthroughs` and was forwarded on every turn —
+so Mei was **instructed** never to run it again and silently did a direct
+`add_prescription` write instead. That is the "**now**" in the report: it worked
+until they'd used it once.
+
+**The category error:** the rail conflated *don't VOLUNTEER a tour they've seen*
+(correct, it's what s32 asserts) with *don't RUN one they just asked for*
+(wrong). And the `*_auto` family isn't a tutorial at all — it **is** how the
+write is performed. New `walkthrough.py::AUTONOMOUS_TASKS` is subtracted from
+`done` in `prompts.py`, neither shell marks those complete, and the "already
+shown" block was reworded to limit offering only. **Lesson: a prompt rail added
+to fix a test can be a product outage.** The s32 spec that motivated it stayed
+green throughout.
+
+**Why 39/39 green never caught it: no spec ever ran a walkthrough TWICE.** Every
+scenario uses a fresh elder with an empty `completedWalkthroughs`. New
+`s33-walkthrough-rerun.spec.ts` does exactly that — plus the other structural
+blind spot: **every** walkthrough spec enters via `window.__dwStartWalkthrough`
+from the HOME tab, never the real production path (a Hermes reply arriving while
+the person sits on the Ask Mei tab in CHAT mode). New helpers
+`startWalkthroughFromChat` / `parkOnChat`.
+
+**That blind spot was hiding a second real break.** `travel_mode_auto` and
+`travel_mode_setup` both open on `[data-walk="elder-cat-medicines"]`, which only
+exists in Ask Mei's HELP view — and `send()` sets `mode:"chat"`. A step's
+`onEnter` can only switch bottom-nav tabs, so on the normal launch path (from
+chat) the screen never reset and the very first act failed. Fixed with
+`screenResetSignal`, mirroring the existing `openQuestionsSignal` pattern; the
+same signal returns Settings to its hub (`add_condition_auto`/`edit_profile_auto`
+/`language_voice_tour` all open there) and restores the Reminders demo alert
+`notifications_tour` dismisses with its own step 3.
+
+**"Weekly summary says it's starting then just brings me to my chat page."** Two
+causes. (1) `tasks_for_role` gated only the PROSE list; the tool's JSON enum was
+still the flat `TASK_NAMES`, so an elder's model could call
+`start_walkthrough("weekly_summary_tour")` and the client declined it to
+`console.warn`. Fixed by rejecting at DISPATCH via a new `ToolContext.app_role`
+— **not** by filtering the enum per turn: `tool_schemas()` hands out the frozen
+registry dicts and `loop.py` only shallow-copies them, so a per-turn enum means
+deep copies threaded through all three provider paths. (2) Every refusal was
+`console.warn`-only; `handleWalkthroughStart` now returns a reason both chats
+render. Dead air after "I'll show you now" is indistinguishable from broken.
+
+**Language stuck in Chinese after switching back to English.**
+`REPLY_LANGUAGE.en` was `undefined` — `JSON.stringify` drops the key, so
+`prompts.py`'s `if reply_language:` was False and the whole LANGUAGE block was
+omitted. Switching zh→en **removed** the only instruction rather than replacing
+it, while the full Chinese history replayed. One-line fix (`en: "English"`), plus
+prompt wording making the setting authoritative over earlier turns and over
+`_recent_memory` (which is cached Chinese prose in the system prompt).
+
+**"The notification page is still in English."** The screen was already fully
+`t()`-wrapped. The real cause: **174 keys missing from all five non-English
+maps**, and `t()` falls back to English silently — so a gap is invisible at
+runtime. ~130 of them were the entire `walk.*` corpus, i.e. every walkthrough ran
+in English for a Chinese/Tamil/Malay user. Now 193 keys × 5 languages, with
+`language.test.ts` guarding key-set parity, duplicates, and `{placeholder}`
+parity so it cannot silently reopen. **Trap avoided:**
+`ElderlyNotificationsScreen` split flagged-vs-manual questions on
+`q.addedAt.includes("Mei")` — translating that label would have collapsed every
+question into "manual". Moved onto the structured `DoctorQ.source` first.
+
+**Emergency contact.** There is **no phone column anywhere in the schema** — the
+"+65 9123 4567" in Settings was `data/patients.ts` fixture data leaking through
+`App.tsx`'s `...prev[0]` spread onto real accounts (the same bug `bloodType` and
+`conditions` were already fixed for, three lines away). New read-only
+`list_caregivers` tool + a real `care_links`-backed Settings card, so Mei and the
+app finally agree. An elder **cannot** read their caregiver's `profiles` row
+(RLS is caregiver→elder only), so the name comes from
+`permissions.requested_by_name` — and seeded/provisioned links have no such key,
+making the unnamed fallback a normal path, not an edge case.
+
+**Confirm buttons.** `session.awaiting_confirmation` already existed and Telegram
+already used it; the web contract just had no field for it. Added — with a
+**per-turn reset in `_build_context`**, without which the flag (sticky across the
+persistent `http_sessions` state) would paint Yes/No under every later reply.
+Labels are client-owned: the tapped value becomes the person's own chat bubble
+AND their next message, so it must be in their language, and Hermes holds no
+translation table. Two render bugs fixed alongside: the `messages.length - 1`
+gate hid the buttons whenever a confirmation chip was appended after the reply,
+and the `LIVE_STEP_ID` "working on it" chip was cleared only on `committed` — so
+on a propose turn (exactly when the buttons appear) it stuck forever and was
+persisted to sessionStorage.
+
+**The Next gate stays** (user's explicit call this time, not an inference — last
+pass inferred it from "too fast"). It got real chrome instead: a one-shot arrival
+beat + resting ring (`.dw-gate-ready`, reduced-motion safe) and copy naming the
+actual button, since an enabled-but-identical button was too quiet a signal for
+"this is the only way forward".
+
+**Three gotchas found only by driving it, each of which had made a fix wrong:**
+1. **`__dwStartWalkthrough` registers in a `useEffect(…, [])`, so it captured the
+   FIRST render's `handleWalkthroughStart`** — and with it that render's
+   `hasCaregiver` (false) and `patient` (the pre-hydration fixture). Every gate
+   inside answered from stale data forever, and since every e2e spec enters
+   through that hook, the whole suite was verifying the wrong closure. Both
+   shells now route the hook through a ref tracking the latest closure. The
+   deps array stays empty on purpose — `App.tsx`'s comment explains the
+   window-property race that re-registering would reopen.
+2. **A gate must not refuse on "not looked yet".** `hasCaregiver` started `false`,
+   so `emergency_contact_tour` was refused during the ~100ms before its
+   `care_links` query resolved — telling someone who HAS a caregiver that they
+   don't. Now tri-state: only a definite `false` refuses. (That query runs on
+   every bottom-nav tab switch, deps `[elderId, tab]`, so a link accepted mid-
+   session is picked up. One small query per navigation, deliberately.)
+3. **`screenResetSignal` must not touch the Reminders tab.** Forcing it back to
+   Messages unmounted the doctor-question card a ChangeHighlight had just
+   navigated to (caught by s10). The tour's own anchors never needed it — the
+   demo alert sits above the tab strip and the doctor-question flow clicks its
+   own tab.
+
+**The verification sweep found a bug none of the 8 reports mentioned: THE SYSTEM
+PROMPT NEVER STATED TODAY'S DATE.** Asked to set up Travel Mode for "next Monday"
+on 2026-08-02, Mei returned `start_date: 2023-10-30` — dated from its training
+data — and `travel_mode_auto` dutifully saved a travel plan three years in the
+past. `s14` passes right through it because the spec drives with its own
+constants and never gates on the routed values. Every relative phrase was
+affected ("in two weeks", "since last month"), not just travel. `prompts.py` now
+opens with `Today is {weekday}, {d} {Month} {YYYY} ({YYYY-MM-DD})` in the app's
+own `hermes_tz`. Re-verified live: 2026-08-10 → 2026-08-24. **A unit test can
+only catch a MISSING date, never a wrong one** — this needed a live drive.
+
+**Final state.** Offline: hermes **366** pytest + ruff clean; web `tsc` clean,
+**160** vitest, build clean. Live: **41/41 scenario specs pass** (4 — s05, s06,
+s18, s24 — needed a serial re-run; all four carry retry loops for the documented
+LLM routing variance under parallel load, and all four are green serially). POST
+green. Four sub-agents drove every walkthrough family live from BOTH the dev hook
+and the production chat entry: **zero stalls, every step target found**.
+
+**The browser does NOT talk to a local Hermes.** `VITE_HERMES_URL` is the ngrok
+fixed domain → pm2's `hermes-demo` on `:5010`. So a scratch `:8901` verifies the
+backend CODE but says nothing about what the app serves — a sub-agent caught the
+confirm-buttons fix "failing" in-browser purely because `hermes-demo` predated it
+(absent keys on the SSE `final` frame, not present-and-false: the proof). Any
+backend change needs a pm2 restart (or a commit, for `hermes-git-sync`) before
+it is testable through the UI. Worth checking first every time.
+
+**Two entry points swallowed walkthrough refusals, and only one got fixed first.**
+`handleWalkthroughStart` returning a reason is useless unless the CALLER renders
+it: the chat path did, the Ask-Mei help tiles discarded it, so tapping "Show me:
+my emergency contact" with no caregiver was silent dead air — the exact defect
+the return value exists to end. Found independently by two sub-agents. Both
+shells' tile launches go through a `startWalk` that renders it now. `request_refill`
+had dodged it only by accident (its tile pre-gates on `anyRunningLow`).
+
+**Verification caveat worth keeping.** The 965 translated strings are machine
+translations without a native reviewer, on the user's explicit call. Three places
+a reviewer would earn their keep, all flagged by the translators themselves:
+`walk.taskLabel.*` has no consumer in `src/` (`WALKTHROUGH_TASK_LABELS` is
+declared and unused), so its carrier sentence was guessed; the `ta` block already
+used two different words for "refill" (`மறுநிரப்பு` vs `மறுபொருத்தம்`) and the
+new keys picked the majority one, so `walk.refill.tapRequest` and
+`home.refillNeeded` now disagree on one screen; and `walk.refused.noCaregiver`
+was hand-written after the batch rather than routed through the translators.
+
+## 2026-08-02 — The "flaky" tests were hiding a live signup outage. 39/39 green.
+
+I had reported 6 failing e2e specs as LLM variance / pre-existing. **That was
+wrong about the ones that mattered.** Re-investigating each properly turned up
+three real product bugs, one of them a production outage.
+
+**EVERY NEW USER SIGNING UP HIT A BLANK WHITE SCREEN.** `App.tsx`'s onboarding
+branch was wrapped in `LanguageProvider` only; `ab29a6d` added
+`useAccessibility()` to `TimesPicker.tsx` (×3) for the 12h/24h setting, and that
+hook **throws** when its provider is missing. The wizard's `routine` step renders
+five `TimeField`s → throw during render → React unmounts the whole tree. Same for
+`current-meds`/`med-history` via `MedList` → `TimesPicker`: one root cause, three
+dead wizard steps. Committed, merged, and serving. **Fixed** by wrapping that
+branch in `AccessibilityProvider` (verified in a browser, not just by the spec —
+zero pageerrors, screenshot in `e2e/design-shots/wizard-crash-fix/`).
+**Deliberately did NOT also make `useAccessibility()` fail soft** — that would
+turn every future missing-provider mistake into a silent wrong time format
+instead of a loud crash, and the loud crash is what made this findable.
+
+**Lesson worth keeping: a test that fails the same way three times is not
+flaky.** `s30` failed identically on every run; I attributed it to "pre-existing"
+because reverting my own changes didn't fix it. Reverting proves *authorship*,
+not *innocence* — the bug was inherited, and it was still a live outage.
+
+**Second real bug:** an elder who discontinues a medicine got the DB write but
+**no ring and no caption, ever** — `ElderlyPrescriptionScreen`'s archived list is
+collapsed behind `pastOpen` (also `ab29a6d`), so `ChangeHighlight` polled 5s for
+a row that wasn't in the DOM and gave up silently. The comment directly above it
+still said "always visible". Fixed by passing the highlighted entity ids down so
+the screen reveals its own content (`highlightableEntities` → `highlightIds`),
+rather than teaching the highlight layer about accordions.
+
+**Third:** `s03` caught Mei replying "✅ Logged: Metformin — 8:00 AM" with
+`tools_used: []` and `actions: []` — a fabricated adherence confirmation in a
+medication app. The spec's retry loop then made it unrecoverable: it re-asked on
+the SAME elder, and Hermes replays per-`elder_id` session history, so attempts
+2-3 read attempt 1's false claim and echoed it. **Effective attempt count was 1,
+not 3.** Same contamination in `s32`. Both now re-run the whole dialogue on a
+FRESH elder per attempt; `s03` also logs loudly if a reply claims a write that
+never committed.
+
+**Two more walkthrough safety bugs, found by auditing all 116 steps:**
+`add_doctor_question_auto` was the ONLY `*_auto` that committed a real Supabase
+write with no user tap (`act: click` on Save, with verify/reveal riding the same
+step, so the commit gate opened *after* the write) — split into a `waitFor`
+confirm + act-less tail like its four siblings. And `link_caregiver`'s elder side
+dead-ended at 2/4: it waited on the QR code, which only mounts behind `showQr`,
+and nothing anywhere pointed at the button that flips it — same class as the
+deleted `elder-emergency-section` anchor. Added `elder-qr-show` + a reveal step.
+
+**Consistent confirmation frame (user's ask).** `waitFor` steps rendered an empty
+action row — no Next by design, because Mei must never advance past consent, but
+also no clue what was expected. New `WalkthroughWaitPill` fills the same slot
+with a non-interactive indicator naming the real control ("Waiting for you: Add
+Lisinopril"), derived from the target's own accessible name so it can't drift.
+Three non-obvious constraints, all load-bearing:
+- **A `<div>`, not a `<button disabled>`** — `getByRole("button")` still matches
+  disabled buttons, so a button would stay catchable forever by the four specs
+  that prove consent steps render no advance control; `aria-hidden` would fix
+  that only by hiding a visible element from screen readers.
+- **The "Waiting for you: " prefix is correctness, not copy taste.** A bare
+  "Tap {label}" renders the literal string "Tap Scan QR code" on s24 step 2 —
+  byte-identical to that spec's own body text, giving `getByText` two matches
+  and a strict-mode failure.
+- **Guard `textContent` on interactive-only + no `<option>`** — the language
+  target is a `<div>` wrapping a `<select>` whose textContent is every option
+  concatenated, and a bare `Toggle` has no name at all (fallback is its normal
+  path, not an edge case).
+
+**Deleted the duplicate task families** (`language_voice`, `emergency_contact`;
+kept the self-driving `*_tour`). **A deletion like this is a live-500 hazard:**
+`prompts.py` did `_WALKTHROUGH_LABELS[t] for t in sorted(done)`, and `done` is
+STORED USER DATA (`profiles.accessibility.completedWalkthroughs`) — any patient
+who had completed a since-renamed task would KeyError on EVERY turn. Guarded
+first (`done & _WALKTHROUGH_LABELS.keys()`) with its own regression test. 23→21
+tasks; the 4-way parity pytest keeps the owners honest.
+
+**Pacing is now uniform.** `SELECT_MIN_MS` (700) made the travel timezone the
+fastest step in a task whose neighbouring fills were 2800 — select/upload now
+share `FIELD_MIN_MS` and get the same pre-highlight beat, because they ARE fills
+to the person. `BETWEEN_FIELDS_MS` (1000) was deleted: it made sense when steps
+auto-advanced, but now only delayed when Next became tappable. All six tours
+carry `onEnter` on their non-navigating steps, so the rhythm is identical.
+`skippable` was declared and read by **nothing** on 15 steps — deleted along with
+the now-producerless `navigation` waitFor variant and its overlay machinery.
+Three tour headers asserted the exact opposite of their own code ("every step is
+waitFor, no Next, zero phase-log" on 100%-`act` tours) — corrected.
+
+**Verified.** Offline: web `tsc`/**149** vitest/build; hermes **341** pytest/ruff.
+Live e2e: **39/39 scenario tests pass** (was 33/39). A static matrix re-derived
+from the real resolver confirms: every one of the 21 tasks' steps has a
+completion path, renders either Next/Done or the wait pill, no `*_auto` commits
+without a user tap, and no bus-backed wait can hang without a timeout.
+
+**One spec assertion deliberately softened, and why.** `s32`'s `OFFER_RE` matched
+*any* offer language, but the prompt's done-block only forbids re-offering **the
+completed** task while the undone-block actively invites offering a different
+one — so it asserted more than the prompt ever promised. The hard assertion is
+now the real safety property (never RE-RUN a completed walkthrough); the prose
+half is recorded as an annotation. Mei still tacks on "would you like me to guide
+you through it?" roughly 1 in 3 replies — a genuine prompt-adherence gap, logged
+rather than papered over.
+
+## 2026-08-02 (later) — Walkthrough engine rewrite: the black-screen root cause, user-gated advance, 4 dead flows fixed, condition i18n
+
+Eight user-reported defects. **Six root causes — and ONE engine defect explained
+four of them.** Live-verified on `:5173` + a scratch `:8901` (killed by exact
+PID; prod `hermes`/`hermes-demo` untouched, POST green before and after).
+
+**THE root cause — a walkthrough could strand you with no way out.**
+`Walkthrough.tsx` rendered the callout only once the spotlight target was
+measured (`{(rect || phaseError) && …}`), and gave up measuring after **40
+animation frames (~667ms)**. The callout is the ONLY host of the Exit button, so
+any target that was renamed, mounted late, or rendered conditionally left an
+opaque `bg-black/75` screen with no instruction and no way out but a page
+reload. Meanwhile `actor.ts::waitForEl` polls for **4000ms** — so Mei could
+successfully drive an element the spotlight had already abandoned ("black screen
+while Mei types"). The `waitFor` DOM listener also did `if (!el) return` with no
+retry; its comment claimed the `rect` dep re-armed it, but `rect` only changes on
+a SUCCESSFUL measure, so a target behind a Supabase fetch was never listened to.
+**Fixed:** callout always renders (mirrors `GuidedTour.tsx:105-107`, which had
+documented this exact reasoning on the wrong side of the codebase); measure
+budget is time-based and matches the actor's 4000ms; the waitFor listener polls
+until its anchor exists; `timeoutMs` (declared on `WalkthroughStep`, read by
+**nothing**, set on exactly the two steps most likely to hang) is now honoured
+with honest copy. New `walk.cannotFind` / `walk.timedOut` states.
+
+**Autonomous steps no longer auto-advance** (user's explicit call — pacing had
+already been raised ~2x on 2026-07-28 and was still "too fast", which meant the
+real complaint was *"it moves without me"*). `pace.ts` gained `awaitNext()`, a
+**timer-less** commit gate — deliberately NOT a long `interruptibleSleep`, since
+browsers clamp `setTimeout` above 2^31-1ms to ~1ms and the gate would resolve
+instantly. `nextRequested` is kept separate from `fastForward` so one tap can
+never both shorten a dwell AND commit the step; `orchestrate.ts` awaits the gate
+after the replay loop and re-checks `shouldCancel` (Exit mid-gate must not
+advance). Last step's button reads "Done". PACING constants deliberately
+UNCHANGED — the gate now does the anti-rush job.
+
+**Four flows that could never have worked, with their causes:**
+1. `weekly_summary_tour` "doesn't work at all" — selectors were all fine; **no
+   launcher existed anywhere in the app** for ANY of the six spotlight tours
+   (grep: zero references outside `lib/walkthrough/`). Added Ask-Mei rows (elder)
+   + Quick-help tiles (caregiver).
+2. `emergency_contact_tour` — `[data-walk="elder-emergency-section"]` was deleted
+   by the settings-hub revamp (`f7b67fc`) and survived only in the step file.
+   Restored via a new `walk` prop on `SectionCard` (kept separate from `anchor`,
+   which search uses). Step 2 was also an `act:click` on a handler-less container
+   → converted to act-less + `reveal` (honest pulse, no fake click). Same for
+   `patient_schedule_tour`'s week strip and `notifications_tour`'s alert row.
+3. `travel_mode_auto` timezone — the `<select>`'s options carry **no value
+   attribute**, so an option's value IS its label; an LLM-supplied
+   "Asia/Tokyo"/"UTC+9" set `selectedIndex = -1` and **BLANKED** the field, and
+   `verify.ts` checked only `travelPlan.startDate` so the corruption **verified
+   as success**. Three-layer fix: `resolveTimezone` (explicit alias table, not
+   fuzzy matching — a plan silently saved against the wrong country is worse than
+   an honest refusal), `performAct`'s select branch now REFUSES a non-matching
+   value instead of clearing, and Verify asserts all three fields.
+4. `link_caregiver` (elder role) was **dead at step 1**: its nav steps set
+   `waitFor.to === step.screen`, and the guard is
+   `sameScreen(cur,to) && !sameScreen(cur,screen)` — i.e. `X && !X`, never true.
+   Also `narrated.ts`'s `text_size` slider waited for `input` on a `<div>`
+   (`.value` undefined ⇒ unsatisfiable forever).
+
+**Add-prescription legibility (user's ask).** The flow already ended in a
+user-tapped Save; what was missing was seeing what Mei typed. New
+`WalkthroughReview` panel inside the callout, declared as label+SELECTOR and read
+**live from the DOM** (a value captured at build time goes stale the moment
+"Change" is used — exactly the failure the review exists to catch). Needs a
+~300ms poll as well as listeners: `TypeAhead` sets React state and React
+dispatches no native input event. **Must render OUTSIDE the `autonomous` block** —
+the confirm step is a `waitFor` step, so `autonomous` is false for it. "Change"
+opens a **second mask cutout** so you aren't retyping under the scrim. Exit is
+now real button chrome, not bare text (both here and `GuidedTour`'s Skip).
+
+**Found while verifying (real, pre-existing):** for an act-less verify tail,
+`paced("verify")` publishes SYNCHRONOUSLY inside the driver effect — which runs
+before the phase-subscribe effect — so the broadcast had no listener and the
+"Checking…" label never showed. Fixed by seeding `paceState` from
+`paceRef.current.state()` on subscribe.
+
+**Condition i18n — two separate causes, one of them not i18n at all.**
+`localizeCatalogValue` (reverse `value→labelKey`, case-insensitive, falls back to
+the raw string since `conditions[]` mixes catalog values, free text and OCR
+output) wired into the 9 raw-render sites; one map covers conditions, allergies
+AND medication purposes because `MEDICATION_CATALOG.purposeKey` shares the
+`catalog.condition.*` vocabulary. **But the user's own example, "Type 2
+Diabetes", was never a translation bug** — it is `data/patients.ts` mock data
+leaking through `App.tsx`'s `profile?.details.conditions?.length ? … : prev[0]`
+fallback onto real accounts. Removed (same for allergies; `bloodType` now
+"Unknown" — nothing persists it, so the demo's "B+" was an invented medical fact
+on a real record). "Breast cancer" is user free text and untranslatable by any
+approach. Also translated allergy severity + weekday abbreviations, and fixed the
+type-ahead filtering on label-only (typing "diab" in Chinese matched nothing).
+
+**Backend (cross-boundary, explicitly approved).** `app_role` threaded
+client→`/agent/turn`→`run_agent_turn`→`system_prompt_for` so the prompt only
+offers walkthroughs that can RUN in the asking shell (`tasks_for_role`) — the
+elder was being offered caregiver-only tours. `walkthroughShellFor` (derived from
+the steps' own `screen.mode`, NOT declared separately, so it cannot drift) is the
+client-side guard. `TRAVEL_TIMEZONES` in the tool schema, with a test asserting
+it matches `constants.ts` exactly.
+
+**Do NOT add a soul.md list mapping phrases → walkthroughs.** Tried it; it made
+`s32` fail 2/2 by fighting the "already shown, don't re-offer" rail. The UI
+launchers are the reliable discovery fix.
+
+**e2e: the "all 32 live-green" claim in the entry below is WRONG.** Verified by
+running it: `s22` asserted a selector deleted back at `f7b67fc`; `s27` asserted a
+"Hello, {name}!" header the 2026-07-29 revamp removed; `s10`/`s19` asserted a
+Request-refill button that only renders on a LOW card (a med with no `refills`
+row defaults to 30/30); `s18` used a composer placeholder from before the revamp.
+All repaired. **Always re-establish the e2e baseline before trusting it.**
+New helpers: `tapWalkthroughNext` (waits for the gate's own copy first — Next
+means *fast-forward* mid-phase and *commit* at the gate, and Playwright's
+actionability cannot tell them apart), `advanceWalkthroughToStep` (prefer over a
+DOM predicate: a tour's later targets are usually siblings of earlier ones, so
+"is it visible?" is true one step early and advances nothing), `finishWalkthrough`.
+
+**Three follow-ups found in review, all fixed.** (1) **Params must be coerced
+to strings at the tool boundary** — documenting `edit_profile_auto: {value}` in
+the schema made the model actually route there (closing a routing gap `s15` had
+recorded as an open finding), and it promptly sent `{"value": 64}` as a NUMBER
+despite the schema saying string. The client's builders are
+`Record<string, string>` and call `.trim()`, so that reaches the browser as a
+TypeError mid-walkthrough; `start_walkthrough` now stringifies every value in one
+place rather than defensively in every builder. (2) `finishWalkthrough` returned
+SUCCESS on any vanished overlay, so a tour that died at step 2 passed both it and
+the `expect(Exit).toHaveCount(0)` that follows — it now requires the counter to
+have reached the final step. (3) `request_refill` could still be started from
+chat with nothing running low (Ask Mei's own row gates on `anyMedicationRunningLow`;
+the chat path did not), so it dead-ended immediately — same precondition now
+applies in `handleWalkthroughStart`. Also hardened the allergy-severity key the
+way `localizeCatalogValue` already guards: `t()` returns the key itself when
+missing, so a legacy value would have printed literally as "severity.foo".
+
+**Final state.** Offline: web `tsc`/**143** vitest/build clean; hermes **339**
+pytest/ruff clean. Live e2e: **33/39 scenario tests pass.** The 6 remaining are
+in specs this pass did not functionally change — `s06`/`s08`/`s13` (propose→confirm
+LLM routing variance, which is why those specs carry retry loops), `s18` (failed once at
+2.1m against the scratch instance — no cause reproduced, weaker evidence than the
+group above), and `s30`/`s32`, both **verified pre-existing by
+re-running them against the original file** (`s30` fails identically with the
+unmodified wizard; `s32` fails 3/3 with the unmodified soul.md). Note ≤2 workers:
+`s15` fails on a fixture race at 2 workers and passes serially.
+
+## 2026-08-02 — Full end-to-end verification: closed the ⚠️ pending-e2e gap, found+fixed a severe identity-corruption bug + 2 walkthrough bugs + 3 backend hardening items
+
+Live-verified the entire uncommitted 2026-07-28 pass end-to-end (three parallel
+Explore audits → live `:8901`/`:5173` harness → fix → re-verify), closing the
+"⚠️ E2E VERIFICATION PENDING" gap this file had carried since 2026-07-28.
+**All 32 `e2e/scenarios/sNN-*.spec.ts` are now live-green**, plus hermes
+pytest **334**/ruff clean, web `tsc`/**112** vitest/build clean, `scripts/
+post.sh --quick` green throughout (prod `hermes`/`hermes-demo` untouched —
+only a scratch `:8901` instance, `TELEGRAM_BOT_TOKEN=""`, was used and later
+killed by exact PID).
+
+**Most severe finding — real identity corruption, found live, not
+hypothetical:** `lib/walkthroughState.ts`'s sessionStorage key was
+`dosewise:walkthrough:{userId}` — **no shell/role discriminator**. A caregiver
+previewing their own elder view (`caregiver_view_toggle_tour`, whose whole
+point is switching shells on the SAME account/uid) leaves a session that
+`ElderlyApp`'s own restore-on-mount effect picks up the instant it mounts
+(same key, same uid, different shell). `ElderlyApp`'s completion handler then
+re-fires with **`role: "elder"` hardcoded**, silently overwriting that
+caregiver's real `profiles.role` column in the database — a normal, everyday
+action (tap "Switch to Elderly View") permanently converts a caregiver account
+into an elder one. **Fixed:** `key()`/`loadWalkthroughSession`/
+`saveWalkthroughSession`/`clearWalkthroughSession` all now take a
+`shell: "elder" | "caregiver"` param; `App.tsx` always passes `"caregiver"`,
+`ElderlyApp.tsx` always passes `"elder"` — the cross-shell leak is now
+structurally impossible for any current or future task name. Re-verified live
+(role stays `"caregiver"` after the toggle). This generalizes the narrower
+2026-07-27 "onboarding" session-exclusion patch (which fixed one task, not the
+shared-key root cause) — worth remembering if a NEW task name ever triggers a
+shell transition from its own last step again.
+
+**Related, lower-severity finding surfaced by fixing the above (cosmetic, not
+a safety issue):** with the leak closed, `caregiver_view_toggle_tour`'s OWN
+completion write now never lands at all — its last step's `act:click` on
+`cg-switch-mode` synchronously flips `appMode`, which unmounts `<Walkthrough>`
+(App.tsx's caregiver branch stops matching) **before** the internal
+`onAdvance` wrapper's `cancelled` guard (`Walkthrough.tsx`, set in the driving
+`useEffect`'s cleanup) clears — so `handleWalkthroughAdvance`'s
+`markWalkthroughCompleted` call is swallowed every time this specific
+step-shape occurs (a mode-changing click with no verify/reveal tail). Net
+effect: Mei may re-offer this ONE tour later even after it's been shown —
+never a data/safety issue. **Not fixed** (architecture-level, low value) — the
+s27 spec now checks it honestly (`test.info().annotations`, `console.warn` if
+missing) rather than hard-asserting, mirroring the project's established
+soft-check pattern (s28's edit-guard) instead of papering over it.
+
+**Second real product bug, also found only by driving the AI-auto-advanced
+tours live:** `weekly_summary_tour.ts`'s step 2 `act:click` targeted
+`[data-tour="cg-askmei"]` — the plain wrapping `<div>` around the "Quick help"
++ "Clear chat" buttons, not either button itself. A `waitFor` step's native
+listener catches a REAL user's click on either child via bubbling, but an
+autonomous step's `el.click()` fires directly on the exact selector — clicking
+a handler-less container does nothing, so the tour silently stalled before
+ever opening the Quick-help popup (the Weekly-Summary tile it needs next never
+mounts). Exactly the SAME gotcha `travel_mode_auto.ts` already documents and
+avoids for the elder-side Quick Help button — just missed on this sibling.
+**Fixed:** added `data-walk="cg-quickhelp-btn"` directly to the button
+(`AskMeiScreen.tsx`) and retargeted the step's selector there.
+
+**The e2e-staleness repair itself (the headline gap this pass closes):** the
+2026-07-28 pass changed two walkthrough contracts (Item 2B: `*_auto` flows now
+end in a user-tapped Save, not an autonomous submit; Item 5: 6 former
+spotlight-only tours are now AI-auto-advanced) but never updated the 10 specs
+whose assertions encoded the OLD contracts, and never ran any spec live.
+Repaired **s01/s02/s14/s15** (insert the real Save tap after the fills, before
+the verify/reveal tail — `add_prescription_auto`/`add_condition_auto`/
+`travel_mode_auto` wait on a DOM click or the real `travel-plan-saved` app
+event; `edit_profile_auto` on a DOM click, in both its happy-path and
+verify-failed tests) and **s19/s20/s22/s27/s28/s29** (the former
+`toHaveLength(0)` "user-driven, zero paced phases" assertion inverted to
+`assertPhaseMins` against real recorded `click`/`navigate` phases — s22 is a
+hybrid, since its consent Call step correctly stays `waitFor`/zero-phase).
+Also fixed **s10**'s incoherence (drove a pill-count phrase and asserted
+`log_refill`/`refills` while its OWN walkthrough step 3 already waited on the
+2026-07-28 `request_refill` event — retargeted the trigger phrase, the
+committed-action shape, the DB re-check to `doctor_questions`, and the
+ChangeHighlight assertion to the real `doctor_message-{id}` card, mirroring
+s21's already-proven pattern) and `manifest.ts`'s matching `tools: ["log_refill"]`
+→ `["request_refill"]` drift (a real 1-line audit finding the manifest's own
+`coverage.spec.ts` guard can't catch, since it only checks taskName wiring, not
+tool routing).
+
+**Backend hardening, offline-verified (`test_dispatch_committed.py`,
+`test_update_dosage.py`, `test_offer_choices.py`, `test_request_refill.py`):**
+(1) `update_medication_dosage`'s confirm branch used to do
+`dosage = dosage or pending.get("dosage")` — a `confirmed=true` carrying a
+**different** dose than was proposed and read back would silently save it,
+skipping `_dosage_warning` entirely; now refuses and asks again unless the
+confirm's dose matches the proposed one (or resupplies nothing). (2) the
+`committed` field `loop.py::_dispatch_tool` emits on `tool_end` — the signal
+BOTH chat screens gate navigation on — had zero test coverage (the stream
+route's own fake `run_agent_turn` bypasses `_dispatch_tool` entirely); added a
+direct unit test. (3) small hygiene: `offer_choices`'s return message no
+longer promises "Attached N tappable buttons" on a channel (Telegram) where
+none render; `request_refill` now skips inserting a duplicate `doctor_questions`
+row when an open one for the same medication already exists.
+
+**`prompts.py` fix (real UX bug, not just test flake):** the completed-
+walkthroughs rail only ever said what's UNDONE ("never offer one not in this
+list") — nothing told the model to actively STOP re-offering a tour it just
+listed as done, so asking about an already-shown feature often drew a generic
+"want me to show you?" filler the regex-based s32 spec correctly flagged as a
+gap (reproduced 2/2 live, not a flake). Added the mirror-image paragraph
+("Walkthroughs already shown: … DO NOT offer to show/guide/walk them through it
+again"). Re-verified live: s32 passed clean on the very first attempt post-fix
+(previously needed retries and still failed at 3/3).
+
+**Caregiver Text-size slider wired** (was a confirmed, real accessibility gap
+— `App.tsx`'s content area had no `zoom` counterpart to `ElderlyApp.tsx`'s):
+extracted the shared scale table + a `useContentZoom()` hook into
+`accessibility.tsx` (both shells now read the SAME source), added a
+`ZoomContent` wrapper component in `App.tsx` around the caregiver screen-
+content area (chrome/nav excluded, mirrors the elder pattern exactly).
+
+## 2026-07-29 — Responsive frame: fill on mobile, mockup on desktop
+
+**Symptom:** app "poorly formatted on some devices" — fine on desktop, broken on
+phones. **Cause:** the whole app is wrapped in a hardcoded `w-[390px] h-[844px]`
+phone-mockup frame in all 4 render branches of `App.tsx` (auth-loading,
+onboarding, elderly, caregiver), with **zero media queries** anywhere in the
+app's own code. On phones narrower than ~390px the frame (needs ~434px incl.
+`p-4`+border) overflows horizontally → sideways scroll + right-edge clip. (Not a
+viewport-meta or reset bug — `index.html` viewport tag is correct.)
+
+**Fix (device-layout only):** made the frame **mobile-first** — two `replace_all`
+edits on `App.tsx` (the 4 frame divs + 4 outer divs are byte-identical). Frame:
+`w-full h-dvh …` by default, mockup chrome re-applied at `md:` (`md:w-[390px]
+md:h-[844px] md:rounded-[3rem] md:shadow-2xl md:border-[6px]`). Outer:
+`min-h-dvh … bg-stone-300 md:p-4`. Used CSS `md:` variants (flash-free) not the
+`useIsMobile()` hook (`undefined` on first paint → would flash), and `dvh` for
+mobile URL-bar. Verified via Playwright: 375px fills with no h-overflow/no border;
+1280px = unchanged 390×844 + 6px border; smoke e2e green. e2e suite runs at 1280
+(Desktop Chrome device overrides config's 430×900) so it stays on the mockup path.
+
+**Follow-up NOT done (deliberately out of scope):** 147 fixed-`px` font utilities
+(`text-[10px]`…) bypass the accessibility Text-size slider; elder shell patches
+it with a fragile `zoom` (`ElderlyApp.tsx:476`), **caregiver shell has none**
+(`App.tsx` content area) so its Text-size setting barely moves. Track separately.
+
+## 2026-07-28 — Six-item feature/bug pass (dose-nav, walkthrough speed+manual-Save+auto-tours, refill→doctor, font, chat choice-buttons) + audit fixes
+
+Big multi-part pass from a plan (six user items + carried audit findings). All
+OFFLINE gates green: web `tsc`/`vitest` (112)/`build`; hermes `pytest -m "not
+integration"` (330+). **NOT yet live-driven in a browser / via e2e** — see the
+e2e flag at the end.
+
+1. **Dose-log premature navigation (Item 1).** Chat navigated to the schedule
+   screen when a tool merely *ran* (`tool_end`, `!is_error`), even on a
+   propose/clarify turn that wrote nothing (`log_dose` asking which dose). Fix:
+   `loop.py::_dispatch_tool` now emits `committed` on the `tool_end` event
+   (did `ctx.committed_actions` grow during THAT dispatch); both chat screens
+   gate streaming nav on `event.committed`. Class bug (also undo/snooze/refill).
+2. **Walkthrough speed + manual Save (Item 2).** (a) Raised all `pacing.ts`
+   minimums ~2× + added `SELECT_MIN_MS` (select/upload were instant,
+   `orchestrate.ts`). (b) Each `*_auto` walkthrough now ends with a **user-tapped
+   Save**: terminal `act:{click,save}` split into a `waitFor` confirm step
+   (skippable:false, no Next) + an act-less verify/reveal tail — nothing commits
+   on autopilot. New shared `walk.confirmSave` copy; the old `.submit`/`.save`
+   keys reworded to verify-phase wording.
+3. **Refill → Ask-Doctor (Item 3).** New `request_refill` tool (`refills.py`)
+   inserts a `doctor_questions` row (`entity_type="doctor_message"` → routes to
+   the doctor thread, caregiver sees it) — distinct from `log_refill` (pill
+   count). soul.md updated; `request_refill.ts` walkthrough wait retargeted.
+4. **Font size (Item 4).** Two bugs: (a) `GuidedTour.tsx` root wasn't
+   `pointer-events-none`, so the onboarding tour *blocked taps* to the
+   spotlighted control — "change font size doesn't work / dark screen." Added
+   it (callout keeps `pointer-events-auto`), matching `Walkthrough.tsx`. (b) The
+   app's text is nearly all absolute-px utilities, so the html `--font-size` var
+   moved almost nothing — added a proportional `zoom` on ElderlyApp's scrollable
+   content area (chrome excluded, so nothing clips) keyed to the setting.
+5. **Auto-advance the remaining tours (Item 5).** language_voice/notifications/
+   emergency(non-consent)/weekly_summary/patient_schedule/caregiver_view_toggle
+   tours: `waitFor`→`act:click` so Mei auto-drives the spotlight at the slow
+   pace. Consent steps (emergency Call, caregiver-link accept) stay user-tapped;
+   onboarding stays manual (real signup). language step clicks the select's
+   *container* (never changes the person's language for them).
+6. **Chat choice/confirm buttons + guided questions (Item 6).** New
+   `offer_choices` tool sets `ctx.choices=[{label,value}]`, surfaced on
+   `AgentTurnResponse.choices` + SSE final; both chat screens render tappable
+   buttons under the latest reply (tap sends `value`). soul.md guides the agent
+   to use it for yes/no confirms + guided clarifying questions.
+
+**Audit fixes folded in:** C1 `/agent/turn/stream` added to
+`_RATE_LIMITED_PATHS` (was unthrottled). C2 `update_medication_dosage` confirm
+now stashes the canonical name + compares case-insensitively (was refusing a
+"Metformin"-echoed confirm of a "metformin" propose). C3 both chat `send()`s
+guard the post-await continuation with an `isMounted` ref (a turn walked away
+from no longer navigates/highlights a screen the user left). C4 blob: image URLs
+no longer persisted to sessionStorage (were broken-image icons after reload).
+Also: non-stream `agentTurn` guards `reply ?? ""`.
+
+**Deferred:** C5 (snooze_dose writes `dose_snoozes` nothing re-alerts — product
+decision). C6 (caregiver linked to ≥2 elders can act on the wrong same-named
+med) — do NOT hard-scope `find_medications` by `ctx.elder_id` (removes caregiver
+capability); correct shape is detect-and-ask when matches span ≥2 distinct
+non-null elder_ids, and first confirm that flow is even exercised.
+
+**⚠️ E2E VERIFICATION PENDING (the one real gap).** Items 2B + 5 changed the
+walkthrough contracts the `apps/web/e2e/scenarios/*.spec.ts` suite encodes:
+the `*_auto` specs (s01/s02/s14/s15) still expect an autonomous submit (now a
+user Save tap), and the former tour specs (s19/s20/s27/s28/s29…) still expect
+user-driven clicks + "zero phase-log entries" (now autonomous, auto-advancing).
+Those specs need updating to the new contracts AND a live e2e run to confirm —
+this is exactly the "verify each scenario is now AI-automated" pass; it needs
+the live harness (POST + servers + test creds), which was not run here.
+Confirmed by read (not a risk): `App.tsx` mounts the SAME `<Walkthrough>` with
+`onNavigate`/`onAdvance`/`onVerify`/`onReveal` all wired and
+`handleWalkthroughNavigate` handles caregiver-screen targets — so the three
+caregiver tours drive autonomous `act` steps like the elder shell. Still
+unwired: the **caregiver** Settings font slider (only ElderlyApp's content
+zooms) — the elder side was the reported surface.
+
 ## 2026-07-29 — Elderly UI revamp: brand palette as tokens, help-list Ask Mei, Settings hub, 8 new walkthroughs
 
 Full visual + structural pass over the elderly interface (caregiver brought

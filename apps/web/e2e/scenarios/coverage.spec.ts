@@ -16,10 +16,10 @@ const TYPES_TS = "src/app/lib/walkthrough/types.ts";
 const SCENARIOS_DIR = "e2e/scenarios";
 
 test.describe("scenario manifest coverage", () => {
-  test("32 entries with unique, sequential ids s01..s32", () => {
-    expect(SCENARIOS, "manifest row count").toHaveLength(32);
+  test("33 entries with unique, sequential ids s01..s33", () => {
+    expect(SCENARIOS, "manifest row count").toHaveLength(33);
     const ids = SCENARIOS.map(s => s.id);
-    expect(new Set(ids).size, "ids unique").toBe(32);
+    expect(new Set(ids).size, "ids unique").toBe(33);
     ids.forEach((id, i) => {
       expect(id, `entry ${i} sequential id`).toBe(`s${String(i + 1).padStart(2, "0")}`);
     });
@@ -27,7 +27,7 @@ test.describe("scenario manifest coverage", () => {
 
   test("slugs are unique kebab-case", () => {
     const slugs = SCENARIOS.map(s => s.slug);
-    expect(new Set(slugs).size, "slugs unique").toBe(32);
+    expect(new Set(slugs).size, "slugs unique").toBe(33);
     for (const slug of slugs) {
       expect(slug, `slug "${slug}" is kebab-case`).toMatch(/^[a-z0-9]+(-[a-z0-9]+)*$/);
     }

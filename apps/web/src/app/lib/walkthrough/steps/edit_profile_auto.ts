@@ -35,11 +35,20 @@ export function editProfileAutoSteps(p: WalkthroughParams = {}): WalkthroughStep
       act: { kind: "fill", selector: '[data-walk="elder-profile-weight"]', value },
     },
     {
-      id: "autoProfile.save",
+      // MANUAL CONFIRM: the person taps Save themselves (waitFor, no act/Next) —
+      // nothing is written on autopilot. Same pattern as accept_caregiver_link.ts.
+      id: "autoProfile.confirm",
       screen: ON_SETTINGS,
       selector: '[data-walk="elder-profile-save"]',
+      instructionKey: "walk.confirmSave",
+      waitFor: { type: "click", source: "dom" },
+    },
+    {
+      // Act-less Verify tail: re-query the real profile before claiming success.
+      id: "autoProfile.verify",
+      screen: ON_SETTINGS,
+      selector: '[data-walk="elder-profile-weight"]',
       instructionKey: "walk.autoProfile.save",
-      act: { kind: "click", selector: '[data-walk="elder-profile-save"]' },
       verify: { kind: "profile-field", field: "weightKg", value },
       reveal: { screen: ON_SETTINGS, selector: '[data-walk="elder-profile-weight"]' },
     },

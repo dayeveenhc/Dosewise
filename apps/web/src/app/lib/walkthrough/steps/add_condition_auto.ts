@@ -47,11 +47,20 @@ export function addConditionAutoSteps(p: WalkthroughParams = {}): WalkthroughSte
       act: { kind: "click", selector: '[data-walk="elder-conditions-add-btn"]' },
     },
     {
-      id: "autoCond.save",
+      // MANUAL CONFIRM: the person taps Save themselves (waitFor, no act/Next) —
+      // nothing is written on autopilot. Same pattern as accept_caregiver_link.ts.
+      id: "autoCond.confirm",
       screen: ON_SETTINGS,
       selector: '[data-walk="elder-profile-save"]',
+      instructionKey: "walk.confirmSave",
+      waitFor: { type: "click", source: "dom" },
+    },
+    {
+      // Act-less Verify tail: re-query the structured conditions[] before success.
+      id: "autoCond.verify",
+      screen: ON_SETTINGS,
+      selector: '[data-walk="elder-conditions"]',
       instructionKey: "walk.autoCond.save",
-      act: { kind: "click", selector: '[data-walk="elder-profile-save"]' },
       verify: { kind: "profile-list-includes", field: "conditions", value: condition },
       reveal: { screen: ON_SETTINGS, selector: '[data-walk="elder-conditions"]' },
     },

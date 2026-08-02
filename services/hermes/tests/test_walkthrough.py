@@ -10,7 +10,13 @@ from hermes.agent.prompts import system_prompt_for
 from hermes.channels.session import SessionState
 from hermes.tools import get_handler
 from hermes.tools.base import ToolContext
-from hermes.tools.walkthrough import TASK_NAMES
+from hermes.tools.walkthrough import (
+    AUTONOMOUS_TASKS,
+    CAREGIVER_ONLY_TASKS,
+    TASK_NAMES,
+    TRAVEL_TIMEZONES,
+    tasks_for_role,
+)
 
 ELDER_A = "00000000-0000-0000-0000-00000000000a"
 
@@ -51,14 +57,53 @@ async def test_start_walkthrough_unknown_task_name_does_not_queue():
 def test_prompt_lists_undone_walkthroughs_and_omits_completed_ones():
     out = system_prompt_for(completed_walkthroughs=["onboarding"])
     assert "onboarding" not in _undone_line(out)
-    for task in TASK_NAMES:
+    for task in tasks_for_role("elder"):
         if task != "onboarding":
             assert task in _undone_line(out)
 
 
-def test_prompt_omits_the_whole_block_once_everything_is_done():
+def test_prompt_never_offers_a_walkthrough_from_the_other_app_shell():
+    """The elder and caregiver apps render entirely different screens, so a
+    walkthrough offered to the wrong one can only spotlight elements that do not
+    exist there. The client refuses such a task outright
+    (steps/index.ts::walkthroughShellFor); this stops the offer being made."""
+    elder = _undone_line(system_prompt_for(app_role="elder"))
+    caregiver = _undone_line(system_prompt_for(app_role="caregiver"))
+
+    for task in CAREGIVER_ONLY_TASKS:
+        assert task not in elder, f"{task} offered to an elder"
+        assert task in caregiver
+    for task in ("add_prescription_auto", "log_dose", "emergency_contact_tour"):
+        assert task in elder
+        assert task not in caregiver, f"{task} offered to a caregiver"
+
+    # link_caregiver resolves to a different script per role — both may see it.
+    assert "link_caregiver" in elder and "link_caregiver" in caregiver
+
+
+def test_prompt_defaults_to_the_elder_shell_when_no_role_is_given():
+    """Telegram never sends a role, and it is an elder channel."""
+    assert _undone_line(system_prompt_for()) == _undone_line(system_prompt_for(app_role="elder"))
+
+
+def test_tasks_for_role_partitions_every_task_name():
+    elder, caregiver = set(tasks_for_role("elder")), set(tasks_for_role("caregiver"))
+    assert elder | caregiver == set(TASK_NAMES), "a task belongs to neither shell"
+    assert elder & caregiver == {"link_caregiver"}
+
+
+def test_prompt_offers_only_the_autonomous_family_once_everything_is_done():
+    """The one-time INTRODUCTIONS all disappear once shown — but the *_auto
+    family never does: those aren't tutorials, they're how a write is carried
+    out, so they must stay offerable for the patient's second medicine and their
+    twentieth. Nothing else may survive into the undone list."""
     out = system_prompt_for(completed_walkthroughs=list(TASK_NAMES))
-    assert "Walkthroughs this patient has NOT been shown yet" not in out
+    line = _undone_line(out)
+    elder_autonomous = AUTONOMOUS_TASKS & set(tasks_for_role("elder"))
+    for task in elder_autonomous:
+        assert task in line
+    for task in set(tasks_for_role("elder")) - AUTONOMOUS_TASKS:
+        assert task not in line
 
 
 def _undone_line(prompt: str) -> str:
@@ -117,3 +162,146 @@ def test_task_names_parity():
         "walkthrough task names out of sync with tools/walkthrough.py "
         f"TASK_NAMES ({len(base)} names):\n" + "\n".join(problems)
     )
+
+
+def test_travel_timezones_match_the_web_select_exactly():
+    """The travel-mode <select> options carry no value attribute, so an option's
+    value IS its label — a single wrong character doesn't miss, it BLANKS the
+    field, and the blank persists as the saved travel plan. This tool's schema
+    names the real options so the model doesn't have to guess; if the web list
+    ever changes and this one doesn't, that guidance starts lying."""
+    src = (
+        Path(__file__).resolve().parents[3]
+        / "apps/web/src/app/lib/constants.ts"
+    ).read_text(encoding="utf-8")
+    body = re.search(r"export const TIMEZONES = \[(.*?)\];", src, re.S)
+    assert body, "TIMEZONES not found in apps/web/src/app/lib/constants.ts"
+    web = re.findall(r'"([^"]+)"', body.group(1))
+    assert web, "no timezone strings parsed"
+    assert web == TRAVEL_TIMEZONES
+
+
+async def test_start_walkthrough_coerces_non_string_params():
+    """Models send `{"value": 64}` for a weight despite the schema saying string.
+    The client's step builders are Record<string, string> and call .trim() on
+    what arrives, so an un-coerced number reaches the browser as a TypeError
+    mid-walkthrough. Normalize at this boundary, not in every step builder."""
+    tool = get_handler("start_walkthrough")
+    ctx = _ctx()
+    await tool(ctx, task_name="edit_profile_auto", params={"value": 64})
+    assert ctx.walkthrough["params"] == {"value": "64"}
+
+    ctx2 = _ctx()
+    await tool(ctx2, task_name="travel_mode_auto", params={"start_date": None, "days": 7})
+    assert ctx2.walkthrough["params"] == {"start_date": "", "days": "7"}
+
+
+def test_prompt_survives_a_completed_walkthrough_that_no_longer_exists():
+    """`completed_walkthroughs` is STORED USER DATA forwarded verbatim by the
+    client, not a list derived from TASK_NAMES — so it can name a walkthrough
+    that has since been renamed or removed. Indexing _WALKTHROUGH_LABELS
+    directly would KeyError on EVERY turn for that patient: a 500 on every
+    message they send. Renaming a task must never be able to do that."""
+    out = system_prompt_for(completed_walkthroughs=["a_task_we_deleted", "log_dose"])
+    assert "a_task_we_deleted" not in out
+    assert "log_dose" in out
+
+
+def test_prompt_omits_the_already_shown_block_when_only_stale_names_remain():
+    """Otherwise a profile whose completed list is entirely stale emits a
+    dangling 'ALREADY been shown: .' line with nothing after the colon."""
+    out = system_prompt_for(completed_walkthroughs=["a_task_we_deleted"])
+    assert "ALREADY been shown" not in out
+
+
+def test_autonomous_tasks_are_a_subset_of_task_names():
+    """AUTONOMOUS_TASKS drives what the prompt refuses to treat as 'already
+    shown'. A typo there would silently re-break the re-run path."""
+    assert AUTONOMOUS_TASKS <= set(TASK_NAMES)
+    assert AUTONOMOUS_TASKS and all(t.endswith(("_auto", "_link")) for t in AUTONOMOUS_TASKS)
+
+
+def test_completed_autonomous_walkthrough_stays_offerable():
+    """THE regression this exists for. An *_auto walkthrough is not a one-time
+    introduction — it is HOW the write is performed (Mei fills the real form, the
+    patient taps Save). Once add_prescription_auto landed in
+    profiles.accessibility.completedWalkthroughs, the old prompt told Mei never to
+    guide them through it again, so adding a SECOND medicine silently became a
+    direct write with no walkthrough at all."""
+    out = system_prompt_for(completed_walkthroughs=["add_prescription_auto"])
+    assert "add_prescription_auto" in out
+    assert "NOT been shown yet" in out
+    # …and it must not also be listed as done, or the model gets both signals.
+    already = out.split("ALREADY been shown")[1] if "ALREADY been shown" in out else ""
+    assert "add_prescription_auto" not in already
+
+
+def test_already_shown_block_limits_offering_not_doing():
+    """The anti-nagging rail must not read as 'never start this again'."""
+    out = system_prompt_for(completed_walkthroughs=["log_dose"])
+    block = out.split("ALREADY been shown")[1]
+    assert "VOLUNTEER" in block
+    assert "ask outright" in block
+
+
+async def test_start_walkthrough_refuses_a_wrong_shell_task():
+    """An elder's model can still NAME a caregiver-only task (the tool's enum is
+    the flat TASK_NAMES). It used to queue fine and the client declined to
+    console.warn, so Mei promised a walkthrough that never appeared."""
+    tool = get_handler("start_walkthrough")
+    ctx = _ctx()  # defaults to app_role="elder"
+    out = await tool(ctx, task_name="weekly_summary_tour")
+    assert ctx.walkthrough is None
+    assert "NOT started" in out
+    assert "caregiver app" in out
+
+
+async def test_start_walkthrough_allows_a_caregiver_task_in_the_caregiver_shell():
+    tool = get_handler("start_walkthrough")
+    supa = FakeSupabase(db=FakeDB({}))
+    ctx = ToolContext(
+        supabase=supa,
+        elder_id=ELDER_A,
+        session=SessionState(elder_id=ELDER_A),
+        app_role="caregiver",
+    )
+    await tool(ctx, task_name="weekly_summary_tour")
+    assert ctx.walkthrough == {"task_name": "weekly_summary_tour", "params": {}}
+
+
+async def test_start_walkthrough_refuses_an_elder_task_in_the_caregiver_shell():
+    tool = get_handler("start_walkthrough")
+    supa = FakeSupabase(db=FakeDB({}))
+    ctx = ToolContext(
+        supabase=supa,
+        elder_id=ELDER_A,
+        session=SessionState(elder_id=ELDER_A),
+        app_role="caregiver",
+    )
+    out = await tool(ctx, task_name="log_dose")
+    assert ctx.walkthrough is None
+    assert "patient app" in out
+
+
+def test_autonomous_tasks_match_the_web_client():
+    """Both sides carry the list — Hermes decides (it subtracts these from the
+    forwarded completed_walkthroughs), the client uses it to avoid recording
+    meaningless entries. Drift means one of them silently reverts the fix."""
+    src = Path(__file__).resolve().parents[3] / "apps/web/src/app/lib/walkthrough/types.ts"
+    body = src.read_text(encoding="utf-8").split("AUTONOMOUS_TASKS", 1)[1].split("]", 1)[0]
+    web = set(re.findall(r'"([a-z_]+)"', body))
+    assert web == set(AUTONOMOUS_TASKS), f"web={sorted(web)} hermes={sorted(AUTONOMOUS_TASKS)}"
+
+
+def test_prompt_states_todays_date():
+    """Without it the model dates relative phrases from its training data: asked
+    for Travel Mode "next Monday" it returned 2023-10-30 and the walkthrough
+    saved a plan three years in the past. Found by a live drive, not a unit test
+    — nothing here can catch a wrong DATE, only a missing one."""
+    from datetime import datetime
+    from zoneinfo import ZoneInfo
+
+    out = system_prompt_for()
+    today = datetime.now(ZoneInfo("Asia/Singapore"))
+    assert f"({today:%Y-%m-%d})" in out
+    assert "Today is" in out

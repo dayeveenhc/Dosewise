@@ -3,7 +3,7 @@ import { mkdirSync } from "node:fs";
 import {
   agentTurn8901, anonClient, assertPhaseMins, createThrowawayElder,
   readPhaseLog, recheckAccessibility, resetPhaseLog, saveTurnArtifact, signIn,
-  startWalkthrough,
+  startWalkthrough, advanceWalkthroughUntil, advanceWalkthroughToStep, finishWalkthrough,
 } from "../helpers";
 import { PACING } from "../../src/app/lib/walkthrough/pacing";
 
@@ -75,15 +75,30 @@ test("s15 edit-profile: 'update my weight to 64 kilos' -> edit_profile_auto fill
   await resetPhaseLog(page); // clear BEFORE the phase under test
   await startWalkthrough(page, "edit_profile_auto", { value: WEIGHT });
 
-  // Act: the Your Profile expander opens and Mei fills the weight field herself.
+  // Steps 1-2 (open Your Profile, tap Edit) each hold at their commit gate until
+  // the person taps Next — the weight field does not exist until Edit is
+  // committed — so tap through to the fill step first.
+  await advanceWalkthroughToStep(page, 3);
+
+  // Act: the Your Profile expander is open and Mei fills the weight field herself.
   const weight = page.locator('[data-walk="elder-profile-weight"]');
   await expect(weight).toBeVisible({ timeout: 15_000 });
   await expect(weight).toHaveValue(WEIGHT, { timeout: 15_000 });
 
+  // Fill done → the run PAUSES at the manual-Save confirm step (waitFor on
+  // elder-profile-save, no Next) — nothing commits on autopilot (2026-07-28). The
+  // person taps Save themselves; the act-less verify/reveal tail then runs.
+  // Each autonomous step now holds at its commit gate until the person taps
+  // Next, so tap through the fills to reach the manual-Save confirm step.
+  await advanceWalkthroughUntil(page, () => page.getByText("tap Save yourself", { exact: false }).isVisible());
+  await expect(page.getByText("tap Save yourself", { exact: false }), "manual-Save confirm step reached").toBeVisible({ timeout: 20_000 });
+  await page.locator('[data-walk="elder-profile-save"]').click();
+
   // Reveal: wait for the reveal phase (its Replay button is unique to it), then
-  // the pulse on the weight field, and screenshot the proof.
+  // the pulse on the weight field, and screenshot the proof. This tail step is
+  // the LAST one, so its commit button reads "Done", not "Next".
   const replayBtn = page.getByRole("button", { name: "Replay", exact: true });
-  const nextBtn = page.getByRole("button", { name: "Next", exact: true });
+  const nextBtn = page.getByRole("button", { name: /^(Next|Done)$/ });
   await expect(replayBtn, "reveal phase active").toBeVisible({ timeout: 20_000 });
   await expect(page.locator(".walk-reveal-pulse"), "reveal pulse on the weight field").toBeVisible({ timeout: 8_000 });
 
@@ -94,9 +109,13 @@ test("s15 edit-profile: 'update my weight to 64 kilos' -> edit_profile_auto fill
   // (REVEAL_PULSE_MS) has elapsed, so clicking it auto-waits to the floor then
   // cuts the remaining HIGHLIGHT_DWELL_MIN_MS dwell short. The never-before-min
   // half is unit-tested (pace.test.ts); this demonstrates the after-min half
-  // live. Clicking Next on the last step also completes the walkthrough.
+  // live. That first tap only ENDS THE DWELL — the step then holds at its commit
+  // gate, and a second tap is what finishes the walkthrough. The two meanings of
+  // Next are deliberately separate (pace.ts's nextRequested).
   await nextBtn.click();
-  await expect(replayBtn, "walkthrough completed after Next").toBeHidden({ timeout: 10_000 });
+  await expect(replayBtn, "dwell ended but the step still holds at its gate").toBeHidden({ timeout: 10_000 });
+  await finishWalkthrough(page);
+  await expect(nextBtn, "walkthrough completed after the commit tap").toHaveCount(0, { timeout: 10_000 });
 
   const log = await readPhaseLog(page);
   // Pacing floors held on every phase that ran to its natural minimum.
@@ -153,9 +172,14 @@ test("s15 edit-profile: a blocked profile write is CAUGHT by Verify — honest e
   await resetPhaseLog(page);
   await startWalkthrough(page, "edit_profile_auto", { value: WEIGHT });
 
-  // It still fills and taps Save, but Verify re-queries, finds the old value, and
-  // STOPS with the honest error — never a false success, never a reveal.
+  // It fills, then the person taps Save (the manual confirm step), but the write
+  // is blocked (mocked 500) so Verify re-queries, finds the old value, and STOPS
+  // with the honest error — never a false success, never a reveal.
+  await advanceWalkthroughToStep(page, 3);
   await expect(page.locator('[data-walk="elder-profile-weight"]')).toHaveValue(WEIGHT, { timeout: 15_000 });
+  await advanceWalkthroughUntil(page, () => page.getByText("tap Save yourself", { exact: false }).isVisible());
+  await expect(page.getByText("tap Save yourself", { exact: false }), "manual-Save confirm step reached").toBeVisible({ timeout: 20_000 });
+  await page.locator('[data-walk="elder-profile-save"]').click();
   await expect(page.getByText("I couldn't confirm that saved", { exact: false }), "honest walk.verifyFailed shown").toBeVisible({ timeout: 25_000 });
   // No success is ever claimed: the "Saved!" confirmation must not appear.
   await expect(page.getByText("Saved!", { exact: false }), "no false success").toHaveCount(0);

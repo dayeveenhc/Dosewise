@@ -3,6 +3,7 @@ import { runActStep } from "./orchestrate";
 import { createPaceController } from "./pace";
 import { PACING } from "./pacing";
 import { readPhaseLog, resetPhaseLog } from "./phaseLog";
+import type { PaceController } from "./pace";
 import type { WalkthroughStep } from "./types";
 
 // The safety-critical guarantee: a failed Verify STOPS the step — it must not
@@ -66,9 +67,13 @@ function handlers(over: Partial<Parameters<typeof runActStep>[1]> = {}) {
   };
 }
 
-// Drive a running step to completion under fake timers.
-async function drive<T>(p: Promise<T>, ms = 20_000): Promise<T> {
+// Drive a running step to completion under fake timers. Autonomous steps no
+// longer advance by themselves — they hold at the terminal commit gate — so
+// this also supplies the person's Next tap.
+async function drive<T>(p: Promise<T>, h: { pace: PaceController }, ms = 20_000): Promise<T> {
   await vi.advanceTimersByTimeAsync(ms);
+  h.pace.requestNext();
+  await vi.advanceTimersByTimeAsync(1);
   return p;
 }
 
@@ -78,7 +83,7 @@ describe("runActStep", () => {
     const h = handlers({ onVerify: vi.fn(async () => true) });
     const step = baseStep({ verify: { kind: "medication-exists", name: "Metformin" }, reveal: { screen: ON_AI, selector: "#row" } });
 
-    const outcome = await drive(runActStep(step, h));
+    const outcome = await drive(runActStep(step, h), h);
 
     expect(outcome).toBe("advanced");
     expect(h.onVerify).toHaveBeenCalledOnce();
@@ -111,6 +116,10 @@ describe("runActStep", () => {
     await vi.advanceTimersByTimeAsync(CLICK_MS + PACING.VERIFY_MIN_MS - 5);
     expect(outcome).toBeUndefined();
     await vi.advanceTimersByTimeAsync(10);
+    // Verify is done, but the step now HOLDS at the commit gate until tapped.
+    expect(outcome).toBeUndefined();
+    h.pace.requestNext();
+    await vi.advanceTimersByTimeAsync(1);
     expect(outcome).toBe("advanced");
   });
 
@@ -119,7 +128,7 @@ describe("runActStep", () => {
     const h = handlers();
     const step = baseStep({ reveal: { screen: ON_AI, selector: "#row" } });
 
-    const outcome = await drive(runActStep(step, h));
+    const outcome = await drive(runActStep(step, h), h);
 
     expect(outcome).toBe("advanced");
     expect(h.onVerify).not.toHaveBeenCalled();
@@ -131,7 +140,7 @@ describe("runActStep", () => {
     const h = handlers();
     const step = baseStep({ act: undefined });
 
-    const outcome = await drive(runActStep(step, h));
+    const outcome = await drive(runActStep(step, h), h);
 
     expect(outcome).toBe("advanced");
     expect(h.onAdvance).toHaveBeenCalledOnce();
@@ -142,7 +151,7 @@ describe("runActStep", () => {
     const h = handlers({ onVerify: vi.fn(async () => true) });
     const step = baseStep({ act: undefined, verify: { kind: "care-link-active" }, reveal: { screen: ON_AI, selector: "#n" } });
 
-    const outcome = await drive(runActStep(step, h));
+    const outcome = await drive(runActStep(step, h), h);
 
     expect(outcome).toBe("advanced");
     expect(h.onVerify).toHaveBeenCalledOnce();
@@ -154,24 +163,28 @@ describe("runActStep", () => {
     const h = handlers({ onVerify: vi.fn(async () => false) });
     const step = baseStep({ act: undefined, verify: { kind: "care-link-active" } });
 
-    const outcome = await drive(runActStep(step, h));
+    const outcome = await drive(runActStep(step, h), h);
 
     expect(outcome).toBe("verify-failed");
     expect(h.onAdvance).not.toHaveBeenCalled();
   });
 
-  it("a fill with no verify/reveal gets the between-fields pause (another field follows)", async () => {
+  it("a fill goes straight to the commit gate — no trailing pause", async () => {
     mountInput("target");
     const h = handlers();
     const step = baseStep({ act: { kind: "fill", selector: '[data-testid="target"]', value: "Metformin" } });
 
-    const outcome = await drive(runActStep(step, h));
+    const outcome = await drive(runActStep(step, h), h);
 
     expect(outcome).toBe("advanced");
     const phases = readPhaseLog().map(e => e.phase);
-    expect(phases).toEqual(["field", "between-fields"]);
+    // "ready" is the terminal commit gate — logged like any other phase, with
+    // minMs 0 because the wait is the person's, not a paced floor. A fill goes
+    // straight to it: the old 1s "between-fields" pause only delayed when Next
+    // became tappable, now that nothing auto-advances.
+    expect(phases).toEqual(["field", "ready"]);
     expect(readPhaseLog()[0].minMs).toBe(PACING.FIELD_MIN_MS);
-    expect(readPhaseLog()[1].minMs).toBe(PACING.BETWEEN_FIELDS_MS);
+    expect(readPhaseLog()[1].minMs).toBe(0);
   });
 
   it("a step with onEnter gets a paced navigate settle first", async () => {
@@ -179,32 +192,64 @@ describe("runActStep", () => {
     const h = handlers();
     const step = baseStep({ onEnter: ON_AI });
 
-    await drive(runActStep(step, h));
+    await drive(runActStep(step, h), h);
 
-    expect(readPhaseLog().map(e => e.phase)).toEqual(["navigate", "click"]);
+    expect(readPhaseLog().map(e => e.phase)).toEqual(["navigate", "click", "ready"]);
     expect(readPhaseLog()[0].minMs).toBe(PACING.NAVIGATE_MS);
   });
 
-  it("reveal dwell auto-advances at HIGHLIGHT_DWELL_MIN_MS; Next (after the pulse floor) cuts it short", async () => {
+  it("the reveal dwell ends at HIGHLIGHT_DWELL_MIN_MS but the step does NOT advance on its own", async () => {
     mountButton("target");
-    const auto = handlers();
-    let autoOutcome: string | undefined;
-    void runActStep(baseStep({ reveal: { screen: ON_AI, selector: "#row" } }), auto).then(o => { autoOutcome = o; });
-    await vi.advanceTimersByTimeAsync(CLICK_MS + PACING.HIGHLIGHT_DWELL_MIN_MS - 5);
-    expect(autoOutcome).toBeUndefined();
-    await vi.advanceTimersByTimeAsync(10);
-    expect(autoOutcome).toBe("advanced");
+    const h = handlers();
+    let outcome: string | undefined;
+    void runActStep(baseStep({ reveal: { screen: ON_AI, selector: "#row" } }), h).then(o => { outcome = o; });
+    // Far past every paced minimum. Nothing may advance without a real tap.
+    await vi.advanceTimersByTimeAsync(CLICK_MS + PACING.HIGHLIGHT_DWELL_MIN_MS + 60_000);
+    expect(outcome).toBeUndefined();
+    expect(h.onAdvance).not.toHaveBeenCalled();
+    expect(h.pace.state()).toEqual({ phase: "ready", canAdvance: true });
 
-    document.body.innerHTML = "";
+    h.pace.requestNext();
+    await vi.advanceTimersByTimeAsync(1);
+    expect(outcome).toBe("advanced");
+    expect(h.onAdvance).toHaveBeenCalledOnce();
+  });
+
+  // The two meanings of Next must stay separate: one tap during the dwell only
+  // shortens it, and a SECOND tap is required to commit the step. If these ever
+  // collapse into one, the commit gate silently disappears.
+  it("a Next during the reveal dwell shortens it but does NOT advance — a second tap commits", async () => {
     mountButton("target");
-    const fast = handlers();
-    let fastOutcome: string | undefined;
-    void runActStep(baseStep({ reveal: { screen: ON_AI, selector: "#row" } }), fast).then(o => { fastOutcome = o; });
-    // Into the reveal, past its pulse-length minimum but well before the auto dwell.
+    const h = handlers();
+    let outcome: string | undefined;
+    void runActStep(baseStep({ reveal: { screen: ON_AI, selector: "#row" } }), h).then(o => { outcome = o; });
+    // Into the reveal, past its pulse-length floor but well before the dwell end.
     await vi.advanceTimersByTimeAsync(CLICK_MS + PACING.REVEAL_PULSE_MS + 50);
-    fast.pace.requestNext();
+    h.pace.requestNext();
     await vi.advanceTimersByTimeAsync(5);
-    expect(fastOutcome).toBe("advanced");
+
+    expect(outcome).toBeUndefined();
+    expect(h.onAdvance).not.toHaveBeenCalled();
+
+    h.pace.requestNext();
+    await vi.advanceTimersByTimeAsync(1);
+    expect(outcome).toBe("advanced");
+  });
+
+  it("cancel during the terminal gate returns 'cancelled' and never advances", async () => {
+    mountButton("target");
+    let cancelled = false;
+    const h = handlers({ shouldCancel: () => cancelled });
+    let outcome: string | undefined;
+    void runActStep(baseStep({}), h).then(o => { outcome = o; });
+    await vi.advanceTimersByTimeAsync(CLICK_MS + 50);
+    expect(h.pace.state().phase).toBe("ready");
+
+    cancelled = true;
+    h.pace.cancel();
+    await vi.advanceTimersByTimeAsync(5);
+    expect(outcome).toBe("cancelled");
+    expect(h.onAdvance).not.toHaveBeenCalled();
   });
 
   it("requestReplay during the reveal re-fires onReveal and restarts the dwell", async () => {
@@ -219,7 +264,61 @@ describe("runActStep", () => {
     h.pace.requestReplay();
     await vi.advanceTimersByTimeAsync(20_000);
     expect(h.onReveal).toHaveBeenCalledTimes(2);
+    h.pace.requestNext();
+    await vi.advanceTimersByTimeAsync(1);
     expect(outcome).toBe("advanced");
     expect(h.onAdvance).toHaveBeenCalledOnce();
+  });
+
+  // Phase 1: an act that could not be performed at all must STOP the run.
+  // Advancing anyway is what made tours "guide halfway then do the wrong thing".
+  it("an act whose target never mounts fails the step instead of advancing", async () => {
+    const h = handlers();
+    const step = baseStep({ act: { kind: "click", selector: '[data-testid="never-mounts"]' } });
+
+    let outcome: string | undefined;
+    void runActStep(step, h).then(o => { outcome = o; });
+    await vi.advanceTimersByTimeAsync(20_000);
+
+    expect(outcome).toBe("act-failed");
+    expect(h.onAdvance).not.toHaveBeenCalled();
+  });
+
+  it("a select act whose value matches no option fails rather than wiping the field", async () => {
+    const select = document.createElement("select");
+    select.setAttribute("data-testid", "target");
+    for (const label of ["Japan (UTC+9)", "Singapore (UTC+8)"]) {
+      const opt = document.createElement("option");
+      opt.textContent = label;
+      select.appendChild(opt);
+    }
+    document.body.appendChild(select);
+    const h = handlers();
+    const step = baseStep({ act: { kind: "select", selector: '[data-testid="target"]', value: "Asia/Tokyo" } });
+
+    let outcome: string | undefined;
+    void runActStep(step, h).then(o => { outcome = o; });
+    await vi.advanceTimersByTimeAsync(20_000);
+
+    expect(outcome).toBe("act-failed");
+    // The field must be untouched — a wiped timezone used to persist as "".
+    expect(select.value).toBe("Japan (UTC+9)");
+    expect(h.onAdvance).not.toHaveBeenCalled();
+  });
+
+  it("a select act matches an option case-insensitively", async () => {
+    const select = document.createElement("select");
+    select.setAttribute("data-testid", "target");
+    for (const label of ["Japan (UTC+9)", "Singapore (UTC+8)"]) {
+      const opt = document.createElement("option");
+      opt.textContent = label;
+      select.appendChild(opt);
+    }
+    document.body.appendChild(select);
+    const h = handlers();
+    const step = baseStep({ act: { kind: "select", selector: '[data-testid="target"]', value: "  singapore (utc+8) " } });
+
+    await drive(runActStep(step, h), h);
+    expect(select.value).toBe("Singapore (UTC+8)");
   });
 });

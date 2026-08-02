@@ -543,13 +543,34 @@
   );
 }
 
+/* The walkthrough's commit gate arriving: the step's work is finished and it is
+   now the person's turn to tap. Autonomous steps deliberately do NOT advance by
+   themselves, so this button is the ONLY way forward — and a grey button merely
+   turning coloured is far too quiet a signal for that. One arrival beat (never a
+   loop: a button that keeps pulsing reads as an alarm on a screen someone is
+   trying to read), then a resting ring so it stays the obvious thing on screen. */
+@keyframes dw-gate-in {
+  0%   { transform: scale(0.94); box-shadow: 0 0 0 0 color-mix(in srgb, var(--primary) 55%, transparent); }
+  55%  { transform: scale(1.04); box-shadow: 0 0 0 8px color-mix(in srgb, var(--primary) 22%, transparent); }
+  100% { transform: scale(1);    box-shadow: 0 0 0 3px color-mix(in srgb, var(--primary) 28%, transparent); }
+}
+.dw-gate-ready {
+  animation: dw-gate-in 620ms cubic-bezier(0.16, 1, 0.3, 1) both;
+}
+
 /* Motion is decoration here — anyone who has asked the OS for less of it keeps
-   the layout and loses only the movement. */
+   the layout and loses only the movement. The gate keeps its resting RING under
+   reduced motion (that is the affordance, not decoration) and loses only the
+   scale beat. */
 @media (prefers-reduced-motion: reduce) {
   .dw-pulse, .dw-flow-missed, .dw-flow-onpine { animation: none; }
   .dw-msg-in, .dw-view-in { animation: none; }
   .dw-press { transition: none; }
   .dw-press:active { transform: none; }
+  .dw-gate-ready {
+    animation: none;
+    box-shadow: 0 0 0 3px color-mix(in srgb, var(--primary) 28%, transparent);
+  }
 }
 
 /* Guided Auto-Navigation Reveal: a transient emerald pulse the walkthrough adds

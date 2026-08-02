@@ -75,18 +75,31 @@ test("s03 named-dose-taken: ambiguous 'I just took my metformin' ASKS which dose
 
   // Elder A — the AMBIGUOUS fixture: Metformin scheduled twice daily with a
   // PENDING dose row for EACH slot today.
-  const A = await newElder();
-  const { data: medA, error: mAErr } = await A.supa
-    .from("medications")
-    .insert({ elder_id: A.creds.userId, name: "Metformin", dosage: "500mg", purpose: "blood sugar",
-              schedule: { times: ["08:00", "20:00"], frequency: "daily" } })
-    .select("id")
-    .single();
-  expect(mAErr, mAErr?.message).toBeNull();
-  const medAId: string = medA!.id;
-  const doseMorningId = await seedPendingDose(A.supa, medAId, A.creds.userId, MORNING_ISO);
-  const doseEveningId = await seedPendingDose(A.supa, medAId, A.creds.userId, EVENING_ISO);
-  console.log(`[FIXTURE A] elder=${A.creds.userId} med=${medAId} morning=${doseMorningId} evening=${doseEveningId}`);
+  //
+  // A FACTORY, because PATH A is a two-turn dialogue and its retry has to
+  // re-run the WHOLE pair. Hermes keeps conversation state per elder_id and
+  // replays it as history, so retrying only turn 2 on the same elder makes the
+  // model read its own previous answer back ("I've already logged that") and
+  // fail identically every time — the effective attempt count was 1, not 3.
+  // Resetting between turns is not an option either: "the morning one" is
+  // meaningless without turn 1's question in context.
+  const makeAmbiguousElder = async () => {
+    const A = await newElder();
+    const { data: medA, error: mAErr } = await A.supa
+      .from("medications")
+      .insert({ elder_id: A.creds.userId, name: "Metformin", dosage: "500mg", purpose: "blood sugar",
+                schedule: { times: ["08:00", "20:00"], frequency: "daily" } })
+      .select("id")
+      .single();
+    expect(mAErr, mAErr?.message).toBeNull();
+    const medAId: string = medA!.id;
+    const morning = await seedPendingDose(A.supa, medAId, A.creds.userId, MORNING_ISO);
+    const evening = await seedPendingDose(A.supa, medAId, A.creds.userId, EVENING_ISO);
+    console.log(`[FIXTURE A] elder=${A.creds.userId} med=${medAId} morning=${morning} evening=${evening}`);
+    return { A, medAId, doseMorningId: morning, doseEveningId: evening };
+  };
+
+  let { A, medAId, doseMorningId, doseEveningId } = await makeAmbiguousElder();
 
   // Elder B — the UNAMBIGUOUS fixture: Metformin scheduled once with a single
   // PENDING dose today. Separate elder + session so PATH A's pending state can't
@@ -109,39 +122,52 @@ test("s03 named-dose-taken: ambiguous 'I just took my metformin' ASKS which dose
   // contract: log_dose routed, NOTHING committed, and the reply asks which dose.
   const PHRASE_TAKEN = "I just took my metformin";
   let a1: TurnResult | undefined;
+  let a2: TurnResult | undefined;
+  let a2Action: TurnAction | undefined;
+  let afterAsk: Record<string, unknown>[] = [];
+
+  // Retry the WHOLE PAIR on a FRESH elder. Turn 2 only makes sense as a reply to
+  // turn 1's question, so the retry unit is the dialogue, not a single turn —
+  // and a fresh elder is what makes each attempt an independent sample instead
+  // of the model re-reading its own earlier answer out of session history.
   for (let attempt = 1; attempt <= 3; attempt++) {
-    const t = await agentTurn8901(A.jwt, PHRASE_TAKEN);
-    saveTurnArtifact(ARTIFACTS, `pathA-turn1-attempt-${attempt}`, t);
-    const ok = t.http === 200 && t.tools_used.includes("log_dose") && t.actions.length === 0 && asksWhichDose(t.reply);
-    console.log(`[PATH A t1] attempt ${attempt}: tools=${JSON.stringify(t.tools_used)} actions=${t.actions.length} asks=${asksWhichDose(t.reply)} reply=${JSON.stringify(t.reply.slice(0, 160))}`);
-    if (ok) { a1 = t; break; }
+    if (attempt > 1) ({ A, medAId, doseMorningId, doseEveningId } = await makeAmbiguousElder());
+
+    const t1 = await agentTurn8901(A.jwt, PHRASE_TAKEN);
+    saveTurnArtifact(ARTIFACTS, `pathA-turn1-attempt-${attempt}`, t1);
+    const asked = t1.http === 200 && t1.tools_used.includes("log_dose") && t1.actions.length === 0 && asksWhichDose(t1.reply);
+    console.log(`[PATH A t1] attempt ${attempt}: tools=${JSON.stringify(t1.tools_used)} actions=${t1.actions.length} asks=${asksWhichDose(t1.reply)} reply=${JSON.stringify(t1.reply.slice(0, 160))}`);
+    if (!asked) continue;
+
+    // Independent DB re-read AFTER the ask (must precede turn 2's write): the
+    // ask wrote nothing — still exactly the two seeded rows, BOTH pending.
+    const rows = await recheckDb(A.supa, "doses", { elder_id: A.creds.userId, medication_id: medAId });
+
+    const t2 = await agentTurn8901(A.jwt, "the morning one");
+    saveTurnArtifact(ARTIFACTS, `pathA-turn2-attempt-${attempt}`, t2);
+    const act = t2.actions.find(x => x.tool === "log_dose");
+    console.log(`[PATH A t2] attempt ${attempt}: tools=${JSON.stringify(t2.tools_used)} committed=${!!act} dose_id=${act?.dose_id} reply=${JSON.stringify(t2.reply.slice(0, 120))}`);
+    // A reply that CLAIMS a dose was logged while committing nothing is a
+    // fabricated adherence confirmation — the elder believes it's recorded and
+    // the record disagrees. Surfaced loudly; it is not a retry-able hiccup.
+    if (!act && /logged|recorded|marked/i.test(t2.reply)) {
+      console.error(`[PATH A t2] attempt ${attempt}: Mei CLAIMED a dose was logged but committed nothing — ${JSON.stringify(t2.reply.slice(0, 200))}`);
+    }
+    if (t2.http === 200 && act) { a1 = t1; afterAsk = rows; a2 = t2; a2Action = act; break; }
   }
-  expect(a1, "PATH A turn 1: log_dose routed, nothing committed, reply asked which dose (≤3 attempts)").toBeTruthy();
+
+  expect(a1, "PATH A turn 1: log_dose routed, nothing committed, reply asked which dose (≤3 whole-dialogue attempts)").toBeTruthy();
   expect(a1!.http, "turn 1 HTTP status").toBe(200);
   expect(a1!.tools_used, "turn 1 routed to log_dose").toContain("log_dose");
   expect(a1!.actions, "turn 1 committed NOTHING — the ask path writes nothing").toHaveLength(0);
   expect(asksWhichDose(a1!.reply), "turn 1 reply asks WHICH dose").toBe(true);
 
-  // Independent DB re-read AFTER the ask (must precede turn 2's write): the ask
-  // wrote nothing — still exactly the two seeded rows, BOTH pending.
-  const afterAsk = await recheckDb(A.supa, "doses", { elder_id: A.creds.userId, medication_id: medAId });
   expect(afterAsk, "ask inserted/flipped nothing — still the two seeded doses").toHaveLength(2);
   expect(afterAsk.every(r => r.status === "pending"), "BOTH doses still pending after the ask").toBe(true);
   expectRow(afterAsk, { id: doseMorningId, status: "pending" });
   expectRow(afterAsk, { id: doseEveningId, status: "pending" });
 
-  // PATH A · turn 2 (DISAMBIGUATE — same elder/session). "the morning one" must
-  // flip EXACTLY the 08:00 row.
-  let a2: TurnResult | undefined;
-  let a2Action: TurnAction | undefined;
-  for (let attempt = 1; attempt <= 3; attempt++) {
-    const t = await agentTurn8901(A.jwt, "the morning one");
-    saveTurnArtifact(ARTIFACTS, `pathA-turn2-attempt-${attempt}`, t);
-    const act = t.actions.find(x => x.tool === "log_dose");
-    console.log(`[PATH A t2] attempt ${attempt}: tools=${JSON.stringify(t.tools_used)} committed=${!!act} dose_id=${act?.dose_id}`);
-    if (t.http === 200 && act) { a2 = t; a2Action = act; break; }
-  }
-  expect(a2, "PATH A turn 2 committed a log_dose (≤3 attempts)").toBeTruthy();
+  expect(a2, "PATH A turn 2 committed a log_dose (≤3 whole-dialogue attempts)").toBeTruthy();
   expect(a2Action!.entity_type, "turn 2 action.entity_type").toBe("dose");
   expect(a2Action!.entity_id, "turn 2 action.entity_id == med uuid (Home card resolves)").toBe(medAId);
   expect(a2Action!.dose_id, "turn 2 flipped the 08:00 row, not the 20:00 one").toBe(doseMorningId);

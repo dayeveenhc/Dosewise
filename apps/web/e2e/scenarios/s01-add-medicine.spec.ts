@@ -3,7 +3,7 @@ import { mkdirSync } from "node:fs";
 import {
   agentTurn8901, anonClient, assertPhaseMins, createThrowawayElder,
   expectRow, readPhaseLog, recheckDb, resetPhaseLog, saveTurnArtifact, signIn,
-  startWalkthrough,
+  startWalkthrough, tapWalkthroughNext, advanceWalkthroughUntil, finishWalkthrough,
 } from "../helpers";
 import type { TurnResult } from "../helpers";
 import { PACING } from "../../src/app/lib/walkthrough/pacing";
@@ -88,22 +88,48 @@ test("s01 add-medicine: 'new medicine — Lisinopril, 10mg' -> propose→confirm
   // Form opens (Act: open), then the first field fills. The name value lands at
   // ~10 chars × FILL_MS_PER_CHAR, well under the FIELD_MIN_MS floor, so at this
   // instant the field phase minimum has NOT elapsed.
-  const nameInput = page.locator('[data-walk="rx-name"] input');
-  await expect(nameInput).toHaveValue("Lisinopril", { timeout: 15_000 });
+  // Autonomous steps no longer advance on their own — each holds at its commit
+  // gate until the person taps Next — so commit step 1 (open the form) first.
+  const nextBtn = page.getByRole("button", { name: /^(Next|Done)$/ });
+  await expect(nextBtn, "Next exists on autonomous steps").toBeVisible({ timeout: 15_000 });
+  await tapWalkthroughNext(page);
 
-  // Probe (once): during an autonomous step the Next button exists but is
-  // DISABLED before the phase minimum (canAdvance false until FIELD_MIN_MS).
-  const nextBtn = page.getByRole("button", { name: "Next" });
-  await expect(nextBtn, "Next exists on autonomous steps").toBeVisible();
+  // Probe (once): Next is DISABLED before the phase minimum (canAdvance stays
+  // false until FIELD_MIN_MS), so it can't rush the fill. Probed at the START
+  // of the fill — the pre-highlight ring is the phase's own opening beat, which
+  // gives the whole FIELD_MIN_MS window. Probing after the value landed left
+  // only the few hundred ms between "typing done" and "floor elapsed", which
+  // was inherently racy once the trailing between-fields pause was removed.
+  const nameInput = page.locator('[data-walk="rx-name"] input');
+  await page.waitForSelector('[data-walk="rx-name"] input.walk-field-prehighlight', { state: "attached", timeout: 15_000 });
   await expect(nextBtn, "Next disabled before the phase minimum").toBeDisabled();
+
+  await expect(nameInput).toHaveValue("Lisinopril", { timeout: 15_000 });
 
   // SCREENSHOT: mid-fill (form open, name filled).
   await page.screenshot({ path: `${SHOTS}/1-mid-fill.png`, fullPage: true });
 
-  // Submit → Verify (real re-query) → Reveal on the Home timeline. The sheet
-  // closes on a proven save; the new dose then shows on Home with its "Just
-  // added" highlight.
-  await expect(page.locator('[data-walk="rx-submit"]')).toBeHidden({ timeout: 25_000 });
+  // Fills done → the run PAUSES at the manual-Save confirm step (waitFor, no
+  // Next) — nothing commits on autopilot (2026-07-28 contract). The person
+  // reviews, then taps Save THEMSELVES. Wait for the confirm callout (proves the
+  // step's click listener is attached) before tapping, so the tap satisfies the
+  // waitFor, not just the form. Then Submit → Verify (real re-query) → Reveal on
+  // the Home timeline; the sheet closes on a proven save and the new dose shows
+  // on Home with its "Just added" highlight.
+  await advanceWalkthroughUntil(page, () => page.getByText("tap Save yourself", { exact: false }).isVisible());
+  await expect(page.getByText("tap Save yourself", { exact: false }), "manual-Save confirm step reached").toBeVisible({ timeout: 25_000 });
+
+  // The review card: what Mei typed, shown in the callout so the person can
+  // actually CHECK it before committing. It must render on this waitFor step.
+  await expect(page.getByText("Please check these details"), "review card on the confirm step").toBeVisible();
+  await expect(page.getByRole("button", { name: "Change something" }), "Change affordance").toBeVisible();
+  await expect(nextBtn, "consent step still has NO Next").toHaveCount(0);
+  await page.screenshot({ path: `${SHOTS}/1b-review-card.png`, fullPage: true });
+
+  const submitBtn = page.locator('[data-walk="rx-submit"]');
+  await expect(submitBtn, "Save enabled once every field is filled").toBeEnabled();
+  await submitBtn.click(); // the real user tap — the sanctioned end of a *_auto flow
+  await expect(submitBtn, "sheet closes on a proven save").toBeHidden({ timeout: 25_000 });
   const homeTimeline = page.locator('[data-tour="elder-schedule"]');
   await expect(homeTimeline.getByText("Lisinopril", { exact: false })).toBeVisible({ timeout: 15_000 });
   await expect(homeTimeline.getByText("Just added", { exact: false }), "‘Just added’ highlight on the new dose").toBeVisible();
@@ -111,9 +137,11 @@ test("s01 add-medicine: 'new medicine — Lisinopril, 10mg' -> propose→confirm
   // SCREENSHOT: reveal-on-Home.
   await page.screenshot({ path: `${SHOTS}/2-reveal-on-home.png`, fullPage: true });
 
-  // Walkthrough fully complete → overlay unmounts (Next gone) → the reveal phase
-  // has been recorded, so the phase log is complete.
-  await expect(nextBtn, "overlay unmounts on completion").toBeHidden({ timeout: 15_000 });
+  // The verify/reveal tail is autonomous, so it too holds at its commit gate —
+  // the last step's button reads "Done". Tap through to finish; then the overlay
+  // unmounts and the phase log (incl. the reveal phase) is complete.
+  await finishWalkthrough(page);
+  await expect(nextBtn, "overlay unmounts on completion").toHaveCount(0, { timeout: 15_000 });
 
   await page.waitForTimeout(500); // let smooth scrollIntoView settle
   const log = await readPhaseLog(page);
@@ -128,7 +156,6 @@ test("s01 add-medicine: 'new medicine — Lisinopril, 10mg' -> propose→confirm
   // Standard minimums (assertPhaseMins uses the LAST entry per phase + jitter slack).
   assertPhaseMins(log, [
     { surface: "walkthrough", phase: "field", min: PACING.FIELD_MIN_MS },
-    { surface: "walkthrough", phase: "between-fields", min: PACING.BETWEEN_FIELDS_MS },
     { surface: "walkthrough", phase: "click", min: PACING.PRE_CLICK_MS },
     { surface: "walkthrough", phase: "verify", min: PACING.VERIFY_MIN_MS },
     { surface: "walkthrough", phase: "reveal", min: PACING.REVEAL_PULSE_MS },

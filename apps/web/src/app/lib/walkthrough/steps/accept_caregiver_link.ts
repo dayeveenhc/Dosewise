@@ -27,7 +27,7 @@ export const acceptCaregiverLinkSteps: WalkthroughStep[] = [
     selector: '[data-walk^="care-link-accept-"]',
     instructionKey: "walk.acceptLink.accept",
     waitFor: { type: "write-committed", source: "app-event", event: "care-link-activated" },
-    skippable: false,
+    timeoutMs: 20000, // a signal that never arrives must surface, not hang
   },
   {
     id: "acceptLink.verify",

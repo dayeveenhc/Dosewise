@@ -21,9 +21,12 @@ export async function fetchDoctorQuestions(elderId: string): Promise<DoctorQ[]> 
     .map(r => ({
       id: String(r.id),
       question: String(r.question),
-      // The elder thread splits "flagged by Mei" vs "manual" on the word "Mei" in
-      // addedAt — keep that contract (agent-sourced reads as "Added by Mei").
-      addedAt: `${r.source === "agent" ? "Added by Mei" : "Added"} · ${formatWhen(String(r.created_at))}`,
+      // Timestamp ONLY. The "Added by Mei ·" prefix is composed at render time
+      // from `source` below, so it can be shown in the person's own language —
+      // it used to be baked in here in English, and the thread's flagged-vs-
+      // manual split then depended on that English word surviving translation.
+      addedAt: formatWhen(String(r.created_at)),
+      source: r.source === "agent" || r.source === "caregiver" ? r.source : "elder",
       answered: r.status !== "open",
     }));
 }
@@ -48,14 +51,19 @@ export async function createDoctorQuestion(elderId: string, question: string): P
   return {
     id: String(data.id),
     question: String(data.question),
-    addedAt: `Added · ${formatWhen(String(data.created_at))}`,
+    addedAt: formatWhen(String(data.created_at)),
+    source: "elder",
     answered: false,
   };
 }
 
+// Locale-independent enough to be shown as-is: a clock time or a short date,
+// never an English word. An unparseable timestamp yields "" rather than the old
+// English "recently" — the caller renders the prefix alone, which stays correct
+// in every language.
 function formatWhen(iso: string): string {
   const d = new Date(iso);
-  if (Number.isNaN(d.getTime())) return "recently";
+  if (Number.isNaN(d.getTime())) return "";
   const today = new Date();
   const sameDay = d.toDateString() === today.toDateString();
   return sameDay

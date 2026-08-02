@@ -5,11 +5,12 @@ import {
   Sunrise, Coffee, Utensils, UtensilsCrossed, Moon, QrCode, Search, X, Bell, Globe, UserRound,
   Info, Type, HeartPulse,
 } from "lucide-react";
-import { buildCareLinkPayload } from "../../lib/careLinks";
+import { buildCareLinkPayload, fetchLinkedCaregivers } from "../../lib/careLinks";
+import type { LinkedCaregiver } from "../../lib/careLinks";
 import { useAccessibility } from "../../accessibility.tsx";
 import type { FontSize, ContrastMode, ColourVisionMode, NotificationPrefs } from "../../accessibility.tsx";
 import type { Patient } from "../../types";
-import { MED_SHAPES, COMMON_CONDITIONS, COMMON_ALLERGIES, COMMON_DRUG_ALLERGIES } from "../../data/medications";
+import { MED_SHAPES, COMMON_CONDITIONS, COMMON_ALLERGIES, COMMON_DRUG_ALLERGIES, localizeCatalogValue } from "../../data/medications";
 import { fetchProfile, saveProfile, calculateAge } from "../../lib/profile";
 import type { SymptomReport } from "../../lib/profile";
 import { normalizeAllergies, slugify } from "../../lib/changeHighlight";
@@ -27,6 +28,16 @@ export function Toggle({ on, onToggle, "data-walk": dataWalk }: { on: boolean; o
       <div className={`absolute top-1 w-6 h-6 bg-white rounded-full shadow transition-transform ${on ? "translate-x-7" : "translate-x-1"}`} />
     </button>
   );
+}
+
+// Allergy severity is a backend-written word ("mild"/"moderate"/"severe").
+// t() returns the KEY itself when there's no entry, so an unknown or legacy
+// value would print literally as "severity.foo" — fall back to the raw word.
+// Same guard localizeCatalogValue applies to catalog values.
+function localizeSeverity(language: AppLanguage, severity: string): string {
+  const key = `severity.${severity}`;
+  const label = t(language, key);
+  return label === key ? severity : label;
 }
 
 const FONT_SIZES: FontSize[] = ["small", "normal", "large", "xlarge", "xxlarge"];
@@ -124,11 +135,15 @@ function SettingRow({ label, desc, children }: { label: string; desc?: string; c
 
 // A titled card holding a section's controls in full. The title is a heading,
 // not a button — there is nowhere further to go.
-function SectionCard({ icon: Icon, title, anchor, children }: {
-  icon: any; title: string; anchor: Anchor; children?: React.ReactNode;
+function SectionCard({ icon: Icon, title, anchor, walk, children }: {
+  // `walk` is a stable walkthrough anchor, separate from `anchor` (which the
+  // settings SEARCH scrolls to). A walkthrough that spotlights a section needs
+  // its own contract: the emergency-contact tour pointed at a data-walk that
+  // the settings-hub revamp deleted, and silently spotlighted nothing.
+  icon: any; title: string; anchor: Anchor; walk?: string; children?: React.ReactNode;
 }) {
   return (
-    <div data-settings={anchor} className="dw-surface overflow-hidden scroll-mt-3">
+    <div data-settings={anchor} data-walk={walk} className="dw-surface overflow-hidden scroll-mt-3">
       <div className="flex items-center gap-3 px-4 py-3.5">
         <div className="w-10 h-10 rounded-xl bg-secondary flex items-center justify-center shrink-0">
           <Icon size={20} className="text-primary" />
@@ -150,10 +165,16 @@ function SubScreen({ children }: { children: React.ReactNode }) {
   );
 }
 
-export function ElderlySettingsScreen({ patient, elderId, onUpdatePatient, onSignOut, onHeaderOverride }: {
+export function ElderlySettingsScreen({ patient, elderId, onUpdatePatient, onSignOut, onHeaderOverride, walkthroughResetSignal }: {
   patient: Patient; elderId?: string; onUpdatePatient: (p: Patient) => void; onSignOut: () => void;
   // A sub-screen REPLACES the app header rather than stacking its own beneath it.
   onHeaderOverride?: (h: { title: string; onBack: () => void; action?: React.ReactNode } | null) => void;
+  // Bumped by the host when a walkthrough starts. Every settings walkthrough
+  // opens from the HUB, but a tour's onEnter can only switch bottom-nav tabs —
+  // so if this screen was already sitting in a sub-page (or showing search
+  // results, which unmount every section), the first target simply was not
+  // there. Ignore the initial 0 so mounting normally changes nothing.
+  walkthroughResetSignal?: number;
 }) {
   const {
     fontSize, setFontSize, contrast, setContrast, colourVision, setColourVision,
@@ -161,6 +182,10 @@ export function ElderlySettingsScreen({ patient, elderId, onUpdatePatient, onSig
     timeFormat, setTimeFormat,
   } = useAccessibility();
   const { language, setLanguage } = useLanguage();
+  // Saved conditions/allergies are stored as canonical English. Render them in
+  // the app's language where they're one of our catalog values, and leave
+  // anything the person typed themselves exactly as they wrote it.
+  const loc = (v: string) => localizeCatalogValue(v, k => t(language, k));
   // The two screens that are NOT about this person's care: their own profile
   // form, and the app itself. Everything else stays on the page.
   const [subScreen, setSubScreen] = useState<null | "profile" | "about">(null);
@@ -171,7 +196,18 @@ export function ElderlySettingsScreen({ patient, elderId, onUpdatePatient, onSig
   const lastColourMode = useRef<ColourVisionMode>(colourVision === "off" ? "deuteranopia" : colourVision);
   const [showCallPrimary, setShowCallPrimary] = useState(false);
   const [showQr, setShowQr] = useState(false);
-  const primary = patient.contacts.find(c => c.isPrimary);
+  // The emergency contact IS the linked caregiver — read from care_links, not
+  // from data/patients.ts. The fixture contact used to render on every real
+  // account (App.tsx spreads ...prev[0] and never overwrote `contacts`), so the
+  // app displayed a name and phone number for someone who did not exist while
+  // Mei correctly reported no caregiver was linked. Dosewise stores no phone
+  // number anywhere, so none is shown.
+  const [caregivers, setCaregivers] = useState<LinkedCaregiver[]>([]);
+  useEffect(() => {
+    if (!elderId) return;
+    void fetchLinkedCaregivers(elderId).then(setCaregivers);
+  }, [elderId]);
+  const primary = caregivers[0];
 
   // Draft copies of everything the guided setup wizard collects, so this
   // section can double as "edit what you answered during setup."
@@ -200,6 +236,14 @@ export function ElderlySettingsScreen({ patient, elderId, onUpdatePatient, onSig
   // The profile screen opens read-only, showing what's on file; "Edit profile"
   // there is what makes the fields editable.
   const [profileEditing, setProfileEditing] = useState(false);
+
+  // A walkthrough is starting: return to the hub it expects to spotlight.
+  useEffect(() => {
+    if (!walkthroughResetSignal) return;
+    setSubScreen(null);
+    setProfileEditing(false);
+    setQuery("");
+  }, [walkthroughResetSignal]);
 
   useEffect(() => {
     if (!elderId) return;
@@ -350,6 +394,10 @@ export function ElderlySettingsScreen({ patient, elderId, onUpdatePatient, onSig
           value={FONT_SIZES.indexOf(fontSize)}
           onChange={e => setFontSize(FONT_SIZES[Number(e.target.value)])}
           aria-label={t(language, "settings.textSize")}
+          // The text_size walkthrough waits for a real `input` change here. It
+          // used to point at the wrapping div, whose `.value` is undefined —
+          // so the check could never pass and that step hung forever.
+          data-walk="elder-fontsize-slider"
           className="flex-1 accent-primary h-3"
         />
         <span className="text-[calc(26px*var(--dw-text,1))] font-bold text-muted-foreground shrink-0 leading-none">A</span>
@@ -461,17 +509,22 @@ export function ElderlySettingsScreen({ patient, elderId, onUpdatePatient, onSig
     </SettingRow>
   );
 
+  const primaryName = primary?.name ?? t(language, "settings.emergencyUnnamed");
   const emergencyCard = primary ? (
     <div className="px-4 py-4 flex items-center justify-between gap-3">
       <div className="min-w-0">
-        <p className="text-[calc(17px*var(--dw-text,1))] font-bold text-foreground break-words leading-tight">{primary.name}</p>
-        <p className="text-[calc(14px*var(--dw-text,1))] text-muted-foreground">{primary.role}</p>
-        <p className="text-[calc(14px*var(--dw-text,1))] text-muted-foreground">{primary.phone}</p>
+        <p className="text-[calc(17px*var(--dw-text,1))] font-bold text-foreground break-words leading-tight">{primaryName}</p>
+        {primary.relationship && (
+          <p className="text-[calc(14px*var(--dw-text,1))] text-muted-foreground">{primary.relationship}</p>
+        )}
+        {/* No phone column exists in the schema. Saying so is the honest thing —
+            the alternative was a fixture number that belonged to nobody. */}
+        <p className="text-[calc(14px*var(--dw-text,1))] text-muted-foreground">{t(language, "settings.emergencyNoPhone")}</p>
       </div>
       <button
         onClick={() => setShowCallPrimary(true)}
         data-walk="elder-emergency-call"
-        aria-label={`${t(language, "settings.emergencyContact")}: ${primary.name}`}
+        aria-label={`${t(language, "settings.emergencyContact")}: ${primaryName}`}
         className="w-14 h-14 bg-taken-bg text-taken-fg border-2 border-taken-border rounded-2xl flex items-center justify-center shrink-0 active:scale-95 transition-transform"
       >
         <Phone size={22} />
@@ -490,6 +543,11 @@ export function ElderlySettingsScreen({ patient, elderId, onUpdatePatient, onSig
       </div>
       <button
         onClick={() => setShowQr(v => !v)}
+        // The link_caregiver walkthrough has to open this itself: its next step
+        // waits on the QR code, which only mounts once showQr is true. Without
+        // an anchor here that step spotlighted an element that could never
+        // exist and the elder side of the flow dead-ended at 2 of 4.
+        data-walk="elder-qr-show"
         className="mt-3 w-full h-12 rounded-xl border border-border text-[calc(14px*var(--dw-text,1))] font-bold text-foreground active:bg-muted transition-colors"
       >
         {showQr ? t(language, "settings.hideCode") : t(language, "settings.showCode")}
@@ -579,9 +637,9 @@ export function ElderlySettingsScreen({ patient, elderId, onUpdatePatient, onSig
         </InfoSection>
 
         <InfoSection icon={HeartPulse} title={t(language, "settings.medicalInfo")}>
-          <InfoRow label={t(language, "settings.medicalConditions")} value={listOr(conditionsDraft)} />
-          <InfoRow label={t(language, "settings.generalAllergies")} value={listOr(allergiesDraft)} />
-          <InfoRow label={t(language, "settings.medicationAllergies")} value={listOr(drugAllergiesDraft)} />
+          <InfoRow label={t(language, "settings.medicalConditions")} value={listOr(conditionsDraft.map(loc))} />
+          <InfoRow label={t(language, "settings.generalAllergies")} value={listOr(allergiesDraft.map(loc))} />
+          <InfoRow label={t(language, "settings.medicationAllergies")} value={listOr(drugAllergiesDraft.map(loc))} />
         </InfoSection>
 
         <InfoSection icon={Utensils} title={t(language, "settings.mealsSleep")}>
@@ -742,7 +800,7 @@ export function ElderlySettingsScreen({ patient, elderId, onUpdatePatient, onSig
               </div>
               {(patient.conditions.length > 0 || allergyEntries.length > 0) && (
                 <div className="flex flex-wrap gap-1.5 mt-3">
-                  {patient.conditions.map(c => <span key={c} className="text-[calc(14px*var(--dw-text,1))] font-semibold bg-secondary text-secondary-foreground rounded-full px-3 py-1">{c}</span>)}
+                  {patient.conditions.map(c => <span key={c} className="text-[calc(14px*var(--dw-text,1))] font-semibold bg-secondary text-secondary-foreground rounded-full px-3 py-1">{loc(c)}</span>)}
                   {/* Saved allergies (both legacy strings and promoted
                       {name, severity} objects — lib/changeHighlight.ts's
                       normalizeAllergies). Always visible so a
@@ -757,7 +815,7 @@ export function ElderlySettingsScreen({ patient, elderId, onUpdatePatient, onSig
                     >
                       {a.name}
                       {a.severity && (
-                        <em className="not-italic text-[calc(12px*var(--dw-text,1))] font-bold uppercase tracking-wide bg-destructive text-destructive-foreground rounded-full px-1.5 py-0.5">{a.severity}</em>
+                        <em className="not-italic text-[calc(12px*var(--dw-text,1))] font-bold uppercase tracking-wide bg-destructive text-destructive-foreground rounded-full px-1.5 py-0.5">{localizeSeverity(language, a.severity)}</em>
                       )}
                     </span>
                   ))}
@@ -822,8 +880,8 @@ export function ElderlySettingsScreen({ patient, elderId, onUpdatePatient, onSig
               </SectionCard>
             </div>
 
-            <SectionCard icon={Phone} title={SECTION_TITLES.emergency} anchor="emergency">
-              {emergencyCard ?? <p className="px-4 py-5 text-[calc(14px*var(--dw-text,1))] text-muted-foreground text-center">{t(language, "notifications.empty")}</p>}
+            <SectionCard icon={Phone} title={SECTION_TITLES.emergency} anchor="emergency" walk="elder-emergency-section">
+              {emergencyCard ?? <p className="px-4 py-5 text-[calc(14px*var(--dw-text,1))] text-muted-foreground text-center">{t(language, "settings.emergencyNone")}</p>}
             </SectionCard>
 
             {/* What the app is, rather than anything about this person's care —
@@ -853,7 +911,11 @@ export function ElderlySettingsScreen({ patient, elderId, onUpdatePatient, onSig
       </div>
 
       {showCallPrimary && primary && (
-        <CallMockup name={primary.name} role={primary.role} onEnd={() => setShowCallPrimary(false)} />
+        <CallMockup
+          name={primaryName}
+          role={primary.relationship ?? t(language, "link.reqDefaultRelation")}
+          onEnd={() => setShowCallPrimary(false)}
+        />
       )}
     </div>
   );

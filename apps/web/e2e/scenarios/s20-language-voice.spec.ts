@@ -1,48 +1,57 @@
-import { expect, test, type Page } from "@playwright/test";
+import { expect, test } from "@playwright/test";
 import { mkdirSync } from "node:fs";
+import { setTimeout as sleep } from "node:timers/promises";
+import type { SupabaseClient } from "@supabase/supabase-js";
 import {
-  anonClient, createThrowawayElder, recheckDb, readPhaseLog, resetPhaseLog,
-  signIn, startWalkthrough,
+  anonClient, assertPhaseMins, createThrowawayElder, recheckDb, readPhaseLog,
+  resetPhaseLog, signIn, startWalkthrough, advanceWalkthroughToStep, finishWalkthrough,
 } from "../helpers";
+import { PACING } from "../../src/app/lib/walkthrough/pacing";
 
-// s20 language-voice (VIEW) — a PURE client-side spotlight tour of the elder's
-// Voice & Language settings (ElderlySettingsScreen.tsx). Manifest tools: []
-// is literal: language & voiceOutput are localStorage-only settings
-// (lib/languageContext.tsx's "dosewise-language", accessibility.tsx's
-// "dosewise:accessibility") with NO Hermes tool and NO Supabase write — so,
-// unlike s10/s19, there is no real TRIGGER turn to send at all (nothing for an
-// LLM to route to) and no ChangeHighlight tail. Sections 2 TRIGGER + 4 UI are
-// folded into one "walkthrough + real client change" block; section 3
-// RE-CHECK becomes the VIEW-ONLY proof: the client setting genuinely changes,
-// while Supabase stays untouched FOR THOSE SETTINGS specifically (medications:
-// fully untouched; profiles: gains only the generic completedWalkthroughs
-// bookkeeping marker every walkthrough writes on completion — see the comment
-// at the profiles re-check below). Owns: this spec + steps/language_voice_tour.ts.
-const SHOTS = "e2e/design-shots/scenarios/s20"; // durable, NOT wiped
-
-// language_voice_tour anchors (steps/language_voice_tour.ts) + per-step copy.
-const NAV_SETTINGS = '[data-tour="nav-settings"]';
-const LANG_SECTION = '[data-tour="elder-language"]';
-const LANG_SELECT = '[data-walk="elder-language-select"]';
-const STEP1_TEXT = "Tap Settings";            // walk.languageVoiceTour.step1
-const STEP2_TEXT = "Mei can read her replies aloud here"; // walk.languageVoiceTour.step2 (NOT "Voice & Language" — the real Settings card already has that as its own heading, so it isn't unique to the callout)
-const STEP3_TEXT = "pick the language";       // walk.languageVoiceTour.step3
-
-// The consent-class invariant (identical to s10/s19): a waitFor step is NEVER
-// paced, so the callout shows Exit but MUST NOT render a Next button
-// (Walkthrough.tsx gates the whole Next/Replay block on `autonomous`, false
-// for every waitFor step). Assert the callout IS present (Exit visible) so the
-// absence of Next is meaningful, not just an unmounted overlay.
-async function assertWaitForStep(page: Page, bodyText: string, label: string) {
-  await expect(page.getByText(bodyText, { exact: false }), `${label}: callout body`).toBeVisible({ timeout: 15_000 });
-  await expect(page.getByRole("button", { name: "Exit walkthrough" }), `${label}: Exit present`).toBeVisible();
-  await expect(page.getByRole("button", { name: "Next", exact: true }), `${label}: NO Next button (consent-class)`).toHaveCount(0);
+// App.tsx's handleWalkthroughAdvance calls `void markWalkthroughCompleted(...)`
+// on tour completion — fire-and-forget, never awaited by the UI, and itself a
+// fetch-then-upsert round trip to the (hosted, not local) Supabase project. A
+// single immediate recheckDb can race it and read the row before the write
+// lands (mirrors s27/s29's identical, already-documented race). Bounded,
+// short-interval poll for an already-fired background write to become
+// visible; not a UI-pacing wait.
+async function waitForCompletedWalkthrough(
+  supa: SupabaseClient, userId: string, taskName: string,
+): Promise<Record<string, unknown>[]> {
+  const attempts = 10;
+  const intervalMs = 300;
+  let rows = await recheckDb(supa, "profiles", { id: userId });
+  for (let i = 0; i < attempts; i++) {
+    const completed = (rows[0]?.accessibility as { completedWalkthroughs?: string[] } | undefined)?.completedWalkthroughs ?? [];
+    if (completed.includes(taskName)) return rows;
+    await sleep(intervalMs);
+    rows = await recheckDb(supa, "profiles", { id: userId });
+  }
+  return rows; // exhausted — return the last read and let the assertion below fail honestly
 }
 
+// s20 language-voice (VIEW) — a client-side spotlight tour of the elder's Voice
+// & Language settings (ElderlySettingsScreen.tsx). Manifest tools: [] is literal:
+// language & voiceOutput are localStorage-only settings (lib/languageContext's
+// "dosewise-language", accessibility.tsx's "dosewise:accessibility") with NO
+// Hermes tool and NO Supabase write — so there is no real TRIGGER turn (nothing
+// for an LLM to route to) and no ChangeHighlight tail.
+//
+// 2026-07-28 contract flip (Item 5): this tour is now AI-AUTO-ADVANCED. All three
+// steps are `act:click`, so Mei drives the spotlight herself at the slow PACING
+// rate — the person just watches. Crucially she clicks the CONTAINER of each
+// control (the nav item, the card, the <select>), NEVER toggling Read-Aloud or
+// picking a language, so the tour changes NOTHING on the person's behalf. This
+// spec proves exactly that: the tour self-drives to completion, records paced
+// walkthrough phases (no longer the old user-driven "zero phases"), and language
+// + voiceOutput stay UNCHANGED while Supabase gains only the generic
+// completion-marker every walkthrough writes. Owns: this spec + steps/language_voice_tour.ts.
+const SHOTS = "e2e/design-shots/scenarios/s20"; // durable, NOT wiped
+
 // Read the two client-only settings this tour spotlights, straight out of
-// localStorage — the same keys languageContext.tsx / accessibility.tsx own.
-// No Supabase involved: this IS the "where the value actually lives" check.
-async function readClientSettings(page: Page): Promise<{ language: string | null; voiceOutput: boolean | undefined }> {
+// localStorage — the same keys languageContext / accessibility.tsx own. No
+// Supabase involved: this IS the "where the value actually lives" check.
+async function readClientSettings(page: import("@playwright/test").Page): Promise<{ language: string | null; voiceOutput: boolean | undefined }> {
   return page.evaluate(() => {
     const language = window.localStorage.getItem("dosewise-language");
     const raw = window.localStorage.getItem("dosewise:accessibility");
@@ -52,7 +61,7 @@ async function readClientSettings(page: Page): Promise<{ language: string | null
   });
 }
 
-test("s20 language-voice: user-driven Voice & Language tour (no Next) -> client-only language + voiceOutput change, no backend write", async ({ page }) => {
+test("s20 language-voice: AI-auto-advanced Voice & Language tour self-drives, records paced phases, and changes NOTHING (client + backend)", async ({ page }) => {
   test.setTimeout(120_000);
   mkdirSync(SHOTS, { recursive: true });
   await page.setViewportSize({ width: 1280, height: 900 });
@@ -66,104 +75,71 @@ test("s20 language-voice: user-driven Voice & Language tour (no Next) -> client-
   expect(sErr, sErr?.message).toBeNull();
   console.log(`[SEED] elder=${creds.userId} (no medications needed — Settings-only tour)`);
 
-  // Baseline Supabase snapshot, taken BEFORE any UI interaction, so the later
-  // VIEW-ONLY proof is a real before/after diff, not just a post-hoc read.
+  // Baseline Supabase snapshot BEFORE any UI interaction, so the VIEW-ONLY proof
+  // is a real before/after diff.
   const profileBefore = await recheckDb(supa, "profiles", { id: creds.userId });
   expect(profileBefore, "exactly the one seeded profiles row").toHaveLength(1);
   const medsBefore = await recheckDb(supa, "medications", { elder_id: creds.userId });
   expect(medsBefore, "no medications exist (none seeded)").toHaveLength(0);
 
   // ── 2 TRIGGER — deliberately NONE ─────────────────────────────────────────
-  // manifest.ts's tools: [] for s20 is literal: there is no phrase an elder
-  // could say that routes an LLM tool call here — language/voiceOutput are
-  // pure client settings, so this tour's only real entry point is the app's
-  // own UI (dev-bridge startWalkthrough below stands in for that in-app
-  // trigger, exactly as s19 uses it for its mock notifications tour).
+  // manifest.ts's tools: [] for s20 is literal: no phrase routes an LLM tool call
+  // here — language/voiceOutput are pure client settings, so this tour's only
+  // entry point is the app's own UI (dev-bridge startWalkthrough stands in for
+  // that in-app trigger).
 
-  // ── 2/4 WALKTHROUGH UI + REAL CLIENT CHANGE ───────────────────────────────
+  // ── 2/4 WALKTHROUGH UI — AUTONOMOUS, SELF-DRIVING ─────────────────────────
   await signIn(page, creds); // lands on Home (:5173)
   const before = await readClientSettings(page);
   console.log(`[CLIENT before] language=${before.language} voiceOutput=${before.voiceOutput}`);
 
-  // resetPhaseLog first so the log holds only this interaction. All 3 steps
-  // are waitFor (user-driven) -> NO PaceController is ever instantiated for
-  // them (Walkthrough.tsx: `autonomous = !!(step.act || ...)`, false here) ->
-  // the tour records NO walkthrough phase-log entries at all (asserted below;
-  // same honest zero shape as s10/s19 — the field/click/act/navigate phases
-  // only exist inside the autonomous act path in orchestrate.ts, never taken).
+  // resetPhaseLog first so the log holds only this interaction. Every step is
+  // act:click → autonomous → Mei performs each tap herself at the PACING pace,
+  // but the step then HOLDS at its commit gate until the person taps Next
+  // (nothing auto-advances any more), so we supply those taps below.
   await resetPhaseLog(page);
   await startWalkthrough(page, "language_voice_tour");
 
-  // Step 1: spotlight the always-mounted Settings nav; Next absent. The person
-  // taps it themselves to travel there.
-  await expect(page.locator(NAV_SETTINGS), "step 1 nav target").toBeVisible({ timeout: 15_000 });
-  await assertWaitForStep(page, STEP1_TEXT, "step 1 go-to-settings");
-  await page.locator(NAV_SETTINGS).click();
+  // The overlay appears (step 1 spotlights the always-mounted Settings nav) and,
+  // being autonomous, renders a Next control (a user-driven consent step never
+  // does). Mei performs each step's tap; the person decides when to move on.
+  await expect(page.locator('[data-tour="nav-settings"]'), "step 1 nav target spotlit").toBeVisible({ timeout: 15_000 });
+  await expect(page.getByRole("button", { name: "Exit walkthrough" }), "overlay is up").toBeVisible();
 
-  // Step 2: spotlight the Voice & Language card; Next absent. The person taps
-  // the Read-Aloud toggle itself — a real descendant control inside the
-  // spotlighted card — which both flips voiceOutput AND, by native DOM
-  // bubbling, satisfies this step's "acknowledge" waitFor (Walkthrough.tsx
-  // treats click|acknowledge identically; the listener sits on the card, not
-  // the button, since no distinct waitFor.selector was set).
-  await expect(page.locator(LANG_SECTION), "step 2 section target").toBeVisible({ timeout: 15_000 });
-  await assertWaitForStep(page, STEP2_TEXT, "step 2 voice-language-section");
-  const voiceToggle = page.locator(LANG_SECTION).locator("button").first();
-  await expect(voiceToggle, "Read-Aloud toggle reflects the default ON state").toHaveAttribute("aria-pressed", "true");
-  await voiceToggle.click(); // real user tap: flips voiceOutput AND advances step 2
-
-  // Step 3: spotlight the language <select>; Next absent. Screenshot here per
-  // the deliverable (a tour step spotlighting the language selector) BEFORE
-  // acting, so the shot shows the spotlight, not the after-state.
-  await expect(page.locator(LANG_SELECT), "step 3 select target").toBeVisible({ timeout: 15_000 });
-  await assertWaitForStep(page, STEP3_TEXT, "step 3 pick-language");
+  // Screenshot mid-tour: the language selector step is the deliverable shot.
+  await advanceWalkthroughToStep(page, 3);
   await page.screenshot({ path: `${SHOTS}/walkthrough-step3-language-selector.png`, fullPage: true });
 
-  // Real user action: pick a different language. "select-change" only
-  // satisfies on a genuine value change (never a bare tap), so the tour
-  // completing is itself evidence the language actually changed.
-  await page.locator(LANG_SELECT).selectOption("zh");
+  // Tapping through the rest completes it: the overlay unmounts (Exit gone).
+  await finishWalkthrough(page);
+  await expect(page.getByRole("button", { name: "Exit walkthrough" }), "tour completes once tapped through").toHaveCount(0, { timeout: 20_000 });
 
-  // Tour complete (last step): overlay gone (no Exit).
-  await expect(page.getByRole("button", { name: "Exit walkthrough" }), "walkthrough overlay dismissed").toHaveCount(0, { timeout: 15_000 });
-
-  // Phase-log shape for a fully user-driven tour: honestly ZERO walkthrough
-  // phases — no navigate/field/click/act entries either, since none of this
-  // tour's steps carry `act` (or a waitFor-less verify/reveal), so
-  // Walkthrough.tsx's autonomous flag is false for all 3 and orchestrate.ts's
-  // runActStep (the only place that ever calls PaceController.paced(), the
-  // sole producer of "walkthrough" phase-log entries) never runs.
+  // ── PACING: it is now PACED (the inverse of the old "zero phases") ─────────
   const walkLog = await readPhaseLog(page);
   const walkPhases = walkLog.filter(e => e.surface === "walkthrough");
   console.log(`[PHASELOG] walkthrough entries=${JSON.stringify(walkPhases.map(e => `${e.surface}/${e.phase}`))}`);
-  expect(walkPhases, "user-driven tour records NO paced walkthrough phases").toHaveLength(0);
+  expect(walkPhases.length, "autonomous tour records paced walkthrough phases").toBeGreaterThan(0);
+  // Three act:click steps (step 1 no onEnter; steps 2-3 have onEnter → a navigate
+  // settle): so a `click` phase (PRE_CLICK_MS) and a `navigate` phase (NAVIGATE_MS)
+  // are both present, each floored at its minimum.
+  assertPhaseMins(walkLog, [
+    { surface: "walkthrough", phase: "click", min: PACING.PRE_CLICK_MS },
+    { surface: "walkthrough", phase: "navigate", min: PACING.NAVIGATE_MS },
+  ]);
 
-  // ── 3 VIEW-ONLY PROOF (replaces a DB re-check) ────────────────────────────
-  await page.waitForTimeout(500); // let smooth scrollIntoView settle
-  const captionLabel = page.locator(LANG_SECTION).getByText("语言", { exact: true }); // zh for "Language"
-  await expect(captionLabel, "UI text itself re-rendered in the newly picked language").toBeVisible({ timeout: 10_000 });
-  await expect(voiceToggle, "Read-Aloud toggle now reflects OFF").toHaveAttribute("aria-pressed", "false");
-
+  // ── 3 VIEW-ONLY PROOF: the tour changed NOTHING ───────────────────────────
   const after = await readClientSettings(page);
   console.log(`[CLIENT after] language=${after.language} voiceOutput=${after.voiceOutput}`);
-  expect(after.language, "persisted localStorage language actually changed").toBe("zh");
-  expect(after.language, "language differs from before").not.toBe(before.language);
-  expect(after.voiceOutput, "persisted localStorage voiceOutput flipped from its prior value").toBe(!before.voiceOutput);
+  expect(after.language, "language unchanged — Mei only spotlit the selector, never picked one").toBe(before.language);
+  expect(after.voiceOutput, "voiceOutput unchanged — Mei clicked the card container, never the toggle").toBe(before.voiceOutput);
 
-  // Assert NO backend write occurred FOR THE SETTINGS THEMSELVES: no committed
-  // action was ever possible (there was no TRIGGER turn — see section 2), and
-  // independently re-reading Supabase proves language/voiceOutput never reached
-  // it. One caveat, discovered empirically and worth being honest about: ANY
-  // walkthrough's last step calls profile.ts's markWalkthroughCompleted
-  // (ElderlyApp.tsx's handleWalkthroughAdvance) — generic engine bookkeeping
-  // shared by every task name (autonomous or user-driven, request_refill,
-  // notifications_tour, this one alike), NOT a language/voice-specific write and
-  // NOT a committed agent action (no medications/doses/refills/care_links row,
-  // no entity_type/entity_id/changed_fields — CONTEXT.md's propose-vs-commit).
-  // So the precise, honest assertion is: identity fields untouched, and
-  // accessibility gained ONLY that one completion marker — no language/
-  // voiceOutput/medical key ever appears there.
-  const profileAfter = await recheckDb(supa, "profiles", { id: creds.userId });
+  // Backend: identity untouched; accessibility gains ONLY the generic
+  // walkthrough-completion marker (markWalkthroughCompleted — shared engine
+  // bookkeeping every task writes, NOT a language/voice write and NOT a committed
+  // agent action). No medications touched.
+  // Polled, not single-shot — see waitForCompletedWalkthrough's comment: the
+  // completion write is fire-and-forget from the UI's perspective.
+  const profileAfter = await waitForCompletedWalkthrough(supa, creds.userId, "language_voice_tour");
   expect(profileAfter, "still exactly one profiles row").toHaveLength(1);
   const before0 = profileBefore[0] as Record<string, unknown>;
   const after0 = profileAfter[0] as Record<string, unknown>;
@@ -176,11 +152,8 @@ test("s20 language-voice: user-driven Voice & Language tour (no Next) -> client-
   expect(medsAfter, "medications untouched (still none)").toHaveLength(0);
 
   // ── 4 SCREENSHOT ──────────────────────────────────────────────────────────
-  await page.screenshot({ path: `${SHOTS}/settings-after-change.png`, fullPage: true });
+  await page.screenshot({ path: `${SHOTS}/settings-after-tour.png`, fullPage: true });
 
-  // ── 5 NO scenario-local ms literals ────────────────────────────────────────
-  // This tour has no paced phase (all 3 steps are waitFor — no PaceController
-  // minimum ever applies), so there is no PACING constant to assert against;
-  // the only raw literal is the 500ms scrollIntoView settle above, with its
-  // required comment.
+  // ── 5 NO scenario-local ms literals ───────────────────────────────────────
+  // All timing assertions go through PACING via assertPhaseMins; no raw literals.
 });

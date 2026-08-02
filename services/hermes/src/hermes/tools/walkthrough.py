@@ -1,11 +1,18 @@
 """Guided walkthrough handoff: start_walkthrough.
 
-Queues a scripted, spotlight-and-narrate UI walkthrough for the web client to run.
-Mei only ever points and narrates — every step's actual tap/type/submit is the
-patient's own action, never the tool's. The step content itself (which element to
-highlight, what to say, what user action ends the step) is data owned entirely by
-the web client (``apps/web/src/app/lib/walkthrough/steps/``); this tool only names
-which script to run, so new walkthroughs can be added without touching agent logic.
+Queues a scripted UI walkthrough for the web client to run.
+
+Two families, and the difference matters: a spotlight-and-narrate walkthrough
+only points, and the patient performs every tap themselves; the ``*_auto``
+walkthroughs (and the auto-advanced ``*_tour`` ones) have Mei drive the screen
+herself, visibly animated. Even then nothing COMMITS on autopilot — every
+``*_auto`` flow ends on a Save the patient taps, and consent-bearing steps
+(placing a call, accepting a caregiver link) are always the patient's own action.
+
+The step content itself (which element to highlight, what to say, what ends the
+step) is data owned entirely by the web client
+(``apps/web/src/app/lib/walkthrough/steps/``); this tool only names which script
+to run, so new walkthroughs can be added without touching agent logic.
 Only meaningful in the app channel — there are no spotlightable screens on Telegram.
 """
 
@@ -34,18 +41,69 @@ TASK_NAMES = [
     "check_schedule",
     "log_dose",
     "undo_dose",
-    "language_voice",
     "reminder_settings",
-    "emergency_contact",
     "text_size",
-    # Spotlight tours (2026-07-26): highlight-and-narrate only — the user taps
-    # every step themselves, nothing autonomous.
+    # Spotlight tours (2026-07-26): Mei auto-advances the spotlight herself at
+    # the slow walkthrough pace; consent steps still need the patient's own tap.
     "language_voice_tour",
     "notifications_tour",
     "emergency_contact_tour",
     "caregiver_view_toggle_tour",
     "patient_schedule_tour",
     "weekly_summary_tour",
+]
+
+# Which app shell each walkthrough's screens live in. The elder and caregiver
+# shells render completely different screens, so a walkthrough offered to the
+# wrong one spotlights elements that can never exist there. Mirrors the
+# client-side derivation in apps/web/src/app/lib/walkthrough/steps/index.ts
+# (walkthroughShellFor), which is the real guard — this drives what the prompt
+# even offers, so the bad suggestion is never made in the first place.
+CAREGIVER_ONLY_TASKS = frozenset({
+    "caregiver_view_toggle_tour",
+    "patient_schedule_tour",
+    "weekly_summary_tour",
+})
+
+# link_caregiver resolves to a different script per role, so it belongs to both.
+ELDER_ONLY_TASKS = frozenset(
+    set(TASK_NAMES) - CAREGIVER_ONLY_TASKS - {"link_caregiver"}
+)
+
+# The autonomous family: these are NOT one-time introductions, they are HOW the
+# write gets performed (Mei fills the real form and the patient taps Save). So
+# "already shown" must never apply to them — a patient adding their second
+# medicine has to get the same guided save as their first. Treating them as a
+# tutorial is what made "the walkthrough for adding medicine doesn't work any
+# more" true the moment a patient had added one medicine.
+AUTONOMOUS_TASKS = frozenset({
+    "add_prescription_auto",
+    "add_condition_auto",
+    "travel_mode_auto",
+    "edit_profile_auto",
+    "add_doctor_question_auto",
+    "accept_caregiver_link",
+})
+
+
+def tasks_for_role(role: str) -> list[str]:
+    """The walkthroughs that can actually run in this person's app shell."""
+    excluded = CAREGIVER_ONLY_TASKS if role != "caregiver" else ELDER_ONLY_TASKS
+    return [t for t in TASK_NAMES if t not in excluded]
+
+# The exact destination strings travel_mode_auto's <select> offers. Its options
+# carry no value attribute, so an option's value IS its label — anything else
+# doesn't "miss", it BLANKS the field, and the blank then persists as the saved
+# travel plan. Kept in sync with apps/web/src/app/lib/constants.ts::TIMEZONES.
+# The client resolves near-misses ("Asia/Tokyo", "Tokyo", "UTC+9") too; naming
+# the real options here is what stops the near-miss happening at all.
+TRAVEL_TIMEZONES = [
+    "Singapore (UTC+8)", "Malaysia (UTC+8)", "Thailand (UTC+7)",
+    "Indonesia — Jakarta (UTC+7)", "Japan (UTC+9)", "South Korea (UTC+9)",
+    "China (UTC+8)", "Hong Kong (UTC+8)", "Taiwan (UTC+8)", "Vietnam (UTC+7)",
+    "Philippines (UTC+8)", "Australia — Sydney (UTC+11)", "India (UTC+5:30)",
+    "United Kingdom (UTC+0)", "USA — New York (UTC-5)",
+    "USA — Los Angeles (UTC-8)", "UAE — Dubai (UTC+4)",
 ]
 
 _SCHEMA = {
@@ -76,10 +134,14 @@ _SCHEMA = {
                 "type": "object",
                 "description": (
                     "The real values to fill in for an autonomous walkthrough. "
-                    "add_prescription_auto: {name, dose, purpose, frequency?}. "
-                    "add_condition_auto: {condition}. travel_mode_auto: "
-                    "{start_date, end_date, timezone}. Omit for a spotlight-only "
-                    "walkthrough."
+                    "add_prescription_auto: {name, dose, purpose}. "
+                    "add_condition_auto: {condition}. "
+                    "edit_profile_auto: {value} (the new weight in kg). "
+                    "add_doctor_question_auto: {question}. "
+                    "travel_mode_auto: {start_date, end_date, timezone} — dates "
+                    "as YYYY-MM-DD, and timezone MUST be one of: "
+                    f"{'; '.join(TRAVEL_TIMEZONES)}. "
+                    "Omit params entirely for a spotlight-only walkthrough."
                 ),
                 "additionalProperties": {"type": "string"},
             },
@@ -94,10 +156,34 @@ async def start_walkthrough(
 ) -> str:
     if task_name not in TASK_NAMES:
         return f"No walkthrough script named '{task_name}'. Known: {', '.join(TASK_NAMES)}."
+    # Wrong-shell guard, at DISPATCH rather than in the schema enum. The enum is
+    # a module-level dict handed straight out of the registry (base.py::
+    # tool_schemas, shallow-copied in agent/loop.py), so making it per-turn would
+    # mean threading app_role through all three provider paths. Refusing here is
+    # one branch and, unlike a silent client-side decline, gives the model a
+    # RECOVERABLE result: it can answer the question directly in the same turn
+    # instead of promising a walkthrough that will never appear.
+    allowed = tasks_for_role(ctx.app_role)
+    if task_name not in allowed:
+        other = "caregiver" if ctx.app_role != "caregiver" else "patient"
+        return (
+            f"'{task_name}' only exists in the {other} app, and this person is not "
+            "using it — the walkthrough was NOT started. Do not tell them you're "
+            "about to show them anything. Answer their question directly instead, "
+            "using your other tools where they help."
+        )
     # Not a write — deliberately not appended to ctx.committed_actions (see base.py).
     # `params` carries only VALUES (never selectors/step content, which stay
     # client-side): the app injects them into the walkthrough's fill steps.
-    ctx.walkthrough = {"task_name": task_name, "params": params or {}}
+    #
+    # Coerce every value to a string. The schema says string, but models send
+    # `{"value": 64}` for a weight anyway — and the client's step builders are
+    # typed Record<string, string> and call `.trim()` on what arrives, so a bare
+    # number reaches the browser as a TypeError mid-walkthrough. Normalize here,
+    # at the one place params cross the boundary, rather than defensively in
+    # every builder. Booleans/None are stringified too; nothing is dropped.
+    clean = {k: ("" if v is None else str(v)) for k, v in (params or {}).items()}
+    ctx.walkthrough = {"task_name": task_name, "params": clean}
     return (
         f"Queued the '{task_name}' walkthrough. Tell the patient in one short, warm "
         "line that you'll do it now and show them, then stop — the app takes over "

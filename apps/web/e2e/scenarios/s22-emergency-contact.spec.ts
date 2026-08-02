@@ -1,9 +1,10 @@
 import { expect, test, type Page } from "@playwright/test";
 import { mkdirSync } from "node:fs";
 import {
-  anonClient, createThrowawayElder, readPhaseLog, recheckAccessibility,
-  resetPhaseLog, signIn, startWalkthrough,
+  anonClient, assertPhaseMins, createThrowawayElder, createCaregiverWithPendingLink, readPhaseLog,
+  recheckAccessibility, resetPhaseLog, signIn, startWalkthrough, advanceWalkthroughToStep,
 } from "../helpers";
+import { PACING } from "../../src/app/lib/walkthrough/pacing";
 
 // s22 emergency-contact (CONSENT) — a pure spotlight tour of the mock emergency
 // contact card (ElderlySettingsScreen.tsx). Same family as accept_caregiver_link
@@ -16,10 +17,13 @@ import {
 //
 // Manifest tools: [] and no verbatim trigger phrase is exercised here (unlike
 // e.g. s19's real reorder tail) — there is nothing for a chat turn to commit:
-// the contact is MOCK data (data/patients.ts's seeded `contacts` array; grepped
-// supabase/ — there is no contacts/emergency_contacts table) and the "Call" tap
-// only ever renders CallMockup.tsx, a local animated component with no
-// network/Supabase call. This mirrors accept-caregiver-link.spec.ts, which is
+// the "Call" tap only ever renders CallMockup.tsx, a local animated component
+// with no network/Supabase call. But the CONTACT ITSELF is now real
+// (2026-08-02): the emergency contact IS the linked caregiver, read from
+// care_links. It used to be data/patients.ts fixture data, which was always
+// present and therefore silently guaranteed this tour's final target existed —
+// so this spec now has to seed a real ACTIVE link, and ElderlyApp refuses the
+// tour outright without one. This mirrors accept-caregiver-link.spec.ts, which is
 // also chat-untriggerable and has no agentTurn8901 call. The ONE real backend
 // effect anywhere in this scenario is profiles.accessibility.completedWalkthroughs
 // (any walkthrough's own completion marker, ElderlyApp's handleWalkthroughAdvance)
@@ -31,16 +35,14 @@ const SHOTS = "e2e/design-shots/scenarios/s22"; // durable, NOT wiped
 const NAV_SETTINGS = '[data-tour="nav-settings"]';
 const SECTION = '[data-walk="elder-emergency-section"]';
 const CALL_BTN = '[data-walk="elder-emergency-call"]';
-const STEP1_TEXT = "Tap Settings.";                    // walk.emergencyContactTour.step1
-const STEP2_TEXT = "the person to reach first";         // walk.emergencyContactTour.step2 (substring — avoids the em dash)
 const STEP3_TEXT = "Tap the green button";              // walk.emergencyContactTour.step3
 
-// The consent-class invariant (identical to s10/s19): a waitFor step is NEVER
-// paced, so the callout shows Exit but MUST NOT render a Next button
-// (Walkthrough.tsx gates the whole Next/Replay block on `autonomous`, false for
-// every waitFor step — see emergency_contact_tour.ts's header comment: none of
-// this tour's 3 steps declare `act`). Assert the callout IS present (Exit
-// visible) so the absence of Next is meaningful, not just an unmounted overlay.
+// The consent-step invariant: the Call step is a waitFor (never `act`), so it is
+// NEVER paced and the callout shows Exit but MUST NOT render a Next button
+// (Walkthrough.tsx gates the whole Next/Replay block on `autonomous`). Steps 1-2
+// ARE autonomous now (2026-07-28) and DO show Next, but the consent Call step
+// must not — assert the callout IS present (Exit visible) so the absence of Next
+// is meaningful, not just an unmounted overlay.
 async function assertWaitForStep(page: Page, bodyText: string, label: string) {
   await expect(page.getByText(bodyText, { exact: false }), `${label}: callout body`).toBeVisible({ timeout: 15_000 });
   await expect(page.getByRole("button", { name: "Exit walkthrough" }), `${label}: Exit present`).toBeVisible();
@@ -53,47 +55,56 @@ test("s22 emergency-contact: user-driven spotlight tour -> elder's own tap (neve
   await page.setViewportSize({ width: 1280, height: 900 });
 
   // ── 1 FIXTURE ─────────────────────────────────────────────────────────────
-  // Throwaway elder only. The emergency contact card is mock UI data seeded by
-  // data/patients.ts (App.tsx's elder-data-load effect never touches `contacts`
-  // when merging the real profile in) — no medications/care_links needed.
+  // A throwaway elder WITH an active caregiver link: the emergency contact card
+  // renders only when one exists, and its Call button is this tour's final
+  // consent target. (createCaregiverWithPendingLink inserts as the caregiver,
+  // which is what RLS requires; the elder's own accept is what activates it, so
+  // flip the status here rather than simulating a tap we aren't testing.)
   const creds = await createThrowawayElder();
+  await createCaregiverWithPendingLink(creds.userId);
   const supa = anonClient();
   const { data: signInData, error: sErr } = await supa.auth.signInWithPassword({
     email: creds.email, password: creds.password,
   });
   expect(sErr, sErr?.message).toBeNull();
   void signInData;
-  console.log(`[SEED] elder=${creds.userId}`);
+  // Only the elder may activate their own link (0005_care_links_consent_
+  // hardening.sql), which is why this runs as the elder, after sign-in.
+  const { error: actErr } = await supa
+    .from("care_links").update({ status: "active" }).eq("elder_id", creds.userId);
+  expect(actErr, actErr?.message).toBeNull();
+  console.log(`[SEED] elder=${creds.userId} with an ACTIVE caregiver link`);
 
-  // ── 2 WALKTHROUGH UI (consent core) ───────────────────────────────────────
+  // ── 2 WALKTHROUGH UI (hybrid: autonomous nav → human-tapped consent) ───────
   await signIn(page, creds); // lands on Home (:5173)
   await resetPhaseLog(page); // clear BEFORE the phase under test — the whole tour
   await startWalkthrough(page, "emergency_contact_tour");
 
-  // Step 1: spotlight the always-mounted Settings nav; Next absent. The elder
-  // taps it themselves to travel there (no onEnter — Mei does not navigate for
-  // them either, matching "complete the navigation steps via real taps").
-  await expect(page.locator(NAV_SETTINGS), "step 1 nav target").toBeVisible({ timeout: 15_000 });
-  await assertWaitForStep(page, STEP1_TEXT, "step 1 go-to-settings");
+  // Steps 1-2 are now AI-AUTO-ADVANCED (2026-07-28): Mei taps Settings and
+  // spotlights the emergency-contact section herself — the person just watches.
+  // Mei performs steps 1-2 herself; each then holds until the person taps Next.
+  await expect(page.locator(NAV_SETTINGS), "step 1 nav target spotlit").toBeVisible({ timeout: 15_000 });
   await page.waitForTimeout(500); // let smooth scrollIntoView settle
   await page.screenshot({ path: `${SHOTS}/walkthrough-step1-tap-settings.png`, fullPage: true });
-  await page.locator(NAV_SETTINGS).click(); // real tap #1
 
-  // Step 2: spotlight the emergency-contact section; Next absent. Tap the
-  // section's own heading text (a non-button descendant) so the click bubbles
-  // up to satisfy this step's `acknowledge` listener without landing on the
-  // nested Call button underneath (mirrors s19's REFILL_ROW-vs-its-`p` split).
-  await expect(page.locator(SECTION), "step 2 emergency-contact section").toBeVisible({ timeout: 15_000 });
-  await assertWaitForStep(page, STEP2_TEXT, "step 2 section");
+  // Step 2 spotlights the emergency-contact SECTION. Its data-walk anchor was
+  // deleted by the settings-hub revamp and has now been restored on the
+  // SectionCard — with it missing, this step spotlighted nothing at all.
+  await advanceWalkthroughToStep(page, 2);
+  await expect(page.locator(SECTION), "reaches the emergency-contact section").toBeVisible({ timeout: 20_000 });
   await page.waitForTimeout(500); // let smooth scrollIntoView settle
   await page.screenshot({ path: `${SHOTS}/walkthrough-step2-contact-section.png`, fullPage: true });
-  await page.locator(`${SECTION} p`).first().click(); // real tap #2 — nowhere near the Call button
 
-  // Step 3: spotlight the REAL Call button itself (no indirection); Next
-  // absent. This is the scenario's core consent assertion — verify it BEFORE
-  // any tap, over several checks, so "no Next anywhere, especially here" is on
-  // record independent of what happens next.
-  await expect(page.locator(CALL_BTN), "step 3 call button").toBeVisible({ timeout: 15_000 });
+  // Step-NUMBER targeting, not "is the Call button visible?": the Call button
+  // lives INSIDE the section step 2 spotlights, so a visibility predicate is
+  // already true one step early and would advance nothing.
+  await advanceWalkthroughToStep(page, 3);
+
+  // Step 3 stays a CONSENT step — the elder's own tap, never Mei's: waitFor, so
+  // the callout shows Exit but NO Next (dialing a real person needs the patient's
+  // own tap). This is the scenario's core assertion — verify it BEFORE any tap,
+  // so "no Next on the Call step" is on record independent of what happens next.
+  await expect(page.locator(CALL_BTN), "step 3 call button spotlit").toBeVisible({ timeout: 15_000 });
   await assertWaitForStep(page, STEP3_TEXT, "step 3 call (consent)");
   await page.waitForTimeout(500); // let smooth scrollIntoView settle
   await page.screenshot({ path: `${SHOTS}/walkthrough-step3-call-consent-no-next.png`, fullPage: true });
@@ -146,17 +157,15 @@ test("s22 emergency-contact: user-driven spotlight tour -> elder's own tap (neve
   // supabase/ — none exists). The completedWalkthroughs write above is the tour's
   // own unrelated bookkeeping, not a call record.
 
-  // Phase-log shape for this fully user-driven tour: EVERY step here is waitFor
-  // (never `act`), so `autonomous` (Walkthrough.tsx) is false throughout and no
-  // PaceController is ever created — not even a "navigate" phase (that phase
-  // only ever fires from inside orchestrate.ts's runActStep, itself gated on
-  // `autonomous`). So the honest shape is exactly zero recorded phases, not
-  // merely "no field/click/act" — verified by reading both components, not
-  // assumed.
+  // Phase-log shape for the HYBRID tour: steps 1-2 are autonomous act:click, so
+  // paced `click` phases ARE recorded now (the old fully-user-driven zero no
+  // longer holds); the consent Call step (waitFor) adds none. Neither of steps
+  // 1-2 declares onEnter, so there is no navigate phase — click only.
   const walkLog = await readPhaseLog(page);
   const walkPhases = walkLog.filter(e => e.surface === "walkthrough");
   console.log(`[PHASELOG] walkthrough entries=${JSON.stringify(walkPhases.map(e => `${e.surface}/${e.phase}`))}`);
-  expect(walkPhases, "fully user-driven tour records ZERO walkthrough phases (no autonomous step ever ran)").toHaveLength(0);
+  expect(walkPhases.length, "autonomous steps 1-2 record paced click phases").toBeGreaterThan(0);
+  assertPhaseMins(walkLog, [{ surface: "walkthrough", phase: "click", min: PACING.PRE_CLICK_MS }]);
 
   // ── 4 SCREENSHOTS ──────────────────────────────────────────────────────────
   // Captured inline above at each meaningful moment (durable, e2e/design-shots/,

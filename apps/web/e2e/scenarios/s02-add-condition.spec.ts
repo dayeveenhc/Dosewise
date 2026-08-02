@@ -3,7 +3,7 @@ import { mkdirSync } from "node:fs";
 import {
   agentTurn8901, anonClient, assertPhaseMins, createThrowawayElder,
   readPhaseLog, recheckAccessibility, resetPhaseLog, saveTurnArtifact, signIn,
-  startWalkthrough, type TurnResult,
+  startWalkthrough, advanceWalkthroughUntil, advanceWalkthroughToStep, finishWalkthrough, type TurnResult,
 } from "../helpers";
 import { PACING } from "../../src/app/lib/walkthrough/pacing";
 
@@ -65,15 +65,11 @@ test("s02 add-condition: 'Please add high blood pressure to my conditions' -> ad
   await signIn(page, creds); // baseURL :5173
   await resetPhaseLog(page);
 
-  // Set the verify-callout waiter up front so we can never miss the transient
-  // "Checking…" window (VERIFY_MIN_MS floor, ~600ms) between save and reveal.
-  const checkingSeen = page
-    .getByText("Checking it really saved", { exact: false })
-    .waitFor({ state: "visible", timeout: 40_000 })
-    .then(() => true)
-    .catch(() => false);
-
   await startWalkthrough(page, "add_condition_auto", { condition: CONDITION });
+
+  // Steps 1-2 (open Your Profile, tap Edit) each hold at their commit gate until
+  // the person taps Next, so tap through to the conditions fill first.
+  await advanceWalkthroughToStep(page, 3);
 
   // SCREENSHOT (mid-type): catch a clearly-partial value in the conditions
   // TagList while Mei types (chars 4..12 of 19 — a wide window at FILL_MS_PER_CHAR).
@@ -87,9 +83,35 @@ test("s02 add-condition: 'Please add high blood pressure to my conditions' -> ad
   );
   await page.screenshot({ path: `${SHOTS}/1-mid-type.png`, fullPage: true });
 
+  // Step 4 is the "Add" tap that turns the typed text into a chip — commit
+  // step 3 first, or the chip the assertion below looks for never exists.
+  await advanceWalkthroughToStep(page, 4);
+
   // Act proof: the chip lands in the conditions TagList (the field the UI reads).
   const condField = page.locator('[data-walk="elder-conditions"]');
   await expect(condField.getByText(CONDITION, { exact: false })).toBeVisible({ timeout: 20_000 });
+
+  // Fills + chip done → the run PAUSES at the manual-Save confirm step (waitFor,
+  // no Next) — nothing commits on autopilot (2026-07-28 contract). The person
+  // taps Save THEMSELVES. Wait for the confirm callout (its click listener is now
+  // attached), then tap Save; the act-less verify/reveal tail then runs.
+  // Each autonomous step now holds at its commit gate until the person taps
+  // Next, so tap through the fills to reach the manual-Save confirm step.
+  await advanceWalkthroughUntil(page, () => page.getByText("tap Save yourself", { exact: false }).isVisible());
+  await expect(page.getByText("tap Save yourself", { exact: false }), "manual-Save confirm step reached").toBeVisible({ timeout: 20_000 });
+
+  // Arm the verify-callout waiter immediately BEFORE the save, so it can't miss
+  // the transient "Checking…" window (VERIFY_MIN_MS floor, ~600ms) between save
+  // and reveal. Armed here rather than before the walkthrough starts: with every
+  // step now waiting for the person's Next, "time from start to verify" is
+  // unbounded and a fixed budget from the start would just be a flake.
+  const checkingSeen = page
+    .getByText("Checking it really saved", { exact: false })
+    .waitFor({ state: "visible", timeout: 40_000 })
+    .then(() => true)
+    .catch(() => false);
+
+  await page.locator('[data-walk="elder-profile-save"]').click();
 
   // Reveal: wait for the changed-fields caption pill, let the smooth scroll
   // settle, then capture the pulse.

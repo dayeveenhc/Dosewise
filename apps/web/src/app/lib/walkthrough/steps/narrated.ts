@@ -6,7 +6,7 @@ import type { WalkthroughStep } from "../types";
 // carries an `act` or a `verify`; there is nothing to save and therefore nothing
 // that could be falsely claimed as saved.
 //
-// They live in one file rather than nine because each is only two or three
+// They live in one file rather than five because each is only two or three
 // steps and they share the same shape; splitting them would be ceremony.
 
 const ON_HOME: WalkthroughStep["screen"] = { mode: "elderly", tab: "home" };
@@ -79,28 +79,6 @@ export const undoDoseSteps: WalkthroughStep[] = [
   },
 ];
 
-// Settings has no sub-screens any more — every control is on the one page — so
-// these no longer open a section first; the spotlight scrolls straight to the
-// control (Walkthrough.tsx scrollIntoViews its target).
-export const languageVoiceSteps: WalkthroughStep[] = [
-  navStep("langVoice.open", "settings", "walk.langVoice.openSettings"),
-  {
-    id: "langVoice.pickLanguage",
-    screen: ON_SETTINGS,
-    onEnter: ON_SETTINGS,
-    selector: '[data-walk="elder-language-select"]',
-    instructionKey: "walk.langVoice.pickLanguage",
-    waitFor: { type: "acknowledge", source: "dom" },
-  },
-  {
-    id: "langVoice.readAloud",
-    screen: ON_SETTINGS,
-    selector: '[data-walk="elder-readaloud-toggle"]',
-    instructionKey: "walk.langVoice.readAloud",
-    waitFor: { type: "acknowledge", source: "dom" },
-  },
-];
-
 export const reminderSettingsSteps: WalkthroughStep[] = [
   navStep("reminders.open", "settings", "walk.reminders.openSettings"),
   {
@@ -113,30 +91,18 @@ export const reminderSettingsSteps: WalkthroughStep[] = [
   },
 ];
 
-export const emergencyContactSteps: WalkthroughStep[] = [
-  navStep("emergency.open", "settings", "walk.emergency.openSettings"),
-  {
-    // Ends on "here is the button", not on pressing it: this walkthrough is
-    // about being able to FIND the contact in a hurry, and placing a call is
-    // not something to trigger as a side effect of a lesson.
-    id: "emergency.callButton",
-    screen: ON_SETTINGS,
-    onEnter: ON_SETTINGS,
-    selector: '[data-walk="elder-emergency-call"]',
-    instructionKey: "walk.emergency.callButton",
-    waitFor: { type: "acknowledge", source: "dom" },
-  },
-];
-
 export const textSizeSteps: WalkthroughStep[] = [
   navStep("textSize.open", "settings", "walk.textSize.openSettings"),
   {
     id: "textSize.slider",
     screen: ON_SETTINGS,
     onEnter: ON_SETTINGS,
+    // Spotlight the whole labelled block, but WAIT on the range input itself —
+    // this used to wait on the wrapping div, whose `.value` is undefined, so
+    // the "did they move it?" check could never pass and the tour hung here.
     selector: '[data-tour="elder-fontsize"]',
     instructionKey: "walk.textSize.slider",
-    waitFor: { type: "input", source: "dom", on: "change" },
+    waitFor: { type: "input", source: "dom", selector: '[data-walk="elder-fontsize-slider"]', on: "change" },
   },
   {
     id: "textSize.contrast",

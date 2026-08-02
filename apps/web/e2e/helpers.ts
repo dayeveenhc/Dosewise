@@ -241,3 +241,159 @@ export function assertPhaseMins(
   }
   if (failures.length > 0) throw new Error(`assertPhaseMins failed:\n  - ${failures.join("\n  - ")}`);
 }
+
+// ── Walkthrough advance helpers ───────────────────────────────────────────
+// Autonomous steps no longer advance by themselves: each finishes its phases
+// and then HOLDS at a terminal commit gate with Next (or Done, on the last
+// step) enabled, until the person taps. These stand in for those taps.
+const NEXT_RE = /^(Next|Done)$/;
+
+// The callout's "Step X of Y" counter, or null when no overlay is up.
+export async function walkthroughStep(page: Page): Promise<{ current: number; total: number } | null> {
+  return page.evaluate(() => {
+    const el = [...document.querySelectorAll("p")].find(p => /^Step \d+ of \d+$/.test(p.textContent?.trim() ?? ""));
+    const m = el?.textContent?.trim().match(/^Step (\d+) of (\d+)$/);
+    return m ? { current: Number(m[1]), total: Number(m[2]) } : null;
+  });
+}
+
+// ONE commit tap.
+//
+// Next means two different things depending on when it lands, and Playwright's
+// click actionability can't tell them apart (the button is enabled for both):
+// DURING a phase, after that phase's minimum, it only fast-forwards the
+// remaining dwell; at the terminal commit GATE it advances the step. So wait
+// for the gate's own copy (walk.ready) before tapping, otherwise the tap is
+// spent shortening a dwell and the step never moves.
+//
+// Then wait for the STEP COUNTER to change — NOT for the button to go disabled:
+// the Next button is the same DOM node across steps, so a fast loop would
+// otherwise tap one step twice. A vanished counter means the last step
+// committed and the overlay unmounted, which also counts as progress.
+const READY_COPY = "tap Next when you're ready";
+
+export async function tapWalkthroughNext(page: Page, timeout = 30_000): Promise<void> {
+  const before = await walkthroughStep(page);
+  await page.getByText(READY_COPY, { exact: false })
+    .waitFor({ state: "visible", timeout })
+    .catch(() => { /* fall through: assert on the counter below, not on copy */ });
+  await page.getByRole("button", { name: NEXT_RE }).click({ timeout });
+  await page.waitForFunction(
+    (prev: number | null) => {
+      const el = [...document.querySelectorAll("p")].find(p => /^Step \d+ of \d+$/.test(p.textContent?.trim() ?? ""));
+      if (!el) return true; // overlay gone — the walkthrough finished
+      const m = el.textContent!.trim().match(/^Step (\d+) of (\d+)$/)!;
+      return Number(m[1]) !== prev;
+    },
+    before?.current ?? null,
+    { timeout },
+  );
+}
+
+// Tap Next until `done()` reports true. Bounded so a genuinely stuck
+// walkthrough fails loudly with its position rather than spinning.
+export async function advanceWalkthroughUntil(
+  page: Page,
+  done: () => Promise<boolean>,
+  max = 12,
+): Promise<void> {
+  for (let i = 0; i < max; i++) {
+    if (await done()) return;
+    if (!(await walkthroughStep(page))) break; // overlay gone; let done() decide
+    await tapWalkthroughNext(page);
+  }
+  if (await done()) return;
+  throw new Error(`advanceWalkthroughUntil: condition never met after ${max} taps (at ${JSON.stringify(await walkthroughStep(page))})`);
+}
+
+// Advance until the callout reports it is ON step `n` (1-based).
+//
+// Prefer this over a DOM predicate when the element you're waiting for is
+// already on screen at an EARLIER step: a tour's later targets are usually
+// siblings of its earlier ones (the emergency Call button sits inside the
+// emergency section the previous step spotlights), so "is it visible?" is
+// satisfied before the tour has actually got there and nothing advances.
+export async function advanceWalkthroughToStep(page: Page, n: number, max = 12): Promise<void> {
+  await advanceWalkthroughUntil(page, async () => ((await walkthroughStep(page))?.current ?? 0) >= n, max);
+}
+
+// Tap Next until the overlay unmounts — covers a wholly autonomous tour.
+//
+// A vanished overlay only counts as COMPLETION if we actually reached the final
+// step. Returning success on any disappearance would let a tour that dies at
+// step 2 pass both this AND the usual "Exit is gone" assertion that follows it
+// — the exact stalled-tour shape this whole pass exists to catch.
+export async function finishWalkthrough(page: Page, max = 12): Promise<void> {
+  let last = await walkthroughStep(page);
+  if (!last) throw new Error("finishWalkthrough: no walkthrough overlay is up");
+  for (let i = 0; i < max; i++) {
+    const cur = await walkthroughStep(page);
+    if (!cur) {
+      if (last.current < last.total) {
+        throw new Error(
+          `finishWalkthrough: overlay disappeared at step ${last.current}/${last.total} — the walkthrough did not complete`,
+        );
+      }
+      return;
+    }
+    last = cur;
+    await tapWalkthroughNext(page);
+  }
+  const stuck = await walkthroughStep(page);
+  if (stuck) throw new Error(`finishWalkthrough: still running after ${max} taps (at ${JSON.stringify(stuck)})`);
+}
+
+// ───────────────── Real-chat walkthrough entry (production path) ─────────────
+//
+// Every walkthrough spec starts its run through `startWalkthrough` — the DEV
+// `window.__dwStartWalkthrough` hook, called right after signIn while the app is
+// still on the HOME tab. That is not how a walkthrough ever begins in
+// production: there, Mei queues it from a reply while the person is sitting on
+// the Ask Mei tab with the conversation on screen. The two differ in exactly the
+// way that breaks tours — a screen already mounted in some other internal state
+// never re-mounts, so the tour's first target may not exist at all.
+//
+// This drives the real path: type into the real composer, send, and wait for the
+// overlay. Use it for at least one task per family; the dev hook stays fine for
+// the rest (it is faster and does not depend on LLM routing).
+export async function startWalkthroughFromChat(
+  page: Page,
+  message: string,
+  opts: { timeout?: number } = {},
+): Promise<boolean> {
+  const timeout = opts.timeout ?? 60_000;
+  await page.locator('[data-tour="nav-ai"]').click();
+  const composer = page.locator('[data-walk="elder-ai-composer"]');
+  await composer.waitFor({ state: "visible", timeout: 15_000 });
+  await composer.fill(message);
+  await page.locator('[data-walk="elder-ai-send-button"]').click();
+  try {
+    await page.waitForFunction(
+      () => [...document.querySelectorAll("p")].some(p => /^Step \d+ of \d+$/.test(p.textContent?.trim() ?? "")),
+      null,
+      { timeout },
+    );
+    return true;
+  } catch {
+    return false; // the model didn't route to a walkthrough this attempt
+  }
+}
+
+// Put the app in the state a real chat-launched walkthrough starts from: the AI
+// tab, in CHAT mode (not the help tiles). Deterministic — no LLM involved — so a
+// spec can assert "a tour started from here still finds its first target"
+// without depending on routing. This is the condition that killed the two travel
+// walkthroughs: their first step points at a help-tile that chat mode unmounts.
+export async function parkOnChat(page: Page, text = "hello"): Promise<void> {
+  await page.locator('[data-tour="nav-ai"]').click();
+  const composer = page.locator('[data-walk="elder-ai-composer"]');
+  await composer.waitFor({ state: "visible", timeout: 15_000 });
+  await composer.fill(text);
+  // The stable anchor, not an accessible-name regex: Send's aria-label is the
+  // localized `notifications.send`, so /send/i only ever matches in English —
+  // and a helper that silently fails to send makes its caller pass vacuously.
+  await page.locator('[data-walk="elder-ai-send-button"]').click();
+  // Chat mode is entered synchronously on send — wait for the person's own
+  // bubble rather than for Mei's reply, so this never depends on the network.
+  await page.getByText(text, { exact: true }).first().waitFor({ timeout: 15_000 });
+}

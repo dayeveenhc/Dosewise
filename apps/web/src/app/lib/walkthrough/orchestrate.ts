@@ -1,7 +1,13 @@
-// Five-phase orchestration for one autonomous step: (Navigate) → Act →
-// (Verify) → (Reveal) → advance. Extracted from the overlay so the sequencing —
-// especially "a failed Verify STOPS and never advances, so success is never
-// implied" — is unit testable without a DOM or React tree (orchestrate.test.ts).
+// Orchestration for one autonomous step: (Navigate) → Act → (Verify) →
+// (Reveal) → ready → advance. Extracted from the overlay so the sequencing —
+// especially "a failed Act or Verify STOPS and never advances, so success is
+// never implied" — is unit testable without a DOM or React tree
+// (orchestrate.test.ts).
+//
+// `ready` is the terminal commit gate: every phase's work is done, and the step
+// then waits indefinitely for the person's Next tap. Autonomous steps do NOT
+// auto-advance on the PACING minimums any more — those minimums are now only
+// floors on how fast each phase may LOOK, not a self-driving clock.
 //
 // Verify is done by the HOST (onVerify) via a real client re-query of Supabase
 // (lib/walkthrough/verify.ts's buildVerifyRunner with the host's fetchers
@@ -17,6 +23,7 @@
 import { performAct } from "./actor";
 import { PACING } from "./pacing";
 import { humanizeField, hhmmTo12h } from "../changeHighlight";
+import type { ActOutcome } from "./actor";
 import type { PaceController } from "./pace";
 import type { RevealDirective, VerifyDirective, WalkthroughScreen, WalkthroughStep } from "./types";
 
@@ -51,7 +58,7 @@ export interface PhaseHandlers {
   shouldCancel: () => boolean;
 }
 
-export type ActStepOutcome = "advanced" | "verify-failed" | "cancelled";
+export type ActStepOutcome = "advanced" | "verify-failed" | "act-failed" | "cancelled";
 
 export async function runActStep(step: WalkthroughStep, h: PhaseHandlers): Promise<ActStepOutcome> {
   // The overlay already asked the host to switch screens for a step with
@@ -68,26 +75,35 @@ export async function runActStep(step: WalkthroughStep, h: PhaseHandlers): Promi
   if (step.act) {
     const act = step.act;
     const ctx = { shouldCancel: h.shouldCancel, shouldFastForward: () => h.pace.shouldFastForward() };
+    const run = () => performAct(act, ctx);
+    let outcome: ActOutcome | undefined;
     if (act.kind === "fill") {
       // Pre-highlight + visible typing, floored at FIELD_MIN_MS total so even a
       // one-character fill registers as its own moment.
-      await h.pace.paced("field", PACING.FIELD_MIN_MS, () => performAct(act, ctx));
+      outcome = await h.pace.paced("field", PACING.FIELD_MIN_MS, run);
     } else if (act.kind === "click") {
       // The PRE_CLICK highlight window runs inside the actor; the paced minimum
       // matches it so the phase can never end before the highlight had its beat.
-      await h.pace.paced("click", PACING.PRE_CLICK_MS, () => performAct(act, ctx));
+      outcome = await h.pace.paced("click", PACING.PRE_CLICK_MS, run);
     } else {
-      // select/upload are single visible state flips — no wait of their own,
-      // but still a paced phase so the log + phase telemetry stay complete.
-      await h.pace.paced("act", 0, () => performAct(act, ctx));
+      // select/upload are single visible state flips. Same floor as a fill and
+      // the same pre-highlight (actor.ts), because they ARE fills as far as the
+      // person is concerned — the timezone select used to flip 4x faster than
+      // the date fields either side of it, which read as a glitch.
+      outcome = await h.pace.paced("field", PACING.FIELD_MIN_MS, run);
     }
     if (h.shouldCancel()) return "cancelled";
-    // A fill with no verify/reveal means another field very likely follows —
-    // hold a beat so consecutive fills read as separate actions.
-    if (act.kind === "fill" && !step.verify && !step.reveal) {
-      await h.pace.paced("between-fields", PACING.BETWEEN_FIELDS_MS);
-      if (h.shouldCancel()) return "cancelled";
-    }
+    // An act that could not be performed AT ALL — target absent, wrong element
+    // type, or a select value matching no option — STOPS the run. Advancing
+    // would silently skip the very action the step exists to perform, which is
+    // how a tour used to "guide halfway and then do something wrong". Note this
+    // is about whether the act could run, never about whether the click had a
+    // visible effect: deliberate clicks on handler-less containers report "done".
+    if (outcome && outcome !== "done" && outcome !== "cancelled") return "act-failed";
+    // (There used to be a 1s "between-fields" pause here so consecutive fills
+    // read as separate actions. That made sense when steps auto-advanced; now
+    // every step ends at the commit gate below, so it only delayed the moment
+    // Next became tappable — a second of nothing happening, on every field.)
   }
 
   // Verify: re-query real state, showing "checking…" for at least VERIFY_MIN_MS
@@ -108,8 +124,8 @@ export async function runActStep(step: WalkthroughStep, h: PhaseHandlers): Promi
   // caption derived from the step's Verify (real values) unless the step set one.
   // The paced floor is one full pulse animation (REVEAL_PULSE_MS — Next may
   // shorten the dwell but never cut the pulse); left alone, the dwell holds for
-  // HIGHLIGHT_DWELL_MIN_MS before auto-advancing. Replay re-fires the host
-  // reveal and restarts the dwell.
+  // HIGHLIGHT_DWELL_MIN_MS before the commit gate below opens. Replay re-fires
+  // the host reveal and restarts the dwell.
   if (step.reveal) {
     const reveal = { ...step.reveal, caption: step.reveal.caption ?? captionFromVerify(step.verify) };
     do {
@@ -119,6 +135,17 @@ export async function runActStep(step: WalkthroughStep, h: PhaseHandlers): Promi
       if (h.shouldCancel()) return "cancelled";
     } while (h.pace.consumeReplay());
   }
+
+  // Terminal commit gate: the step's work is finished, but the walkthrough does
+  // NOT move on by itself — the person taps Next (or Done, on the last step)
+  // when they are ready. This is now the ONLY way an autonomous step advances,
+  // so nothing is ever rushed past someone still reading it. Deliberately placed
+  // AFTER the replay loop, so a Replay request is consumed by the reveal rather
+  // than swallowed by the gate.
+  await h.pace.awaitNext("ready");
+  // cancel() wakes the gate's waiter, so Exit mid-gate must not fall through
+  // into onAdvance() — that would advance a walkthrough the user just left.
+  if (h.shouldCancel()) return "cancelled";
 
   h.onAdvance();
   return "advanced";

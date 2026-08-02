@@ -26,6 +26,13 @@ class ToolContext:
     # Optional Telegram client, so message_caregiver can DM a linked caregiver
     # when that caregiver is also chatting with the bot.
     telegram: Any = None
+    # Which app shell is asking ("elder" | "caregiver"). The two render entirely
+    # different screens, so start_walkthrough uses it to refuse a walkthrough
+    # that could only ever spotlight elements the caller doesn't have. Client-
+    # supplied and therefore untrusted — deliberately used ONLY for that UI
+    # affordance, never for authorization (RLS is what decides who may read or
+    # write what). Defaults to the elder app, which is every non-web channel.
+    app_role: str = "elder"
     # Writes committed during THIS turn. A write tool appends an entry only on its
     # actual commit (never on a propose), so a channel can reliably tell that
     # something was saved (vs merely proposed) and act on it — e.g. the web app
@@ -45,6 +52,12 @@ class ToolContext:
     # only a client-side UI script was requested. A single value (not a list):
     # only one walkthrough can be queued per turn.
     walkthrough: dict | None = None
+    # Set by offer_choices when the agent wants the web client to render tappable
+    # option buttons under its reply (a yes/no confirm, or a guided clarifying
+    # question). Each entry is {"label": str, "value": str}: label is the button
+    # text, value is the message sent when tapped. Not a write — like walkthrough,
+    # a client-side UI hint. Last call this turn wins.
+    choices: list[dict] | None = None
 
     def db(self):
         """RLS-scoped PostgREST client acting as this elder."""
