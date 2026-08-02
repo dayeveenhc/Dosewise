@@ -366,6 +366,494 @@ repo's path (spaces get percent-encoded by `import.meta.url`) — run an inline
 equivalent instead. i18n: screen copy added to all 6 languages; `walk.*` copy is
 `en`-only per the standing convention.
 
+## 2026-07-28 — TTS: calmer rate, markdown/unit cleanup, quality voice ranking, Chromium keepalive fix
+
+`lib/speech.ts` — four additive changes to `speak()`/`pickVoice`, found
+sitting uncommitted from a prior session and landed as-is (already complete
+and tested, just not committed/documented):
+
+1. **Rate 0.9** instead of the spec 1.0 default — reads calmer for the
+   elderly audience. Pitch deliberately left untouched (comment in code:
+   pitch-shifting is a naive DSP op on most engines, less predictable than
+   rate across voices).
+2. **`cleanTextForSpeech`** strips markdown `**bold**` before speaking
+   (mirrors the chat bubble's `renderWithBold()`) and, for English-only
+   replies, expands `mg`→milligrams, `mL`→milliliters, `Dr.`→Doctor — gated
+   on `lang.startsWith("en")` so it can't inject English words into a
+   zh/yue/ta/ms/hokkien utterance.
+3. **Quality-aware voice ranking** (`HIGH_QUALITY_VOICE_TOKENS`,
+   `voiceQualityTier`): prefers "Enhanced"/"Premium"/"Natural"/"Neural"
+   voices, deprioritizes known-robotic "compact" voices — layered strictly
+   under the existing female-voice preference (quality is never allowed to
+   flip the persona's gender).
+4. **Chromium 15s TTS keepalive** (`startKeepAlive`/`stopKeepAlive`):
+   crbug.com/335907 — Chromium silently stops long utterances mid-sentence
+   with no error/end event past ~15s. Periodic `pause()`+`resume()` nudge
+   every 12s while speaking, cleared on `onend`/`onerror`.
+
+Verified via `speech.test.ts` (20/20, incl. new keepalive-timer and
+voice-ranking cases using `vi.advanceTimersByTime` — deliberately not
+`runAllTimers`, which would spin forever against a repeating interval that's
+only cleared on `onend`), full web suite (112/112), `tsc --noEmit` clean,
+`npm run build` clean. Not live-driven through a browser TTS engine this
+pass — same caveat as prior TTS entries.
+
+## 2026-07-28 — Time-scoped bulk dose resolution + dosage-jump safety warning
+
+Two user-directed fixes, both scoped entirely to `services/hermes/` (no
+schema, no required frontend changes). User picked the confirm-step/warning
+design via explicit questions before any code — decisions below are locked
+in, not assumptions.
+
+**Bug: "label all the meds i took at 8 am as taken" did nothing.**
+Root-caused via a live repro on an **isolated local Supabase** (`npx
+supabase@latest start` + `db reset` + the standard baseline-GRANT workaround
+— chosen over the live hosted project after the auto-mode permission
+classifier correctly flagged that writing throwaway data to hosted infra
+needed explicit sign-off, even though earlier sessions had done exactly that;
+local was the safer, user-picked path this time). Pre-fix, 3 real turns with
+2 meds at 8am + 1 distractor at 6am showed the actual failure chain: turn 1
+hit `log_dose`'s no-name ambiguous path (asks "which one(s)?", writes
+nothing); turn 2 (repeating the ask) reached `resolve_missed_doses` but with
+**no time field to put "8am" into** — it proposed all 3 doses regardless of
+time; turn 3 (repeating again, not even literally "yes") committed, wrongly
+marking the 6am dose taken too — independently confirmed via direct DB
+re-read. `resolve_missed_doses`'s entire input schema was `{confirmed:
+boolean}`; `log_dose`'s `slot` is a nearest-neighbor tiebreaker *within one
+medication's own times*, not a cross-medication filter.
+
+**Fix** (`tools/doses.py`): new optional `slot` param on `resolve_missed_doses`
+— `_parse_slot_filter` returns `("exact", HH:MM)` for a literal time or
+`("window", anchor)` for a day-part word; `_slot_filter_matches` checks exact
+equality or a **±60min bounded window** (`_DAY_PART_WINDOW_MINUTES`) around
+the anchor — deliberately NOT `log_dose`'s unbounded nearest-neighbor (which
+would wrongly match a noon-only med to an "8am" query). Applied as a
+**post-pass** in `_missed_doses_today` after the existing earliest-first
+taken-attribution, so filtering never disturbs which slots count as missed at
+all. Unparseable `slot` **fails closed** (refuses, asks again) rather than
+silently falling back to unfiltered — the opposite direction from
+`_dosage_warning` below, because here a silent fallback would mean
+over-resolving (the dangerous direction), not just missing a caveat. New
+soul.md paragraph in "Missed doses" teaches passing `slot` when the ask names
+a time; kept channel-neutral (Telegram shares soul.md too). Confirm branch
+needed **zero changes** — it already re-intersects a fresh unfiltered
+recompute against the (already-filtered) stashed propose set.
+**Live-verified 5/5 post-fix** (fresh throwaway elder per trial): every trial
+correctly scoped the read-back to only the 8am doses and never touched the
+6am one. New tests: `test_resolve_missed_doses.py` (7 added) +
+`test_resolve_missed_doses_time_qualified.py` (new, agent-loop-level,
+scripted).
+
+**User-decided (not assumed): kept the one-confirm-step requirement** for
+bulk resolution — matches today's "I took all" flow and this project's
+already-documented stance that requiring one confirming reply before a bulk
+dose write is "an intentional safety property, not a residual bug." The
+literal "auto-tick" the user asked for was NOT built; they chose "keep one
+confirm step" when given the tradeoff explicitly.
+
+**Feature: dosage-jump safety warning.** Zero existing check on dosage
+*magnitude* anywhere — `_interaction_warning` is drug-drug only and dose-blind
+by signature; `update_medication_dosage` had no check of any kind.
+`medications.dosage` is free text (no numeric column), so per the
+grounded-facts rail this had to be arithmetic, not LLM judgment. User-decided
+scope: relative-jump only (no OpenFDA-text grounding), non-blocking FYI
+(mirrors `_interaction_warning`'s exact tone/never-blocks pattern), applied to
+both `update_medication_dosage` AND `add_prescription` (for the disguised-
+duplicate case — a same-name med already on file at a different dose).
+New `base.py::parse_dosage` (regex value+unit extraction, fails open on
+"2 tablets"/"as needed"/unparseable); `medications.py::_dosage_warning`
+(fires at `ratio >= 2.0`, normalizes mg/mcg/g, fails open on incomparable
+units like ml/iu) + `_existing_medication` (reuses `find_medications`'s
+existing matching tiers, not a raw query, so a name arriving with its own
+dosage suffix still resolves). Wired into both propose branches; no soul.md
+wiring *required* (the warning rides the same returned string Mei already
+relays verbatim, same as `_interaction_warning` today) but added one optional
+documentation sentence anyway. **Live-verified**: `update_medication_dosage`
+3/3 real turns showed the ⚠ in the actual reply; `add_prescription` 2/3 (the
+miss was Mei skipping straight to `start_walkthrough` without ever calling
+`add_prescription(confirmed=false)` — a **pre-existing** soul.md-adherence
+gap dating to 2026-07-23 that equally starves the existing interaction
+warning, not a regression from this change). 14 new tests in
+`test_dosage_warning.py`; the pre-existing
+`test_propose_time_warning_matches_brand_via_generic` regression-checked
+unmodified.
+
+**Gotcha rediscovered the hard way — prod `hermes` (:8000) reloads on every
+saved edit to `services/hermes/src`, live, no deploy step.** `HERMES_RELOAD=1`
+in `ecosystem.config.js` is intentional (its own comment: "edit directly on
+the VPS... no git push, no PM2 restart, no second process needed") — this
+box IS the VPS. Every edit this session was live in the production Telegram
+bot within seconds. Separately, **`pkill -f "hermes-serve"` is unsafe** — it
+matches prod `hermes`/`hermes-demo` too, not just a locally-started instance;
+kill by exact PID only, always (this repeats the port-8000 warning already in
+root CLAUDE.md, but the pattern-match failure mode hadn't been logged before).
+Both auto-recovered clean (`pm2 autorestart`), confirmed via `scripts/post.sh
+--quick` (read-only — the full POST's own service restart needs separate
+authorization when uncommitted changes are in the tree, since it would be
+deploying them).
+
+**Also fixed in passing:** MEMORY.md had a genuine ~160-line accidental
+duplicate (three 2026-07-19 entries re-pasted verbatim between the two
+2026-07-12 entries, chronologically nonsensical — a tell it was a paste
+accident, not intentional). Removed; the stale "`t`-shadow open bug" entry
+folded into a one-line "fixed, confirmed" note.
+
+Gate: hermes pytest **321** (+14 from 307), ruff clean. Uncommitted on
+`fix/ci-lint-node`.
+
+## 2026-07-27 (later) — "I took all" after a schedule listing didn't log doses — root-caused, fixed, verified 12/12 live
+
+Real user report: Mei showed today's schedule (6 due-now meds + duplicate
+already-taken "Tacrolimus" rows), the user replied **"i took all"**, and
+nothing got logged. Root-caused live (soul.md-only fix, no tool/code changes)
+— see `services/hermes/src/hermes/agent/soul.md`'s "Schedule"/"Missed doses"
+sections and `tests/test_missed_doses_after_schedule.py`.
+
+**Root cause, refined by live evidence (the ORIGINAL hypothesis — a silent
+`confirmed=true`-with-no-propose refusal — did NOT reproduce in 5/5 trials):**
+`show_schedule` never touches `ctx.session` (by design — it's read-only), so
+Mei's own schedule listing stashes no `pending_missed_doses`. soul.md's
+"Missed doses" rail was keyed only on an *imperative* ask ("tick all my missed
+doses"), never on a *declarative* broad confirm replying to Mei's own prior
+listing. Live trials showed the propose→confirm plumbing was **already
+correct** — turn 2 always routes to a bulk tool with `confirmed=false` and
+computes the right set — the actual gap was that Mei's follow-up
+("Would you like me to mark these as taken?") re-asks almost the same thing
+the user just said, a dead end many users won't answer a second time.
+
+**Fix:** two additive soul.md paragraphs (extends "Missed doses" + one
+cross-ref sentence on "Schedule"): (1) a broad post-listing confirm is a fresh
+`resolve_missed_doses(confirmed=false)` trigger, never a bare `confirmed=true`
+— defensive, guards the theoretical silent-refusal path even though it didn't
+reproduce; (2) reuses the already-established "Guided walkthroughs" **"yes IS
+the confirm"** exception: when Mei JUST showed the specific list this same
+exchange and the reply is an unhedged blanket yes, she *may* call
+`confirmed=true` in the same turn instead of asking again. **Honest result
+after two wording iterations** (the second more blunt/imperative, mirroring
+the `log_dose` fix's style): the same-turn collapse is attempted sometimes
+(one trial called the tool twice in one turn) but is **not reliable** —
+same "LLM instruction-following is probabilistic" ceiling documented
+elsewhere in this project. Did not chase a third iteration — diminishing
+returns, and it's not what matters most.
+
+**What actually matters is fixed and verified 12/12 across two trial
+batches + one full 8-medication end-to-end run matching the exact reported
+shape (6 unmet + 2 duplicate already-taken "Tacrolimus" rows, reproduced via
+two distinct `medications` rows):** "I took all" now **always** correctly
+proposes via `resolve_missed_doses` (consistently — no longer sometimes
+`log_doses`), and **always** correctly commits when the user answers "yes"
+once more, with an independent re-read confirming exactly the right doses
+land and already-taken ones are never touched/double-logged. Before this fix,
+nothing ever got logged, ever, for this conversational shape — that's closed.
+Users should still expect one short confirmation reply after "I took all";
+this is an intentional safety property (never write without some real
+confirming moment in the exchange), not a residual bug.
+
+**Duplicate-Tacrolimus (secondary, from the original report):** code
+investigation found no dedup anywhere in `show_schedule`/`resolve_missed_doses`'s
+read path, and nothing prevents either (a) two distinct `medications` rows
+with the same name (no DB unique constraint), or (b) one row whose
+`schedule.times` itself contains a literal duplicate entry. Both are equally
+plausible from code alone; **deliberately not fixed** — deciding which
+applies to the real reporting user's actual data (and whether it's even a bug
+vs. legitimate dual-prescription data) needs their actual account, which
+isn't reachable from this conversation. The `resolve_missed_doses` fix is
+verified robust either way (proven against the two-distinct-rows shape:
+doesn't double-log, doesn't choke).
+
+**Verification discipline:** reused this session's own established live
+pattern (throwaway elder via plain Supabase signup, real `:8901` turns, raw
+JSON captured, independent Supabase re-reads never trusting the reply) rather
+than inventing new scaffolding. New test file
+`test_missed_doses_after_schedule.py` is the first **agent-loop-level**
+(multi-turn, `run_agent_turn(..., history=...)` chained) test in the suite —
+prior propose→confirm tests were all tool-level only. Gate: 299 pytest (+2),
+ruff clean.
+
+## 2026-07-27 — 32-scenario restructure: named-dose root-caused & fixed (2 code paths), one pacing contract, full live verification
+
+The big one. User-directed 4-phase orchestrated pass: root-cause the specific
+"marking my metformin taken doesn't work" complaint → build one shared
+pacing/verification structure → build+verify all 32 requested scenarios as
+independent `e2e/scenarios/sNN-*.spec.ts` modules → independent spot-check of
+5 by fresh agents re-deriving evidence from scratch. ~40 subagents total.
+Deliberately did NOT hand the executing agents a file layout — the structure
+below is what emerged from reading the actual codebase state.
+
+**Root cause (Phase 1, live-proven on :8901 with raw request/response capture
+before any fix):** `log_dose` took only `medication_name`, no slot param, and
+picked the **latest** pending dose (`scheduled_at.desc limit 1`) — at 2pm,
+"I just took my metformin" ticked the 8 PM dose while the overdue 8 AM one sat
+untouched, and "my **morning** metformin" did the same since there was no way
+to say which slot. 2/2 live ambiguous-case runs hit the wrong slot pre-fix; no
+disambiguation existed anywhere. Fixed: one selection engine
+(`doses.py::_dose_plan`), earliest-first everywhere (now consistent with
+`resolve_missed_doses`); exactly one plausible dose → logs silently; ≥2
+pending + no slot → returns the options and **writes nothing** (stateless ask,
+so a plain-text follow-up with the answer works on Telegram too); `slot`
+accepts `HH:MM` or a day-part word; already-taken guard stops double-logging.
+soul.md needed one iteration — first draft had Mei ask her OWN clarifying
+questions before ever calling the tool (0/3 turns even reached it); rewritten
+to "call first, only relay the tool's own question" → 5/5 live. `find_medications`
+also gained a dosage-suffix-strip + wildcard fallback (the old exact-match
+`ilike` false-"not found"-ed on a label-echoed "Metformin 500mg"), and
+`FakeDB`'s ilike was corrected to mirror real PostgREST semantics (the old
+always-substring fake was masking exactly this class of bug).
+
+**A second, independent instance of the SAME bug class**, found by a Phase-4
+spot-check re-verifying s03 from scratch (not the chat path — the direct "tap
+the card" flow): `lib/medications.ts::logDoseTaken` still did
+`.order("scheduled_at",{ascending:false}).limit(1)` — tapping a SPECIFIC
+slot's card could flip a DIFFERENT slot's dose. Its own comment claimed to
+mirror the Hermes tool, but was never updated when that tool was rewritten.
+Fixed: threaded the tapped card's own slot through (every card already carries
+it — `fetchElderMedications` emits one per `schedule.times` entry) and match
+the nearest pending dose to it. **Lesson: a fix on one interaction path
+(chat) doesn't imply the other path (direct UI) got the same fix — check
+both**, especially when a comment says "mirrors X" — that comment rots.
+
+**Pacing (the "too fast to follow" complaint):** one module,
+`lib/walkthrough/pacing.ts` — 9 constants (navigate 500 / field-prehighlight
+300 / fill 45ms-per-char / field-floor 900 / between-fields 500 / pre-click
+400 / verify-min 600 / reveal-pulse 1400 / highlight-dwell-min 2500), enforced
+as **minimums** via `pace.ts::createPaceController().paced()` — the only
+timed-wait path anywhere in the walkthrough/highlight system, auto-logging
+every phase to a DEV-only `window.__dwPhaseLog` so e2e specs measure real
+elapsed time rather than trust the implementation. Killed 5 scattered
+constants, a `2600↔CSS-1.3s×2` hand-sync, and 5 copy-pasted `12×400` verify
+polls (now one `verify.ts::pollVerify`+`buildVerifyRunner`). New overlay
+controls: **Next** (autonomous steps only — gated by `step.act ||
+(!waitFor && (verify||reveal))`, disabled until the phase minimum, unit-pinned
+to never appear on a `waitFor`/consent step) and **Replay** (reveal phase
+only). `ActDirective.paceMs` removed outright — the mechanical guarantee that
+no scenario can define its own timing.
+
+**Scenario structure:** kept the existing convention
+(`lib/walkthrough/steps/<task>.ts` + one spec per scenario) rather than
+inventing a new layout — the prior sessions had that part right. Canonical
+per-scenario module is `e2e/scenarios/sNN-slug.spec.ts`: fixture → real
+`:8901` turn (verbatim trigger phrase, ≤3 attempts, raw JSON saved) →
+independent Supabase re-check (never the turn's own return) → UI drive with
+measured phase-log timing against imported `PACING` → screenshot → zero
+scenario-local ms literals. `e2e/scenarios/manifest.ts` (32 rows) +
+`coverage.spec.ts` guard the set stays exactly 32, wired, no orphans.
+Registry-parity is enforced by a pytest that regex-extracts `TASK_NAMES`,
+`_WALKTHROUGH_LABELS`, the TS union, and the resolver's cases and asserts all
+four equal (a real 4-way drift bug this pass would otherwise have
+reintroduced).
+
+**7 new backend tools** (registry 18→25): `undo_dose`, `log_doses` (explicit
+multi-med list — distinct from `resolve_missed_doses`'s "all" filter),
+`snooze_dose` (today-only, `accessibility.dose_snoozes`, never touches the
+recurring schedule), `discontinue_medication` (archives, never deletes),
+`set_allergy_severity` (promotes the WHOLE allergies array from legacy
+strings to `{name,severity}` on first grade — order + other entries
+preserved), `add_symptom`, `add_care_note`. New generic `pending_bulk`
+propose→confirm slot (`{tool,items}` + `match_pending_bulk`) is the
+list-shaped-slot pattern `resolve_missed_doses`'s bespoke one anticipated.
+
+**Real bugs found and fixed live, beyond the headline (in the order hit):**
+1. **Chat handoff navigated on propose-only turns.** `ElderlyAIScreen`/
+   `AskMeiScreen`'s live `tool_end` handler navigated on ANY matching tool
+   dispatch, with no signal for "did it actually commit" — a propose-only
+   turn (e.g. `update_medication_dosage`'s first call) looked exactly like a
+   commit over SSE. Fixed: `ACTION_TARGETS` entries carry `confirmFirst`
+   (ground-truthed from each handler's real `confirmed` parameter); the live
+   navigate is gated on `!confirmFirst`, deferring to the turn's real
+   `actions[]` instead of guessing from `tool_end`.
+2. **`ScanLinkSheet` crashed the whole app to a blank page** on
+   camera-permission-denied: its cleanup called `scanner.stop()` on an
+   `html5-qrcode` instance that never reached "running", which throws
+   **synchronously** (before the existing `.catch(()=>{})` chain ever
+   attaches) — with no error boundary in the tree, uncaught. Would hit any
+   real caregiver who denies/lacks camera access. Fixed with a try/catch
+   around the synchronous call.
+3. **`window.__dwHighlightChange`/`__dwStartWalkthrough` existed only in
+   `ElderlyApp.tsx`** — the caregiver shell had `<ChangeHighlight>` and
+   `setHighlightChange` wired but no dev-hook registration, blocking ANY
+   caregiver-side highlight/walkthrough test. Fixed by mirroring the
+   registration into `App.tsx`'s caregiver branch.
+4. **That fix (3) introduced a real race**, caught only by a full 32-scenario
+   sweep: `App.tsx` never unmounts, so an unconditional
+   `useEffect(...,[])` registered the caregiver hooks once for the whole SPA
+   session and then raced `ElderlyApp`'s own registration of the *same two
+   window properties* the instant an elder signed in — whichever mounted
+   last won. Intermittently landed 9 other already-green elder-mode
+   scenarios on a plain Home screen with no overlay at all (the caregiver's
+   no-op handler had silently won). Fixed by gating the registration on
+   `appMode==="caregiver"` with `appMode` in the effect's deps, so it exists
+   only while that mode is actually active. **Re-verified by a completely
+   independent Phase-4 spot-check** (fresh stress-testing, tighter timing
+   than originally used, could not reproduce) as well as the orchestrator's
+   own repeat-each=3 runs.
+5. **Stuck black overlay on return from the chat→wizard hook.**
+   `ElderlyApp.handleWalkthroughStart` saved a walkthrough session for
+   `"onboarding"` before handing off, but that task's steps never run through
+   `ElderlyApp`'s own `<Walkthrough>` — on return, its mount-effect restored
+   the stale session and mounted an overlay whose first selector doesn't
+   exist there, an un-dismissable `rect=null` scrim with no Exit. Fixed by
+   never saving that session for this one task.
+6. **Silent real medical-data loss on onboarding re-entry.** The chat-hook
+   always opens `GuidedSetupWizard` with blank local state (no prefill
+   threading exists for this entry point), and `finish()` saves straight
+   from that state — so re-entering onboarding for an elder who'd already
+   been through it wiped their real conditions/allergies/routine. Fixed:
+   `handleElderOnboardingWalkthrough` now **re-queries the real profile**
+   (`fetchProfile`, not cached `patients[0]` state — which itself starts
+   from the mock `PATIENTS` default with non-empty conditions/allergies
+   until the async fetch resolves, a trap the first, narrower guard attempt
+   fell into) and refuses re-entry outright if any wizard-collected field is
+   already populated. `finish()` also now calls
+   `markWalkthroughCompleted("onboarding")` — the "not yet shown" prompt gate
+   could never actually suppress a second offer before, since nothing ever
+   marked it done.
+7. **`logDoseTaken`'s wrong-slot bug** (Phase 4 finding, see "second instance"
+   above).
+
+**Confirmed working as designed, not bugs:** `GuidedSetupWizard`'s stage
+position is a plain unpersisted `useState(0)` — exit-and-resume genuinely
+**restarts**, not resumes (proven with real evidence: every field lost, only
+the auth session itself remembered). The 28-step spotlight tour in
+`steps/onboarding.ts` has no `<Walkthrough>` mount site reachable from
+`appMode==="onboarding"` — the wizard is real, but its content is only ever
+driven as plain fields, never spotlighted; a pre-existing, larger gap than
+this pass's scope, documented not built.
+
+**Result:** all 32 scenarios green (`e2e/scenarios/s01`–`s32`), hermes pytest
+297, web vitest 103, typecheck/build clean, 4-way task-name parity green,
+coverage guard 32/32. **Honest caveat, consistent with every prior session's
+own disclosures:** a handful of scenarios (s13, s15, s32 seen this pass) flake
+under a tight back-to-back full-sweep on a REAL LLM tool-routing miss (the
+model chats instead of calling/confirming a tool on that particular turn) —
+never a deterministic UI/pacing/DB assertion, never the same scenario twice
+in a row, and every one has also passed cleanly in isolation multiple times.
+This is the same "LLM tool-selection is probabilistic" property documented
+since 2026-07-25 (`log_dose` firing ~1/3 of real turns pre-dating this pass
+entirely) — soul.md rail-strength tuning is the lever, not a code defect.
+Full patch-queue of lower-priority findings (LLM-routing reliability on
+`discontinue_medication` and the weekly-pattern confirm; the Home
+over-reporting "taken" on a multi-slot med while one slot is still pending;
+the med card not rendering `schedule.days`; the "Stopped" transient caption
+staying emerald/checkmark though the persistent ring is correctly amber;
+`PatientSwitcher`'s missing outside-click dismiss; a `conversation_turns`
+duplicate-row collision between `_persist`'s generic memory log and
+`add_care_note`'s own table use; a few E2E-helper gaps) relayed in-chat, not
+built this pass — none block the 32 scenarios' own correctness.
+
+## 2026-07-26 — Bulk actions: full-space discovery, "tick all missed doses" root-caused & fixed on a generic bulk contract
+
+Four-phase orchestrated pass (user-directed): discovery subagents → live root-cause →
+build → catalog. Cross-boundary edits user-authorized.
+
+- **Root cause of "resolve and tick all my missing dosages" (live-proven, 5 dialogs):**
+  three independent layers. (a) *Data*: no "missed dose" substrate — nothing ever creates
+  `pending` dose rows, `show_schedule` today-view has no missed state, `log_dose` stamps
+  `scheduled_at=now`. (b) *Agent*: refuses/one-at-a-time in 3/5 dialogs; when it fans out it
+  echoes show_schedule labels ("Metformin 500mg") into `log_dose`, and **`find_medications`'
+  wildcard-less `ilike.{name}` is an EXACT case-insensitive match** → false "your meds aren't
+  on file" reply. (c) *UI*: `firstHighlightable` + one-slot ChangeHighlight prove only
+  `actions[0]` — whose position is **asyncio.gather completion order, nondeterministic**.
+- **Fix (verified GREEN end-to-end):** new `tools/base.py::record_bulk_action` (bulk
+  committed-action shape `{tool, summary, entities:[...]}`), new **`resolve_missed_doses`**
+  in `doses.py` (18 tools now): propose→confirm, computes today's past-due-untaken slots
+  server-side (reuses `_taken_counts_today` + `dosing.scheduled_today`, tz `hermes_tz`),
+  new `pending_missed_doses` session slot, on confirm **re-computes ∩ stash** (race-safe)
+  and inserts back-dated rows (08:00 SGT slot → `scheduled_at` 00:00 UTC; verified vs
+  `logged_at`=now). Frontend: `AgentAction.entities?`, `highlightableEntities`/`describeBatch`
+  in `changeHighlight.ts`, ChangeHighlight rings ALL entities **simultaneously** (sequential
+  would be ~45s for 15 doses) with one batch caption + cleanup-all + loud error listing
+  unfound entities. soul.md "Missed doses" rail (+ a `log_dose` bare-name-only rule patching
+  the label-echo bug for single asks). **LLM routing 4/4 first-try for the bulk tool** vs
+  log_dose's known ~1/3 — soul-rail specificity works.
+- **Playwright/dev-hook gotcha (pre-existing, latent):** firing `__dwHighlightChange` from a
+  tab that ALREADY renders matching `medication-*` testids (e.g. Prescriptions) makes the
+  first synchronous poll latch onto pre-navigation elements; the tab switch unmounts them and
+  the `isConnected` bail ends the highlight with NO ring and no error. Affects single + bulk
+  identically; real chat fires from the AI tab (renders no med testids) so production is
+  unaffected. Follow-up if it ever bites: defer the first poll until navigation commits.
+- **Other hazards surfaced by discovery (not fixed, catalogued):** Telegram tap-confirm
+  doesn't know `pending_dosage` and No-tap never clears it (declined dose change stays
+  committable); `start_walkthrough` double-queue silently drops the first while reporting
+  success for both; `_MAX_ITERATIONS=8` exhaustion → generic retry, no partial-success
+  report; caregiver chat acts on the **caregiver's own data** (`routes.py` derives elder_id
+  from JWT sub — no act-on-behalf-of); `update_medical_profile` writes a blob the UI never
+  renders; elder doctor-question tick REVERTS on refresh (local state vs DB status).
+- **Deliverables:** full discovery inventories (relayed in-chat), root-cause report,
+  `docs/scenario-catalog-2026-07-26.md` (bulk variants + dead ends + defects, new-vs-known).
+  Gates: hermes pytest **235**, web vitest **59**, typecheck, build, live e2e + screenshots
+  (`e2e/artifacts/bulk-resolve/`). Uncommitted on `fix/ci-lint-node`.
+
+## 2026-07-25 — Voice→female, highlight bug-fixes, +2 real scenarios (dose-taken, dosage-update), 8 scenarios triaged as gaps
+
+Orchestrated pass (subagent A/B/C trios per buildable task; gaps documented not built).
+User-authorized crossing the `apps/web`→`services/hermes` boundary for this task.
+
+- **Voice = softer female** (`lib/speech.ts`): `pickVoice` now prefers a female voice within
+  the language-narrowed candidates before the first-match fallback — new exported
+  `isFemaleVoice(v)` (male-name exclusion short-circuits FIRST, then `/female|woman|女/`, then a
+  curated `FEMALE_VOICE_NAMES` list) + `pickVoice = candidates.find(isFemaleVoice) ?? candidates[0]`.
+  The cancel→speak race fix in `speak()` is untouched. Verified via `speech.test.ts` (mocked
+  `getVoices`, no browser TTS in headless). Real female voice for en/zh/yue/ms where the OS
+  ships one; **Tamil and Hokkien fall back** (browsers rarely ship those) — by design, never breaks.
+- **Highlight bug-fixes** (Add-Medicine + Add-Condition), all shared by `ChangeHighlight` AND
+  the walkthrough Reveal via `HighlightCaption.tsx`:
+  - *Alignment (Bugfix-A):* caption was positioned/clamped against `window.innerWidth`, but the
+    demo is a centered phone frame → drifted on desktop. Now clamps to the **frame** rect, found
+    self-containedly by `document.elementFromPoint(rect centre)` → walk up the `offsetParent`
+    chain to the outermost positioned ancestor (the `w-[390px]` device div). Pill height is
+    **measured** (`ResizeObserver`), not the old hardcoded `PILL_H=30`. `ChangeHighlight` now
+    **defers the first rect until the smooth `scrollIntoView` settles** (two frames within 0.5px)
+    instead of measuring pre-scroll, and the rAF tracking loop **bails on `!el.isConnected`** so
+    a tab-switch mid-highlight no longer parks the pill at (0,0). Proven at 900px+1280px
+    (`e2e/bugfix-highlight.spec.ts`): wrapper.left == frameLeft+8, pill centred over card.
+  - *Formatting (Bugfix-B):* `describeChange` + `orchestrate.ts::captionFromVerify` now
+    `humanizeField()` any unmapped field (no raw snake_case leak), format HH:MM as 12h
+    (`hhmmTo12h` — a LOCAL helper, deliberately NOT `medications.to12h`, because `medications.ts`
+    imports `./supabase` whose top-level throws on missing env and breaks the vitest import graph),
+    add units/pluralization ("supply 5 pills → 30 pills"), guard the empty-summary dangling
+    "Updated: ", and cap multi-field captions (first 3 + "+k more").
+- **Scenario 1 (dose taken → Home):** `log_dose` now sets `entity_id = med id` (mirrors
+  `log_refill`) and carries `dose_id` as an extra, so ChangeHighlight's suffix fallback lands on
+  the `medication-{uuid}` card (the frontend renders meds, never dose rows). Kept
+  `entity_type="dose"` (→ Home), NOT the spec's guessed `schedule_entry`. Added the missing
+  `data-testid="medication-{medicationId}"` to the Home **taken-card** branch; `describeChange`
+  gained a **"Taken:" verb** for `log_dose`. `fetchElderMedications` already maps real
+  `doses`→`taken` and `ElderlyAIScreen` refetches before firing the highlight — no data gap.
+  Live-green: real turn, independent re-read, ring + "Taken: Metformin" caption.
+- **Scenario 6 (dosage update → Prescriptions):** new **`update_medication_dosage`** tool
+  (propose→confirm, `pending_dosage` slot added to `channels/session.py`), `entity_type="medication"`,
+  `changed_fields.dosage:{before,after}` → "Updated: 500mg → 1000mg" (a change, not "Added").
+  Registry **16→17** (`medications` registers four now; `__init__.py` docstring + `test_hermes.py`
+  hard-coded set updated), `soul.md` gained a "Dose changes" rail (use this, not add_prescription,
+  for an existing-med dose edit). The elder Prescriptions card now renders `m.dose` so the ringed
+  card visibly shows "1000mg". `tests/fakes.py::FakeDB.update` now applies the patch to in-memory
+  rows so independent re-reads reflect writes. Live-green end-to-end.
+- **8 scenarios deferred as GAPS** (not built) — full analysis + sizes in
+  `docs/change-highlight-gap-analysis-2026-07-25.md`. Key user-review decisions recorded there:
+  **#2** don't add a `caregiver_alerts` table — reuse `message_caregiver`/`conversation_turns`;
+  **#3** no symptom-review screen exists (needs new table+tool+screen); **#4** recommend NOT
+  persisting a proactive interaction "what-if" (keep conversational); **#7** no vitals store/screen
+  exists. Structural blockers for the rest: no dose-level DOM target, the **caregiver app never
+  mounts `ChangeHighlight`**, and symptoms/vitals/interactions/allergy-severity have no
+  table/model.
+- **Local-Hermes gotcha (reconfirmed, now for :8901):** a working-tree hermes started on :8901
+  **inherits the repo `.env` `TELEGRAM_BOT_TOKEN`** and will poll Telegram → `409` against the
+  pm2 prod poller. Always launch local verification hermes with `TELEGRAM_BOT_TOKEN="" HERMES_PORT=8901`.
+- **State:** all green (hermes pytest 227, web vitest 42, typecheck, build; live e2e for both
+  scenarios + bug-fixes; a Phase-3 spot-check independently re-verified all three with its own
+  geometry reads). Changes are **uncommitted** on branch `fix/ci-lint-node`; new e2e specs
+  (`bugfix-highlight`, `scenario1-dose-taken`, `scenario6-dosage-update`) + `speech.test.ts` +
+  `HighlightCaption.test.ts` + `test_update_dosage.py` added.
+- **Honest caveat (LLM tool-selection is probabilistic — code is fine, demo reliability isn't):**
+  the two scenario e2e specs prove the *highlight/caption/UI* deterministically but lean on a
+  dev-hook / direct-write for it (the repo's established pattern, since real turns are
+  nondeterministic) — spec-green alone does NOT prove the real LLM→tool path. The spot-check
+  closed that by driving real turns: `log_dose` fired ~1/3 of turns, `update_medication_dosage`
+  committed ~2/5; the misses were the model *narrating instead of calling the tool*, and when the
+  propose turn is skipped the confirm-guard **correctly refuses** (no false write). So the safety
+  rail holds; making Mei reliably call these on first ask is soul.md/prompt tuning (a possible
+  follow-up, like the `add_prescription` rail), not a code defect.
+
 ## 2026-07-24 — Conservative refactor pass (branch `refactor/conservative-tidy`)
 
 A behavior-preserving tidy pass, done on a branch AFTER committing the whole
@@ -909,20 +1397,14 @@ Key decisions / gotchas:
 - i18n: added ~28 `link.*` + `patientSwitcher.scanQr` keys to all 6 languages
   (parity gate: **372 keys × 6**, verified).
 
-## 2026-07-19 — ⚠️ OPEN BUG: `t` is shadowed in ElderlyAIScreen's `send()`
+## 2026-07-19 — `t`-shadow bug in ElderlyAIScreen's `send()` — fixed (confirmed 2026-07-28)
 
-**Found, not fixed — flagged to the user.** In
-`apps/web/src/app/screens/elderly/ElderlyAIScreen.tsx`, `send()` opens with
-`const t = text.trim()`, which shadows the imported `t()` translation function
-for the whole body. Three calls near the end of that function
-(`t(language, routed.target.doneKey)` and friends) therefore try to *call a
-string*. Any agent turn that commits a routable action — add prescription, log
-dose — throws `t is not a function` in the elder's chat, killing the
-confirm-and-redirect flow that CONTEXT.md lists as a headline feature.
-
-Fix is a rename (`const trimmed = text.trim()`). Untouched so far only because
-it's outside the scope of the UI pass it surfaced during. **This is invisible to
-`npm run build`** — see the typecheck note below.
+Was: `send()` opened with `const t = text.trim()`, shadowing the imported
+`t()` translation function, so any agent turn that committed a routable
+action threw `t is not a function`. Confirmed during the 2026-07-28
+dose-logging session that the code already uses `const trimmed = text.trim()`
+— fixed at some point without a MEMORY.md note. Not the cause of that
+session's "AI does nothing" report (see the 2026-07-28 entry).
 
 ## 2026-07-19 — Elderly UI pass: grouped prescriptions, quick-help popup
 
@@ -1068,72 +1550,6 @@ docker exec supabase_db_dosewise psql -U postgres -d postgres -c \
 ```
 This is local-dev-tooling-only — not an app bug, not something to add to the
 migrations (would be wrong/redundant on the hosted project).
-
-## 2026-07-19 — ⚠️ OPEN BUG: `t` is shadowed in ElderlyAIScreen's `send()`
-
-**Found, not fixed — flagged to the user.** In
-`apps/web/src/app/screens/elderly/ElderlyAIScreen.tsx`, `send()` opens with
-`const t = text.trim()`, which shadows the imported `t()` translation function
-for the whole body. Three calls near the end of that function
-(`t(language, routed.target.doneKey)` and friends) therefore try to *call a
-string*. Any agent turn that commits a routable action — add prescription, log
-dose — throws `t is not a function` in the elder's chat, killing the
-confirm-and-redirect flow that CONTEXT.md lists as a headline feature.
-
-Fix is a rename (`const trimmed = text.trim()`). Untouched so far only because
-it's outside the scope of the UI pass it surfaced during. **This is invisible to
-`npm run build`** — see the typecheck note below.
-
-## 2026-07-19 — Elderly UI pass: grouped prescriptions, quick-help popup
-
-`fetchElderMedications` deliberately emits **one `Medication` per (medication,
-time-slot)** — correct for the schedule, wrong for any "list of prescriptions"
-view, where a twice-daily pill was rendering as two identical cards.
-`ElderlyPrescriptionScreen` now regroups by `medicationId` (falling back to
-`name` for seed data) and shows the times as an indicator. **Any new list-style
-view of medications needs the same regrouping** — the caregiver's `PatientScreen`
-has not been checked for this.
-
-Quick help in the elder chat is a popup, not an inline expander, so it no longer
-pushes the conversation off-screen; `quickOpen` is therefore no longer persisted
-to sessionStorage (restoring a modal open on remount is wrong).
-
-## 2026-07-19 — One shared time picker; killed a silent "schedules at 8am" bug
-
-Medication timing was per-screen and one variant was actively wrong. Unified on
-`apps/web/src/app/components/TimesPicker.tsx` (`TimesPicker` for a med's dose
-times, `TimeField` for a single meal/bedtime).
-
-**The bug worth remembering:** `AddPrescriptionSheet` had a "Custom" free-text
-time box (`"e.g. 10:30 AM"`) whose value went straight to
-`lib/medications.ts::to24h`. That function returns `"08:00"` for anything not
-matching exactly `H:MM AM/PM` — so `10:30`, `10.30am` or `22:00` silently
-scheduled the medication at 8am, with no error anywhere. **`to24h` fails soft;
-never feed it unvalidated text.** The picker now only emits well-formed times.
-
-Two deliberate choices, so they don't get "fixed" back:
-
-- **No `<input type="time">` anywhere.** It renders as the big OS wheel only on
-  a real phone; in a desktop browser (how the phone-frame demo is actually
-  viewed and judged) it collapses to a cramped `--:-- --` spinner. Replaced with
-  a tap-only `∧`/`∨` stepper — also better than a slider/scroll-wheel for the
-  elderly target user, since there's nothing to drag onto a target.
-- **Wizard step order: `routine` before `current-meds`.** Meal/bedtime answers
-  are the frame people describe doses against — and the med step's quick chips
-  now show those answers back, which only works because routine is asked first.
-
-The chips (and a new med's default time) read the elder's own routine, falling
-back to `MEAL_TIMES` only when there's no profile. The wizard passes its live
-step state; `AddPrescriptionSheet` takes a `routine` prop that both `App.tsx`
-and `ElderlyApp.tsx` fill from `Patient` — **no extra fetch needed, `Patient`
-already carries `mealTimes` + `sleepTime`**, and `ElderlySettingsScreen`'s
-`onUpdatePatient` keeps them live after an edit. Note `sleepTime` sits *beside*
-`mealTimes` on `ProfileDetails`, not inside it — hence the
-`{ ...patient.mealTimes, sleepTime: patient.sleepTime }` spread at both sites.
-
-`PRESET_TIMES` in `data/medications.ts` is now unused (left in place). Note
-`apps/web` has no `typescript` installed and `vite build` uses esbuild, which
-strips types without checking — **`npm run build` passing is not a typecheck.**
 
 ## 2026-07-11 — i18n D2/D3 completed: full primary-flow translation, all 6 languages
 

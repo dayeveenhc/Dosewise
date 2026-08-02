@@ -21,7 +21,8 @@ Dosewise/
 ├── services/hermes/      # Python 3.12 + FastAPI agent orchestrator — the
 │                         # security boundary; holds all external API keys
 ├── supabase/              # Postgres schema + RLS policies + seed data
-└── docs/architecture.md  # deeper architecture reference
+└── docs/                 # dated review docs (scenario catalog, gap analysis,
+                          # security verification) — no architecture.md exists
 ```
 
 `apps/mobile/` (Expo/React Native) is referenced in the root README but is
@@ -111,14 +112,8 @@ only when the real user performs the real action (native DOM listener, or an
 app-emitted event via `lib/walkthrough/steps/` + `lib/walkthrough/bus.ts` for
 actions no generic listener can tell apart, e.g. an async write's real
 success). Started by Hermes's `start_walkthrough` tool (task name only — step
-content stays client-side), or directly from the Ask Mei help list; see
-MEMORY.md's 2026-07-22 entry for the full architecture and known gaps. Seven
-narrate-only walkthroughs (`check_schedule`, `log_dose`, `undo_dose`,
-`language_voice`, `reminder_settings`, `emergency_contact`, `text_size`) share
-one file, `lib/walkthrough/steps/narrated.ts`. **A new task name must be added
-in three places or tests fail**: `types.ts::WalkthroughTaskName` +
-`WALKTHROUGH_TASK_LABELS`, `tools/walkthrough.py::TASK_NAMES`, and
-`prompts.py::_WALKTHROUGH_LABELS`.
+content stays client-side); see MEMORY.md's 2026-07-22 entry for the full
+architecture and known gaps.
 
 A **Guided Auto-Navigation** mode is layered on top (2026-07-23): a step can
 instead carry an `act` (Mei performs the fill/tap/upload/submit herself, visibly
@@ -126,8 +121,7 @@ animated — `lib/walkthrough/actor.ts`) plus `verify`/`reveal` phases (orchestr
 by `lib/walkthrough/orchestrate.ts::runActStep` — a failed Verify STOPS and never
 implies success), so `waitFor` is now optional on a step. **Four autonomous scenarios** are built and live-validated end-to-end
 (Playwright, real Supabase, incl. write-fail paths): `add_prescription_auto`,
-`travel_mode_auto`, `edit_profile_auto`, `add_doctor_question_auto`, and
-`accept_caregiver_link` (the
+`travel_mode_auto`, `edit_profile_auto`, and `accept_caregiver_link` (the
 consent flow — Mei navigates but the elder taps Accept themselves, then Verify
 confirms the link is active). Verify is a real re-query: client `onVerify` (host,
 e.g. `ElderlyApp`) mirrors the Hermes read-only `verify_medication_exists` tool
@@ -157,20 +151,39 @@ honest `walk.verifyFailed`. The elder sheet's `onAdded` tab-switch is gated on
 `!walkthroughTask` so it doesn't fight the Home reveal. MEMORY.md's 2026-07-24
 entry has the why.
 
-**Proof-of-change is now the `ChangeHighlight` layer (2026-07-23 rebuild)**, which
-supersedes the old selector-pulse / name-string highlight for the flows it covers.
-Its keystone: every write tool's `committed_actions` entry carries **what** changed
-—`{tool, summary, entity_type, entity_id, changed_fields}` (built via
-`services/hermes/tools/base.py::record_action`; `changed_fields` is
-`{field:{before,after}}`). The web `components/ChangeHighlight.tsx` (logic in
-`lib/changeHighlight.ts`) navigates to that entity's screen, finds the exact record
-by `data-testid="{entity_type}-{entity_id}"` (with a suffix `-{id}` fallback so a
-`schedule_entry`/`refill_request` change to a med resolves the `medication-<uuid>`
-card), pulses `.change-highlight` around it, and shows a caption **derived from
-changed_fields** (e.g. "Updated: dose time 18:00 → 20:00") — never a generic toast;
-it `console.error`s loudly if the element is genuinely absent. Only ~10 of the 20
-target flows persist a re-queryable entity; the rest (localStorage/mock/view-only,
-or non-existent tables) get navigation only and must not fabricate an entity_id.
+**Proof-of-change is the `ChangeHighlight` layer.** Its keystone: every write
+tool's `committed_actions` entry carries **what** changed —
+`{tool, summary, entity_type, entity_id, changed_fields}` (single writes via
+`tools/base.py::record_action`; multi-entity writes — e.g. resolving every
+missed dose at once — via `record_bulk_action`'s `{tool, summary, entities:[
+...]}`, rung simultaneously with one batch caption). `changed_fields` is
+`{field:{before,after}}`. `components/ChangeHighlight.tsx` (logic in
+`lib/changeHighlight.ts`) navigates to the entity's screen, finds the exact
+record by `data-testid="{entity_type}-{entity_id}"` (suffix `-{id}` fallback
+so e.g. a `schedule_entry` change to a med resolves the `medication-<uuid>`
+card), pulses `.change-highlight` (or the non-emerald `.change-highlight-
+stopped` variant when `changed_fields.status.after==="discontinued"`), and
+shows a caption derived from `changed_fields` — never a generic toast; loudly
+`console.error`s if the element is genuinely absent rather than fabricating a
+target. **Mounted in both shells** — `ElderlyApp.tsx` and (2026-07-27)
+`App.tsx`'s caregiver branch, each with its own DEV-only `window.
+__dwHighlightChange`/`__dwStartWalkthrough` registration (gated on
+`appMode==="caregiver"` in `App.tsx`'s case — it never unmounts, so an
+unconditional registration would race `ElderlyApp`'s own one for the same two
+window properties the instant an elder session mounts; MEMORY.md's
+2026-07-27 entry has the story). Not every scenario has a re-queryable
+backing entity — genuinely mock/view-only flows (caregiver weekly summary,
+notifications, emergency contacts) stay honest-navigation-only.
+
+Every requested scenario now has its own independently-runnable e2e module —
+`apps/web/e2e/scenarios/sNN-slug.spec.ts` (32 of them; `manifest.ts` + a
+`coverage.spec.ts` guard keep the set exactly 32, wired, no orphans), each:
+real `:8901` turn with a verbatim trigger phrase → independent Supabase
+re-check → UI drive with phase-log timing asserted against `PACING` →
+screenshot. `README.md` in that directory has the template + the shared-file
+ownership rules. A pytest (`services/hermes/tests/test_walkthrough.py`)
+enforces TASK_NAMES/labels/TS-union/resolver stay in 4-way agreement — this
+pass found and would otherwise have reintroduced that exact drift.
 
 All clock-time entry goes through one component, `components/TimesPicker.tsx`:
 `TimesPicker` (a medication's one-or-more dose times) and `TimeField` (a single
@@ -191,7 +204,18 @@ describe doses against ("one after breakfast").
 Voice input/output is client-side (browser Web Speech API — `SpeechRecognition`
 + `speechSynthesis`), not routed through Hermes; it degrades gracefully where
 unsupported. Text-to-speech goes through the shared `lib/speech.ts::speak`
-(cancel→speak race fix + `voiceschanged` voice selection). Whether Mei reads
+(cancel→speak race fix + `voiceschanged` voice selection). `pickVoice` **prefers a
+softer female voice** per language (exported `isFemaleVoice` heuristic; falls back to
+first-available where the OS ships no female voice, e.g. Tamil/Hokkien), then breaks
+ties toward a **higher-quality voice** (`HIGH_QUALITY_VOICE_TOKENS` —
+Enhanced/Premium/Natural/Neural — deprioritizing known-robotic "compact" voices;
+quality never overrides the gender preference). `speak()` sets `utter.rate = 0.9`
+(calmer pacing for the elderly audience) and runs replies through
+`cleanTextForSpeech` first — strips markdown bold, and for English-only replies
+expands `mg`/`mL`/`Dr.` (gated on the lang tag so non-English utterances never get
+English words injected). A periodic `pause()`/`resume()` nudge every 12s while
+speaking works around Chromium's crbug.com/335907 (long utterances silently stop
+mid-sentence), cleared on `onend`/`onerror`. Whether Mei reads
 replies aloud is one persisted setting — `voiceOutput` on `AccessibilityProvider`
 (`accessibility.tsx`, key `dosewise:accessibility`) — read/written by both
 Settings "Read Aloud" toggles, both chats, and the in-chat "Language & voice"
@@ -211,15 +235,55 @@ FastAPI service, `uv`-managed. Key files:
 - `agent/soul.md` + `agent/prompts.py` — the Dosewise persona/system prompt.
   Kept **channel-neutral** (describes app screens generically, not
   Telegram-specific button taps) so both channels get accurate answers.
-- `tools/` — one file per tool (medications, profile, drug_info, interactions,
-  schedule, doses, refills, caregiver, doctor, escalation, videos, walkthrough,
-  verify), registered via `tools/base.py`. `verify.py` is the read-only
-  "re-query real state → pass/fail" pattern for Guided Auto-Navigation.
-  `base.py` also holds the shared tool helpers: `find_medications` (the
-  `name ilike` + `archived=false` lookup), `first_id` (new-row id from an insert),
-  `match_pending` (the propose→confirm commit guard — reads the session's
-  `pending_*` slot by name, so the Telegram deterministic-confirm contract is
-  preserved), and `record_action`. Weekday constants (`WEEKDAYS`,
+- `tools/` — one file per tool (medications, profile, symptoms, drug_info,
+  interactions, schedule, doses, refills, caregiver, doctor, escalation,
+  videos, walkthrough, verify), registered via `tools/base.py`. **25 tools.**
+  `medications` registers five: `add_prescription`, `set_medication_reminder`,
+  `update_medication_dosage` (propose→confirm dose EDIT), **`discontinue_medication`**
+  (2026-07-27, propose→confirm, sets `archived=true` — never deletes), `list_medications`.
+  `add_prescription`/`update_medication_dosage` both run **`_dosage_warning`**
+  (2026-07-28, `medications.py`) at propose time — a non-blocking ⚠ caveat, same
+  tone as `_interaction_warning`, when a new dose is ≥2x the medication's own old
+  dose (parsed via `base.py::parse_dosage`, mg/mcg/g-normalized, fails open on
+  unparseable/incomparable values); `add_prescription` also runs it against a
+  same-name medication already on file at a different dose (a disguised
+  duplicate-as-dose-change), via `_existing_medication` (reuses `find_medications`,
+  not a new query).
+  `doses` registers five: `log_dose` (single — takes optional `medication_name` AND
+  `slot`; the selection engine `_dose_plan` picks earliest-first among today's
+  pending doses, asks when genuinely ambiguous and writes nothing until answered,
+  proceeds silently when only one dose is plausible — the 2026-07-27 root-cause fix
+  for "marking one named medication taken" unreliability, see MEMORY.md),
+  `resolve_missed_doses` (the "all" bulk resolver, server-side missed-slot
+  computation; optional **`slot`** filter, 2026-07-28 — `HH:MM` exact match or a
+  day-part word within a bounded ±60min window, `_parse_slot_filter`/
+  `_slot_filter_matches`, deliberately NOT `log_dose`'s unbounded nearest-neighbor —
+  applied as a post-pass so the earliest-first missed-slot attribution is
+  unaffected; omitted `slot` resolves everything, unchanged), **`log_doses`**
+  (2026-07-27, EXPLICIT-list bulk — "I took my X and
+  my Y", distinct from the "all" filter — propose→confirm via the generic
+  `pending_bulk` slot), **`undo_dose`** (flips a mistaken tick back), **`snooze_dose`**
+  (today-only reminder move into `accessibility.dose_snoozes`, never touches the
+  recurring schedule). `profile` registers **`set_allergy_severity`** (2026-07-27,
+  propose→confirm — promotes the WHOLE `accessibility.allergies` array from legacy
+  plain strings to `{name,severity}` objects on first grade, not just the target
+  entry) alongside `update_medical_profile`. `symptoms.py` (new) registers
+  **`add_symptom`** (immediate, empathetic, never diagnoses, `entity_id` is the
+  symptom's own id not the medication's). `caregiver.py` gained **`add_care_note`**
+  (immediate, writes the caregiver's OWN `conversation_turns` row — no
+  act-on-behalf-of exists). Bulk commits emit ONE committed action via
+  `base.py::record_bulk_action` (`{tool, summary, entities:[{entity_type,
+  entity_id, changed_fields, ...}, ...]}`, the generic multi-entity contract
+  alongside single `record_action`); `ChangeHighlight` is bulk-aware and rings ALL
+  resolved entities simultaneously with one batch caption. `verify.py` is the
+  read-only "re-query real state → pass/fail" pattern for Guided Auto-Navigation.
+  `base.py` also holds the shared tool helpers: `find_medications` (exact `ilike`
+  first, then dosage-suffix-stripped, then wildcard fallback — the exact-only form
+  used to false-"not found" on a label-echoed "Metformin 500mg"), `first_id`
+  (new-row id from an insert), `match_pending`/`match_pending_bulk` (the
+  propose→confirm commit guards — read the session's `pending_*`/`pending_bulk`
+  slot, so the Telegram deterministic-confirm contract is preserved), and
+  `record_action`/`record_bulk_action`. Weekday constants (`WEEKDAYS`,
   `WEEKDAY_NAMES`) live in `dosing.py`.
 - `db/auth.py` — mints Hermes-internal JWTs (HS256) for Telegram/CLI, and
   verifies client-supplied Supabase JWTs. Supabase user tokens are **ES256**

@@ -38,6 +38,14 @@ TASK_NAMES = [
     "reminder_settings",
     "emergency_contact",
     "text_size",
+    # Spotlight tours (2026-07-26): highlight-and-narrate only — the user taps
+    # every step themselves, nothing autonomous.
+    "language_voice_tour",
+    "notifications_tour",
+    "emergency_contact_tour",
+    "caregiver_view_toggle_tour",
+    "patient_schedule_tour",
+    "weekly_summary_tour",
 ]
 
 _SCHEMA = {

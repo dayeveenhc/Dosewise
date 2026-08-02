@@ -25,7 +25,18 @@ export type WalkthroughTaskName =
   | "language_voice"
   | "reminder_settings"
   | "emergency_contact"
-  | "text_size";
+  | "text_size"
+  // Spotlight tours (2026-07-26): highlight-and-narrate only — the user taps
+  // every step themselves, nothing autonomous. First three are elder-mode,
+  // the last three caregiver-shell. NOTE: never put a semicolon inside this
+  // union's comments — the backend parity test captures the union body up to
+  // the first semicolon character.
+  | "language_voice_tour"
+  | "notifications_tour"
+  | "emergency_contact_tour"
+  | "caregiver_view_toggle_tour"
+  | "patient_schedule_tour"
+  | "weekly_summary_tour";
 
 // Where a step lives, so the Walkthrough overlay can ask the host to switch
 // there (onEnter) before it starts spotlighting. "onboarding" isn't a real
@@ -76,8 +87,10 @@ export type WalkthroughParams = Record<string, string>;
 // Arbitrary custom-widget values (e.g. a specific stepper time that isn't a
 // quick chip) will need a bus-driven adapter kind — deferred until a scenario
 // needs one; the common case is covered by clicking the chip.
+// Deliberately NO timing fields here: all pacing lives in lib/walkthrough/
+// pacing.ts and flows through the PaceController — a step cannot set its own.
 export type ActDirective =
-  | { kind: "fill"; selector: string; value: string; paceMs?: number }
+  | { kind: "fill"; selector: string; value: string }
   | { kind: "select"; selector: string; value: string }
   | { kind: "click"; selector: string }
   | { kind: "upload"; selector: string; asset: string };
@@ -85,15 +98,22 @@ export type ActDirective =
 // The Verify phase: re-query REAL state to confirm the write landed before the
 // walkthrough claims success — mirrors the Hermes verify_* tools
 // (services/hermes/src/hermes/tools/verify.py), same "never trust the write
-// call's own return" rule. Orchestration (client re-query + pass/fail) is wired
-// per-scenario in Phase 2; the shape is defined here so steps can declare it.
+// call's own return" rule. The runtime checks live in ONE place —
+// lib/walkthrough/verify.ts's buildVerifyRunner — with the host's data
+// fetchers injected; the shape is defined here so steps can declare it.
 export type VerifyDirective =
   | { kind: "medication-exists"; name: string }
   | { kind: "travel-plan-saved" }
   | { kind: "profile-field"; field: string; value: string }
   | { kind: "profile-list-includes"; field: string; value: string }
   | { kind: "doctor-question-exists"; question: string }
-  | { kind: "care-link-active" };
+  | { kind: "care-link-active" }
+  | { kind: "dose-status"; medicationId: string; status: string }
+  | { kind: "medication-archived"; name: string }
+  // Dot-path into the profiles.accessibility jsonb (e.g. "travelPlan.timezone").
+  | { kind: "accessibility-path-equals"; path: string; value: string }
+  // The medication's schedule times (HH:MM, 24h) must match exactly, any order.
+  | { kind: "reminder-times"; name: string; times: string[] };
 
 // The Reveal phase: where the proof now lives and how to animate it in.
 export interface RevealDirective {
@@ -146,4 +166,10 @@ export const WALKTHROUGH_TASK_LABELS: Record<WalkthroughTaskName, string> = {
   reminder_settings: "walk.taskLabel.reminderSettings",
   emergency_contact: "walk.taskLabel.emergencyContact",
   text_size: "walk.taskLabel.textSize",
+  language_voice_tour: "walk.taskLabel.languageVoiceTour",
+  notifications_tour: "walk.taskLabel.notificationsTour",
+  emergency_contact_tour: "walk.taskLabel.emergencyContactTour",
+  caregiver_view_toggle_tour: "walk.taskLabel.caregiverViewToggleTour",
+  patient_schedule_tour: "walk.taskLabel.patientScheduleTour",
+  weekly_summary_tour: "walk.taskLabel.weeklySummaryTour",
 };

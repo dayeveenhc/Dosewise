@@ -1,4 +1,5 @@
 import { Activity, AlertTriangle, Info, Star, User, Phone, Plus, Trash2, History, Check } from "lucide-react";
+import { slugify } from "../lib/changeHighlight";
 import type { Patient } from "../types";
 import { Card, SectionHeader, MedAvatar } from "../components/shared";
 import { MED_FREQUENCY } from "../data/medications";
@@ -16,6 +17,7 @@ interface PatientScreenProps {
 
 interface GroupedMedication {
   ids: number[];
+  medicationId?: string; // real medications.id (uuid) — the highlight anchor
   name: string;
   dose: string;
   purpose: string;
@@ -37,6 +39,7 @@ function groupMedications(medications: Medication[]): GroupedMedication[] {
     } else {
       groups.set(m.name, {
         ids: [m.id],
+        medicationId: m.medicationId,
         name: m.name,
         dose: m.dose,
         purpose: m.purpose,
@@ -90,7 +93,7 @@ export function PatientScreen({ patient, justAddedMed, onEditProfile, onAddPresc
         {patient.allergies.length > 0 ? (
           <div className="flex flex-wrap gap-2">
             {patient.allergies.map((a, i) => (
-              <span key={i} className="inline-flex items-center gap-1.5 bg-red-50 text-red-800 border border-red-200 rounded-xl px-3 py-1.5 text-sm font-semibold">
+              <span key={i} data-testid={`allergy-${slugify(a)}`} className="inline-flex items-center gap-1.5 bg-red-50 text-red-800 border border-red-200 rounded-xl px-3 py-1.5 text-sm font-semibold">
                 <AlertTriangle size={13} className="text-red-600" /> {a}
               </span>
             ))}
@@ -107,7 +110,7 @@ export function PatientScreen({ patient, justAddedMed, onEditProfile, onAddPresc
           {groupedMedications.map((m) => {
             const justAdded = !!justAddedMed && m.name === justAddedMed;
             return (
-            <div key={m.name} className={`px-4 py-3 flex items-center gap-3 ${justAdded ? "bg-taken-bg/60 ring-2 ring-taken/40 rounded-xl" : ""}`}>
+            <div key={m.name} data-testid={m.medicationId ? `medication-${m.medicationId}` : undefined} className={`px-4 py-3 flex items-center gap-3 ${justAdded ? "bg-taken-bg/60 ring-2 ring-taken/40 rounded-xl" : ""}`}>
               <MedAvatar name={m.name} size={32} className="rounded-full shrink-0" />
               <div className="flex-1 min-w-0">
                 <p className="text-sm font-semibold text-foreground flex items-center gap-1.5 flex-wrap">
@@ -154,7 +157,7 @@ export function PatientScreen({ patient, justAddedMed, onEditProfile, onAddPresc
           <SectionHeader title={t(language, "common.pastMedications")} />
           <Card className="divide-y divide-border">
             {patient.pastMedications!.map(m => (
-              <div key={m.id} className="px-4 py-3 flex items-center gap-3">
+              <div key={m.id} data-testid={`medication-${m.id}`} className="px-4 py-3 flex items-center gap-3">
                 <div className="w-8 h-8 rounded-full bg-muted flex items-center justify-center shrink-0">
                   <History size={13} className="text-muted-foreground" />
                 </div>

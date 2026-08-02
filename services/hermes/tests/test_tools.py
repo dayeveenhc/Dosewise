@@ -47,18 +47,37 @@ async def test_log_dose_marks_pending_taken():
         "doses": [{"id": "d1", "scheduled_at": "2026-07-02T20:00:00+00:00",
                    "status": "pending", "medication_id": "m1"}],
     })
-    out = await get_handler("log_dose")(_ctx(db), medication_name="Metformin")
+    ctx = _ctx(db)
+    out = await get_handler("log_dose")(ctx, medication_name="Metformin")
     assert "Logged Metformin" in out
     assert db.updated and db.updated[0][0] == "doses"
     assert db.updated[0][1]["status"] == "taken"
+    # The committed action highlights the MEDICATION card on the Home timeline
+    # (entity_id == med id), carrying the real dose row id as `dose_id`.
+    assert len(ctx.committed_actions) == 1
+    action = ctx.committed_actions[0]
+    assert action["entity_type"] == "dose"
+    assert action["entity_id"] == "m1"
+    assert action["dose_id"] == "d1"
+    assert action["changed_fields"]["status"] == {"before": "pending", "after": "taken"}
 
 
 async def test_log_dose_no_pending_inserts_new():
     db = FakeDB({"medications": [{"id": "m1", "name": "Metformin", "archived": False}],
                  "doses": []})
-    out = await get_handler("log_dose")(_ctx(db), medication_name="Metformin")
+    ctx = _ctx(db)
+    out = await get_handler("log_dose")(ctx, medication_name="Metformin")
     assert "just now" in out
     assert db.inserted and db.inserted[0][0] == "doses"
+    # Insert branch: entity_id is still the med id; dose_id is the new dose row id
+    # synthesized by the fake insert; before-status is None (newly created).
+    assert len(ctx.committed_actions) == 1
+    action = ctx.committed_actions[0]
+    assert action["entity_type"] == "dose"
+    assert action["entity_id"] == "m1"
+    assert action["dose_id"] == "fake-doses-1"
+    assert action["changed_fields"]["status"]["before"] is None
+    assert action["changed_fields"]["status"]["after"] == "taken"
 
 
 async def test_log_dose_unknown_medication():

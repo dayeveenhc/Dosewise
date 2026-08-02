@@ -1,5 +1,7 @@
 """Medication tools: list_medications, add_prescription (scan -> propose -> confirm),
-set_medication_reminder (propose -> confirm daily reminder times)."""
+set_medication_reminder (propose -> confirm daily reminder times),
+update_medication_dosage (propose -> confirm a dose change on an existing med),
+discontinue_medication (propose -> confirm archiving a med — never a delete)."""
 
 from __future__ import annotations
 
@@ -8,7 +10,16 @@ from datetime import UTC, datetime
 from uuid import uuid4
 
 from ..dosing import WEEKDAY_NAMES, WEEKDAYS
-from .base import ToolContext, find_medications, first_id, match_pending, record_action, register
+from .base import (
+    ToolContext,
+    find_medications,
+    first_id,
+    match_pending,
+    match_pending_bulk,
+    parse_dosage,
+    record_action,
+    register,
+)
 from .drug_info import interaction_text, label_mentions
 
 log = logging.getLogger("hermes.tools.medications")
@@ -134,6 +145,12 @@ async def add_prescription(
         if purpose:
             readback += f", for {purpose}"
         warning = await _interaction_warning(ctx, name)
+        # A same-name medication already on file at a different dose is really
+        # a disguised dose CHANGE, not a new prescription — flag it the same
+        # way update_medication_dosage does, even though this is add_prescription.
+        existing = await _existing_medication(ctx, name)
+        if existing:
+            warning += _dosage_warning(existing.get("dosage"), dosage)
         return (
             "PROPOSED (not yet saved). Read this back to the user and ask them to "
             f"confirm before saving: {readback}.{warning}"
@@ -246,6 +263,61 @@ async def _interaction_warning(ctx: ToolContext, new_name: str) -> str:
         )
     except Exception:
         return ""
+
+
+# Mass units this codebase can compare across (mg is the common unit); ml/iu/
+# units aren't a fixed mass so are left out — better to skip the check than
+# guess a wrong conversion. Fires at a DOUBLED dose or more: since this is a
+# non-blocking FYI (never stops a save), erring toward flagging more real
+# jumps outweighs the low cost of occasionally flagging a routine titration.
+_MG_PER_UNIT = {"mg": 1.0, "mcg": 0.001, "g": 1000.0}
+_DOSAGE_INCREASE_MULTIPLIER = 2.0
+
+
+def _as_mg(value: float, unit: str) -> float | None:
+    factor = _MG_PER_UNIT.get(unit)
+    return value * factor if factor is not None else None
+
+
+def _dosage_warning(old_dosage: str | None, new_dosage: str | None) -> str:
+    """Best-effort, non-blocking caution when a new dosage is a big jump above
+    the old one — pure arithmetic on the two free-text values, no medical
+    judgment. Mirrors ``_interaction_warning``'s shape: fails open (returns
+    "") on anything unparseable or incomparable, so it only ever adds a
+    caveat, never blocks or crashes the propose flow.
+    """
+    old = parse_dosage(old_dosage)
+    new = parse_dosage(new_dosage)
+    if old is None or new is None:
+        return ""
+    old_mg = _as_mg(*old)
+    new_mg = _as_mg(*new)
+    if old_mg is None or new_mg is None or old_mg <= 0:
+        return ""
+    ratio = new_mg / old_mg
+    if ratio < _DOSAGE_INCREASE_MULTIPLIER:
+        return ""
+    return (
+        f" ⚠ That's a big increase — {old_dosage} to {new_dosage} is "
+        f"{ratio:.3g}x the previous dose. This is not medical advice — tell "
+        "the patient to flag it with their doctor (offer add_doctor_question) "
+        "before starting the higher dose."
+    )
+
+
+async def _existing_medication(ctx: ToolContext, name: str) -> dict | None:
+    """The one non-archived medication already on file matching ``name``, or
+    ``None`` for a genuinely new drug. Reuses ``find_medications``'s existing
+    exact/suffix-stripped/wildcard matching tiers (the same lookup every other
+    tool uses) so a name that arrives with its own dosage suffix still
+    resolves. Fails open on any error — a lookup hiccup should never crash a
+    propose.
+    """
+    try:
+        meds = await find_medications(ctx, name, columns="name,dosage")
+        return meds[0] if meds else None
+    except Exception:
+        return None
 
 
 _REMINDER_SCHEMA = {
@@ -432,6 +504,227 @@ async def set_medication_reminder(
     )
 
 
+_SCHEMA_UPDATE_DOSAGE = {
+    "name": "update_medication_dosage",
+    "description": (
+        "Update the dosage of a medication the elder ALREADY has on file. Use when "
+        "the dose itself changed — 'the doctor changed my metformin to 1000mg', "
+        "'increase my atorvastatin to 40mg', 'my dose went down to 250mg'. This is an "
+        "UPDATE to an existing prescription; do NOT use add_prescription (that is for a "
+        "brand-new medication) and do NOT start a walkthrough. SAFETY: the "
+        "propose→confirm rule applies — first call with confirmed=false to read the "
+        "change back (old dose → new dose), and only call again with confirmed=true "
+        "after the user's explicit yes."
+    ),
+    "input_schema": {
+        "type": "object",
+        "properties": {
+            "medication_name": {
+                "type": "string",
+                "description": "Medication name (already on file).",
+            },
+            "dosage": {
+                "type": "string",
+                "description": "The new dosage, e.g. '1000mg'.",
+            },
+            "confirmed": {
+                "type": "boolean",
+                "description": "false = propose only (no write); true = commit after "
+                "the user confirmed.",
+            },
+        },
+        "required": ["medication_name", "dosage"],
+    },
+}
+
+
+async def update_medication_dosage(
+    ctx: ToolContext,
+    medication_name: str,
+    dosage: str,
+    confirmed: bool = False,
+) -> str:
+    if not confirmed:
+        meds = await find_medications(ctx, medication_name, columns="id,name,dosage")
+        if not meds:
+            return (
+                f"No medication named '{medication_name}' is on file, so I can't change "
+                "its dose. Ask the user to confirm the name, or add the prescription "
+                "first with add_prescription."
+            )
+        med = meds[0]
+        raw_old = med.get("dosage")
+        old = raw_old or "an unrecorded dose"
+        if ctx.session is not None:
+            ctx.session.pending_dosage = {"name": medication_name, "dosage": dosage}
+            ctx.session.awaiting_confirmation = True
+        warning = _dosage_warning(raw_old, dosage)
+        return (
+            "PROPOSED (not yet saved). Read this back to the user and ask them to "
+            f"confirm before saving: change {med['name']} dose from {old} to "
+            f"{dosage}.{warning}"
+        )
+
+    # confirmed=true: guard that a matching proposal exists in this session.
+    pending = match_pending(ctx, "pending_dosage", "name", medication_name)
+    if pending is None:
+        return (
+            "Refused to save: no matching pending dosage change was confirmed. Propose "
+            "the change first (confirmed=false) and get the user's explicit yes."
+        )
+    # A tap/short "yes" that doesn't resupply the dose still saves the one read back.
+    dosage = dosage or pending.get("dosage")
+
+    meds = await find_medications(ctx, medication_name, columns="id,name,dosage")
+    if not meds:
+        if ctx.session is not None:
+            ctx.session.pending_dosage = None
+            ctx.session.awaiting_confirmation = False
+        return (
+            f"No medication named '{medication_name}' is on file, so I can't change its "
+            "dose. Ask the user to confirm the name or add the prescription first."
+        )
+    med = meds[0]
+    before = med.get("dosage")
+    await ctx.db().update(
+        "medications",
+        {"dosage": dosage},
+        filters={"id": f"eq.{med['id']}"},
+        returning=False,
+    )
+    if ctx.session is not None:
+        ctx.session.pending_dosage = None
+        ctx.session.awaiting_confirmation = False
+    record_action(
+        ctx,
+        tool="update_medication_dosage",
+        summary=f"{med['name']}: {dosage}",
+        entity_type="medication",
+        entity_id=med["id"],
+        changed_fields={"dosage": {"before": before, "after": dosage}},
+        name=med["name"],
+    )
+    return f"Saved. I updated {med['name']} to {dosage}."
+
+
+_DISCONTINUE_SCHEMA = {
+    "name": "discontinue_medication",
+    "description": (
+        "Stop a medication the elder no longer takes ('stop taking my X', "
+        "'discontinue X', 'remove X'). Marks it Stopped in the record — it is "
+        "NEVER deleted; the history stays visible under past medications. "
+        "SAFETY: propose→confirm — first call with confirmed=false to read the "
+        "stop back, and only call again with confirmed=true after the user's "
+        "explicit yes. Not for a dose change (update_medication_dosage) or a "
+        "time change (set_medication_reminder)."
+    ),
+    "input_schema": {
+        "type": "object",
+        "properties": {
+            "medication_name": {
+                "type": "string",
+                "description": "Name of the medication to stop (already on file).",
+            },
+            "confirmed": {
+                "type": "boolean",
+                "description": "false = propose only (no write); true = commit "
+                "after the user confirmed.",
+            },
+        },
+        "required": ["medication_name"],
+    },
+}
+
+
+async def discontinue_medication(
+    ctx: ToolContext, medication_name: str, confirmed: bool = False
+) -> str:
+    if not confirmed:
+        meds = await find_medications(
+            ctx, medication_name, columns="id,name,dosage", limit=None
+        )
+        # Same-name duplicates collapse to the first row; DIFFERENT matched
+        # names are a genuine ambiguity — ask, never guess which to stop.
+        distinct: dict[str, dict] = {}
+        for m in meds:
+            distinct.setdefault((m.get("name") or "").strip().lower(), m)
+        if not distinct:
+            return (
+                f"No medication named '{medication_name}' is on file, so there's "
+                "nothing to stop. Ask the user to confirm the name, or list "
+                "their medications first."
+            )
+        if len(distinct) > 1:
+            names = ", ".join(m.get("name") or "?" for m in distinct.values())
+            return (
+                f"More than one medication matches '{medication_name}': {names}. "
+                "Ask the user which one they mean, then call "
+                "discontinue_medication again with that exact name."
+            )
+        med = next(iter(distinct.values()))
+        if ctx.session is not None:
+            ctx.session.pending_bulk = {
+                "tool": "discontinue_medication",
+                "items": [{"medication_id": med["id"], "name": med["name"]}],
+            }
+            ctx.session.awaiting_confirmation = True
+        label = med["name"] + (f" {med['dosage']}" if med.get("dosage") else "")
+        return (
+            f"PROPOSED (not yet saved). Stop {label} — it stays in the record "
+            "as Stopped, never deleted. Read this back and ask the user one "
+            "yes/no before saving."
+        )
+
+    # confirmed=true: only honor a confirm for the med that was read back.
+    items = match_pending_bulk(ctx, "discontinue_medication")
+    item = items[0] if items else None
+    stashed = ((item or {}).get("name") or "").strip().lower()
+    if item is None or stashed != (medication_name or "").strip().lower():
+        return (
+            "Refused to save: no matching pending stop was confirmed. Propose "
+            "it first (confirmed=false) and get the user's explicit yes."
+        )
+    if ctx.session is not None:
+        ctx.session.pending_bulk = None
+        ctx.session.awaiting_confirmation = False
+
+    # Re-read fresh by id (never trust the stash's snapshot of the row).
+    meds = await ctx.db().select(
+        "medications",
+        columns="id,name,archived",
+        filters={"id": f"eq.{item.get('medication_id')}"},
+        limit=1,
+    )
+    if not meds or meds[0].get("archived"):
+        return (
+            f"{item.get('name') or 'That medication'} is no longer active on "
+            "file — there's nothing to stop. Tell the user honestly."
+        )
+    med = meds[0]
+    # NEVER a delete: archived=true is the Stopped state the UI shows.
+    await ctx.db().update(
+        "medications",
+        {"archived": True},
+        filters={"id": f"eq.{med['id']}"},
+        returning=False,
+    )
+    record_action(
+        ctx,
+        tool="discontinue_medication",
+        summary=f"{med['name']} stopped",
+        entity_type="medication",
+        entity_id=med["id"],
+        changed_fields={"status": {"before": "active", "after": "discontinued"}},
+        name=med["name"],
+    )
+    return (
+        f"Done. {med['name']} is marked as Stopped — it stays in the record, "
+        "nothing was deleted."
+    )
+
+
 register(_LIST_SCHEMA, list_medications)
 register(_ADD_SCHEMA, add_prescription)
 register(_REMINDER_SCHEMA, set_medication_reminder)
+register(_SCHEMA_UPDATE_DOSAGE, update_medication_dosage)
+register(_DISCONTINUE_SCHEMA, discontinue_medication)

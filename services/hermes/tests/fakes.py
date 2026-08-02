@@ -16,7 +16,13 @@ def _match_one(row: dict, col: str, expr: str) -> bool:
     if op == "eq":
         return str(actual).lower() == val.lower()
     if op == "ilike":
-        return val.strip("%").lower() in str(actual).lower()
+        # Mirror real PostgREST semantics: wildcard-less ilike is an EXACT
+        # case-insensitive match; only * / % patterns match as substring. The
+        # old always-substring fake masked exactly the find_medications bug.
+        pat = str(val).lower()
+        if "*" in pat or "%" in pat:
+            return pat.strip("*%") in str(actual).lower()
+        return str(actual).lower() == pat
     if op == "lte":
         return actual is not None and str(actual) <= val
     if op == "gte":
@@ -42,17 +48,24 @@ class FakeDB:
 
     async def insert(self, table, row, returning=True):
         self.inserted.append((table, row))
-        if not returning:
-            return []
-        # Mirror PostgREST: an INSERT with return=representation echoes the row
-        # including the DB-generated primary key. Synthesize a stable id when the
-        # payload didn't carry one, so tools that read the new id work offline.
+        # Mirror PostgREST: the row lands in the table (with a synthesized
+        # primary key when the payload didn't carry one), so an independent
+        # re-read (a later select) reflects the write — same as ``update``
+        # patching rows in place. With return=representation the stored row
+        # (including its id) is echoed back.
         stored = dict(row)
         stored.setdefault("id", f"fake-{table}-{len(self.inserted)}")
-        return [stored]
+        self.tables.setdefault(table, []).append(stored)
+        return [stored] if returning else []
 
     async def update(self, table, patch, *, filters, returning=True):
         self.updated.append((table, patch, filters))
+        # Apply the patch to matching in-memory rows so an independent re-read (a
+        # later select) reflects the write, mirroring PostgREST. Existing assertions
+        # that inspect ``self.updated`` are unaffected.
+        for row in self.tables.get(table, []):
+            if all(_match_one(row, col, expr) for col, expr in (filters or {}).items()):
+                row.update(patch)
         return [patch] if returning else []
 
 

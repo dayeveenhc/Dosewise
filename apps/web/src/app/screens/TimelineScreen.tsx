@@ -79,7 +79,7 @@ export function TimelineScreen({ patient, justAddedMed, onSendReminder }: { pati
       </div>
 
       {/* Week strip */}
-      <div className="dw-surface px-3 pt-3 pb-2 mb-4">
+      <div className="dw-surface px-3 pt-3 pb-2 mb-4" data-walk="cg-week-strip">
         <div className="flex items-center justify-between mb-2">
           <div className="flex items-center gap-0.5">
             <button onClick={() => setWeekOffset(o => o - 1)} className="w-7 h-7 flex items-center justify-center active:opacity-60 transition-opacity">
@@ -171,8 +171,9 @@ export function TimelineScreen({ patient, justAddedMed, onSendReminder }: { pati
                   <div className={`w-3 h-3 rounded-full shrink-0 ${cfg.dot} shadow-sm`} />
                   {i < dayMeds.length - 1 && <div className="w-px flex-1 bg-border mt-1" />}
                 </div>
-                {/* Entry — home-page schedule card styling */}
-                <div className={`flex-1 mb-4 bg-card rounded-2xl border shadow-sm overflow-hidden ${justAdded ? "border-2 border-taken ring-2 ring-taken/40" : cfg.line}`}>
+                {/* Entry — home-page schedule card styling. data-testid keys the
+                    caregiver-side dose ChangeHighlight (entity_id = medication uuid). */}
+                <div data-testid={med.medicationId ? `medication-${med.medicationId}` : undefined} className={`flex-1 mb-4 bg-card rounded-2xl border shadow-sm overflow-hidden ${justAdded ? "border-2 border-taken ring-2 ring-taken/40" : cfg.line}`}>
                   <div className="flex items-start gap-3 px-4 py-3">
                     <MedAvatar name={med.name} size={44} className="rounded-lg shrink-0" />
                     <div className="flex-1 min-w-0">

@@ -131,7 +131,10 @@ export function ElderlyPrescriptionScreen({ patient, onAddRx, onRequestRefill, j
                 <div className="flex items-start gap-3">
                   <MedAvatar name={m.name} size={48} className="rounded-xl shrink-0" />
                   <div className="flex-1 min-w-0">
-                    <p className="font-bold text-[calc(17px*var(--dw-text,1))] text-foreground leading-tight break-words">{m.name}</p>
+                    <p className="font-bold text-[calc(17px*var(--dw-text,1))] text-foreground leading-tight break-words">
+                      {m.name}
+                      {m.dose && <span className="ml-1.5 text-[calc(14px*var(--dw-text,1))] font-semibold text-muted-foreground">{m.dose}</span>}
+                    </p>
                     {/* Instructions first (most actionable), then the reason.
                         Both align flush under the name now that the leading
                         colour dot is gone. */}
@@ -215,6 +218,10 @@ export function ElderlyPrescriptionScreen({ patient, onAddRx, onRequestRefill, j
         })}
         </div>
 
+        {/* Stopped (archived) medications — always visible, grouped after the
+            active cards, each keyed by its real medication uuid so a
+            discontinue_medication highlight lands on data-testid="medication-{id}".
+            Muted on purpose: stopped, never deleted. */}
         {pastMedications.length > 0 && (
           <div className="dw-surface overflow-hidden">
             <button
@@ -229,9 +236,14 @@ export function ElderlyPrescriptionScreen({ patient, onAddRx, onRequestRefill, j
             {pastOpen && (
               <div className="divide-y divide-border border-t border-border">
                 {pastMedications.map(m => (
-                  <div key={m.id} className="px-4 py-3.5">
-                    <p className="text-[calc(15px*var(--dw-text,1))] font-bold text-muted-foreground">{m.name} <span className="text-[calc(14px*var(--dw-text,1))] font-normal">{m.dose}</span></p>
-                    <p className="text-[calc(14px*var(--dw-text,1))] text-muted-foreground/80">{m.purpose}</p>
+                  <div key={m.id} data-testid={`medication-${m.id}`} className="px-4 py-3.5 flex items-center gap-2 opacity-80">
+                    <div className="flex-1 min-w-0">
+                      <p className="text-[calc(15px*var(--dw-text,1))] font-bold text-muted-foreground">{m.name} <span className="text-[calc(14px*var(--dw-text,1))] font-normal">{m.dose}</span></p>
+                      <p className="text-[calc(14px*var(--dw-text,1))] text-muted-foreground/80">{m.purpose}</p>
+                    </div>
+                    <span className="shrink-0 text-[calc(10px*var(--dw-text,1))] font-bold uppercase tracking-wide text-stone-600 bg-stone-100 border border-stone-200 rounded-full px-2 py-0.5">
+                      {t(language, "prescription.stopped")}
+                    </span>
                   </div>
                 ))}
               </div>

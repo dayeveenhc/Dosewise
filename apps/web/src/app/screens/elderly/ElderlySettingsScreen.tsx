@@ -11,6 +11,8 @@ import type { FontSize, ContrastMode, ColourVisionMode, NotificationPrefs } from
 import type { Patient } from "../../types";
 import { MED_SHAPES, COMMON_CONDITIONS, COMMON_ALLERGIES, COMMON_DRUG_ALLERGIES } from "../../data/medications";
 import { fetchProfile, saveProfile, calculateAge } from "../../lib/profile";
+import type { SymptomReport } from "../../lib/profile";
+import { normalizeAllergies, slugify } from "../../lib/changeHighlight";
 import { TagList, GenderPicker, withCatalogLabels } from "../setup/GuidedSetupWizard";
 import { MedAvatar } from "../../components/shared";
 import { MeiSuggestButton } from "../../components/MeiSuggestButton";
@@ -179,6 +181,14 @@ export function ElderlySettingsScreen({ patient, elderId, onUpdatePatient, onSig
   const [heightDraft, setHeightDraft] = useState("");
   const [conditionsDraft, setConditionsDraft] = useState<string[]>([]);
   const [allergiesDraft, setAllergiesDraft] = useState<string[]>([]);
+  // Normalized saved allergies (legacy strings OR promoted {name, severity}
+  // objects — lib/changeHighlight.ts's normalizeAllergies) — drives the
+  // always-visible chips in the summary card, so a set_allergy_severity
+  // highlight (data-testid="allergy-{slug}") resolves even while the editable
+  // profile section is collapsed; severities survive a profile save.
+  const [allergyEntries, setAllergyEntries] = useState<{ name: string; severity: string | null }[]>([]);
+  // Read-only symptom journal written by Mei's add_symptom tool.
+  const [symptomReports, setSymptomReports] = useState<SymptomReport[]>([]);
   const [drugAllergiesDraft, setDrugAllergiesDraft] = useState<string[]>([]);
   const [wakeDraft, setWakeDraft] = useState("07:00");
   const [breakfastDraft, setBreakfastDraft] = useState("08:00");
@@ -201,7 +211,12 @@ export function ElderlySettingsScreen({ patient, elderId, onUpdatePatient, onSig
       setWeightDraft(d.weightKg ? String(d.weightKg) : "");
       setHeightDraft(d.heightCm ? String(d.heightCm) : "");
       setConditionsDraft(d.conditions ?? []);
-      setAllergiesDraft(d.allergies ?? []);
+      const allergies = normalizeAllergies(d.allergies).filter(a => a.name);
+      setAllergyEntries(allergies);
+      setAllergiesDraft(allergies.map(a => a.name));
+      setSymptomReports(
+        [...(d.symptom_reports ?? [])].sort((a, b) => (b.noted_at ?? "").localeCompare(a.noted_at ?? ""))
+      );
       setDrugAllergiesDraft(d.drugAllergies ?? []);
       setWakeDraft(d.wakeTime ?? "07:00");
       setBreakfastDraft(d.mealTimes?.breakfast ?? "08:00");
@@ -219,18 +234,33 @@ export function ElderlySettingsScreen({ patient, elderId, onUpdatePatient, onSig
     if (!elderId) return;
     setProfileSaving(true);
     const mealTimes = { breakfast: breakfastDraft, lunch: lunchDraft, dinner: dinnerDraft };
+    // Re-attach a graded severity (set via Mei's set_allergy_severity) to any
+    // surviving name, so editing the list here never silently drops a grade.
+    const severityByName = Object.fromEntries(
+      allergyEntries.filter(a => a.severity).map(a => [a.name.trim().toLowerCase(), a.severity!])
+    );
+    const savedAllergies = allergiesDraft.map(n => {
+      const severity = severityByName[n.trim().toLowerCase()];
+      return severity ? { name: n, severity } : n;
+    });
+    // Read-merge-write (profile.ts's rule for this shared jsonb): fields this
+    // form doesn't edit — medical_profile, symptom_reports, dose_snoozes,
+    // travelPlan, completedWalkthroughs — must survive a save here.
+    const existing = (await fetchProfile(elderId))?.details ?? {};
     await saveProfile(elderId, "elder", patient.name, {
+      ...existing,
       dob: dobDraft || undefined,
       weightKg: weightDraft ? Number(weightDraft) : undefined,
       heightCm: heightDraft ? Number(heightDraft) : undefined,
       gender: genderDraft || undefined,
       conditions: conditionsDraft,
-      allergies: allergiesDraft,
+      allergies: savedAllergies,
       drugAllergies: drugAllergiesDraft,
       wakeTime: wakeDraft,
       mealTimes,
       sleepTime: sleepDraft,
     });
+    setAllergyEntries(normalizeAllergies(savedAllergies));
     onUpdatePatient({
       ...patient,
       age: dobDraft ? calculateAge(dobDraft) : patient.age,
@@ -710,12 +740,57 @@ export function ElderlySettingsScreen({ patient, elderId, onUpdatePatient, onSig
                 </div>
                 <ChevronRight size={22} className="text-muted-foreground shrink-0" />
               </div>
-              {patient.conditions.length > 0 && (
+              {(patient.conditions.length > 0 || allergyEntries.length > 0) && (
                 <div className="flex flex-wrap gap-1.5 mt-3">
                   {patient.conditions.map(c => <span key={c} className="text-[calc(14px*var(--dw-text,1))] font-semibold bg-secondary text-secondary-foreground rounded-full px-3 py-1">{c}</span>)}
+                  {/* Saved allergies (both legacy strings and promoted
+                      {name, severity} objects — lib/changeHighlight.ts's
+                      normalizeAllergies). Always visible so a
+                      set_allergy_severity highlight can land on
+                      data-testid="allergy-{slug}" without the profile
+                      sub-screen being open. */}
+                  {allergyEntries.map(a => (
+                    <span
+                      key={a.name}
+                      data-testid={`allergy-${slugify(a.name)}`}
+                      className="inline-flex items-center gap-1.5 text-[calc(14px*var(--dw-text,1))] font-semibold bg-card text-destructive border border-destructive/30 rounded-full px-3 py-1"
+                    >
+                      {a.name}
+                      {a.severity && (
+                        <em className="not-italic text-[calc(12px*var(--dw-text,1))] font-bold uppercase tracking-wide bg-destructive text-destructive-foreground rounded-full px-1.5 py-0.5">{a.severity}</em>
+                      )}
+                    </span>
+                  ))}
                 </div>
               )}
             </button>
+
+            {/* Symptoms noted — read-only journal written by Mei's add_symptom
+                tool (accessibility.symptom_reports), newest first; hidden when
+                empty so it never shows an empty card. */}
+            {/* Not a SectionCard: those stamp data-settings={anchor}, and the
+                only fitting anchor ("profile") is already claimed by the card
+                above — a duplicate would break the search jump. */}
+            {symptomReports.length > 0 && (
+              <div className="dw-surface overflow-hidden">
+                <div className="px-4 py-3.5">
+                  <h2 className="text-[calc(17px*var(--dw-text,1))] font-bold text-foreground leading-tight">{t(language, "settings.symptomsNoted")}</h2>
+                </div>
+                <div className="divide-y divide-border border-t border-border">
+                  {symptomReports.map(r => (
+                    <div key={r.id} data-testid={`symptom-${r.id}`} className="px-4 py-3.5">
+                      <p className="text-[calc(15px*var(--dw-text,1))] text-foreground leading-snug break-words">{r.symptom}</p>
+                      <p className="text-[calc(14px*var(--dw-text,1))] text-muted-foreground mt-0.5">
+                        {r.medication_name ? `${r.medication_name} · ` : ""}
+                        {Number.isNaN(new Date(r.noted_at).getTime())
+                          ? ""
+                          : new Date(r.noted_at).toLocaleDateString("en-SG", { day: "numeric", month: "short" })}
+                      </p>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
 
             <div data-settings="caregiver" className="scroll-mt-3">{qrCard}</div>
 

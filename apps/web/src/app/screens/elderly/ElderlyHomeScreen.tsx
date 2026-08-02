@@ -144,6 +144,9 @@ export function ElderlyHomeScreen({ patient, onLogDose, onUnlogDose, onOpenTrave
     // eslint-disable-next-line react-hooks/exhaustive-deps
     [patient.medications, selectedDay, nowMinutes],
   );
+  // Today's local date (YYYY-MM-DD) for matching accessibility.dose_snoozes
+  // entries — those are written with the elder's wall-clock date.
+  const localDateISO = `${today.getFullYear()}-${String(today.getMonth() + 1).padStart(2, "0")}-${String(today.getDate()).padStart(2, "0")}`;
   const takenCount = dayMeds.filter(m => m.status === "taken").length;
   const total = patient.medications.length;
   // The shared rule, so this banner lists exactly the medicines the Medications
@@ -374,6 +377,11 @@ export function ElderlyHomeScreen({ patient, onLogDose, onUnlogDose, onOpenTrave
       );
     }
 
+    // One-time reminder snooze for this medication today (snooze_dose tool) —
+    // display only; the schedule itself is unchanged.
+    const snooze = isSelectedToday && m.medicationId
+      ? patient.doseSnoozes?.find(s => s.medication_id === m.medicationId && s.date === localDateISO)
+      : undefined;
     const justAdded = !!justAddedMed && m.name === justAddedMed;
     // The dose that is due right now is a SOLID pine card — the one card on the
     // screen that fills with the brand colour, the way the palette always
@@ -408,6 +416,14 @@ export function ElderlyHomeScreen({ patient, onLogDose, onUnlogDose, onOpenTrave
               {isMissed && (
                 <span className="flex items-center gap-1 bg-card text-missed-fg border border-missed-border text-[calc(12px*var(--dw-text,1))] font-bold px-2 py-0.5 rounded-full">
                   <AlertTriangle size={11} />{t(language, "common.missed")}
+                </span>
+              )}
+              {/* A one-off snooze for today (snooze_dose tool) — display only,
+                  the schedule itself is unchanged. bg-card like the missed
+                  badge so it stays legible on the solid pine next-dose card. */}
+              {snooze && (
+                <span className="flex items-center gap-1 bg-card text-warn-fg border border-warn-border text-[calc(12px*var(--dw-text,1))] font-bold px-2 py-0.5 rounded-full">
+                  <Clock size={11} />{t(language, "home.snoozedUntil", { time: formatClock(snooze.until, timeFormat) })}
                 </span>
               )}
             </div>

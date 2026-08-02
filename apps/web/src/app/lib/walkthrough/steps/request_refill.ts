@@ -10,6 +10,12 @@ export const requestRefillSteps: WalkthroughStep[] = [
   {
     id: "refill.tap-request",
     screen: { mode: "elderly", tab: "prescriptions" },
+    // Mei triggers this walkthrough from chat (the AI tab), so the first step
+    // must switch to Prescriptions itself — otherwise the spotlight target
+    // (`med-request-refill-btn`, rendered only on Prescriptions) never mounts
+    // and the user-driven step can't advance (no Next on waitFor steps). Mirrors
+    // step 2's onEnter to the AI tab.
+    onEnter: { mode: "elderly", tab: "prescriptions" },
     selector: '[data-walk="med-request-refill-btn"]',
     instructionKey: "walk.refill.tapRequest",
     waitFor: { type: "click", source: "dom" },

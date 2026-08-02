@@ -7,6 +7,7 @@ string is what lands back in the model's context, so keep it concise and factual
 
 from __future__ import annotations
 
+import re
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field
 from typing import Any
@@ -30,6 +31,14 @@ class ToolContext:
     # something was saved (vs merely proposed) and act on it — e.g. the web app
     # confirms and redirects to the page that shows the change. Fresh per turn:
     # ToolContext is rebuilt per request (HTTP) / per message (Telegram).
+    #
+    # Two entry shapes exist:
+    # * single (``record_action``) — ``{tool, summary, entity_type, entity_id,
+    #   changed_fields, **extra}`` — one write to one entity.
+    # * bulk (``record_bulk_action``) — ``{tool, summary, entities: [...], **extra}``
+    #   — ONE committed action covering multiple entities (e.g. resolving every
+    #   missed dose at once). Each item in ``entities`` mirrors the single shape's
+    #   per-entity fields: ``{entity_type, entity_id, changed_fields, ...}``.
     committed_actions: list[dict] = field(default_factory=list)
     # Set by start_walkthrough when queued this turn — {"task_name": str}. NOT a
     # write, so deliberately separate from committed_actions: nothing was saved,
@@ -72,6 +81,9 @@ def record_action(
       is ``None`` for a newly-created record. The UI builds its caption from this.
 
     ``extra`` keeps back-compat keys (e.g. ``name`` for the legacy med highlight).
+
+    For a single commit that touches MANY entities at once, use
+    ``record_bulk_action`` instead — one action with an ``entities`` list.
     """
     ctx.committed_actions.append(
         {
@@ -85,6 +97,62 @@ def record_action(
     )
 
 
+def record_bulk_action(
+    ctx: ToolContext,
+    *,
+    tool: str,
+    summary: str,
+    entities: list[dict],
+    **extra: Any,
+) -> None:
+    """Append ONE committed action covering MULTIPLE entities.
+
+    Shape: ``{tool, summary, entities: [{entity_type, entity_id, changed_fields,
+    ...}, ...], **extra}``. Each entity dict mirrors ``record_action``'s per-entity
+    fields (``entity_type`` / ``entity_id`` / ``changed_fields``, plus any
+    per-entity extras like ``dose_id`` or ``slot``); ``entity_id`` is coerced to
+    ``str`` exactly like ``record_action`` does. Called ONLY from a commit branch —
+    never a propose — so a bulk write (e.g. resolve_missed_doses marking every
+    missed dose taken) surfaces as one action the UI can walk, not N loose ones.
+    """
+    ctx.committed_actions.append(
+        {
+            "tool": tool,
+            "summary": summary,
+            "entities": [
+                {**e, "entity_id": str(e.get("entity_id", ""))} for e in entities
+            ],
+            **extra,
+        }
+    )
+
+
+_DOSAGE_SUFFIX = re.compile(
+    r"\s*\d+(?:\.\d+)?\s*(?:mg|mcg|g|ml|iu|units?)\b.*$", re.IGNORECASE
+)
+
+# Same unit vocabulary as _DOSAGE_SUFFIX, but with capture groups — that
+# pattern only ever `.sub()`s a name string, this one extracts a comparable
+# (value, unit) pair from a free-text dosage like "500mg" or "2.5 ml".
+_DOSAGE_VALUE = re.compile(r"(\d+(?:\.\d+)?)\s*(mg|mcg|g|ml|iu|units?)\b", re.IGNORECASE)
+
+
+def parse_dosage(text: str | None) -> tuple[float, str] | None:
+    """The first ``(value, unit)`` a free-text dosage string names, or ``None``.
+
+    ``unit`` is lowercased. Returns ``None`` for anything without a recognized
+    number+unit (``"2 tablets"``, ``"as needed"``, empty, ``None``) so callers
+    can fail open — no dosage-magnitude check in this codebase should ever
+    crash or misfire on an unparseable value, only skip silently.
+    """
+    if not text:
+        return None
+    m = _DOSAGE_VALUE.search(text)
+    if not m:
+        return None
+    return float(m.group(1)), m.group(2).lower()
+
+
 async def find_medications(
     ctx: ToolContext, name: str, *, columns: str, limit: int | None = 1
 ) -> list[dict]:
@@ -96,13 +164,31 @@ async def find_medications(
     shares the filter + table. ``limit=None`` returns all matches (e.g. the
     verify tool, which counts/exact-matches every row); the default ``limit=1``
     suits the "act on one med" tools.
+
+    A wildcard-less PostgREST ``ilike`` is an EXACT case-insensitive match, so a
+    model echoing a display label ("Metformin 500mg") used to yield a false
+    "not on file". On an exact miss this now retries with the dosage suffix
+    stripped, then as a substring (``*name*``) — so honest near-matches resolve
+    while the exact form stays the fast path.
     """
-    return await ctx.db().select(
-        "medications",
-        columns=columns,
-        filters={"name": f"ilike.{name}", "archived": "eq.false"},
-        limit=limit,
-    )
+
+    async def q(pattern: str) -> list[dict]:
+        return await ctx.db().select(
+            "medications",
+            columns=columns,
+            filters={"name": f"ilike.{pattern}", "archived": "eq.false"},
+            limit=limit,
+        )
+
+    meds = await q(name)
+    if meds:
+        return meds
+    stripped = _DOSAGE_SUFFIX.sub("", name).strip()
+    if stripped and stripped.lower() != name.strip().lower():
+        meds = await q(stripped)
+        if meds:
+            return meds
+    return await q(f"*{stripped or name.strip()}*")
 
 
 def match_pending(ctx: ToolContext, slot: str, key: str, value: Any) -> dict | None:
@@ -121,6 +207,23 @@ def match_pending(ctx: ToolContext, slot: str, key: str, value: Any) -> dict | N
     if pending is None or pending.get(key) != value:
         return None
     return pending
+
+
+def match_pending_bulk(ctx: ToolContext, tool: str) -> list | None:
+    """The pending bulk proposal's ``items`` for ``tool``, if one is stashed.
+
+    The bulk counterpart of ``match_pending``: multi-item propose→confirm tools
+    share ONE session slot, ``pending_bulk`` = ``{"tool": str, "items": list}``.
+    A commit is honored only when the stashed proposal belongs to the SAME tool,
+    so a ``confirmed=true`` call can never save a list that was never read back
+    and agreed to (or one proposed by a different tool). Returns the ``items``
+    list, else ``None`` — the caller refuses to save on ``None`` with its own
+    tool-specific wording.
+    """
+    pending = getattr(ctx.session, "pending_bulk", None) if ctx.session else None
+    if not isinstance(pending, dict) or pending.get("tool") != tool:
+        return None
+    return pending.get("items") or []
 
 
 def first_id(inserted: list[dict]) -> str:

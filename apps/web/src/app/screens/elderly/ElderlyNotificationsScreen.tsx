@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { MessageSquare, User, ShieldQuestion, Check, X, Loader2, Plus, Trash2, Circle, Brain, AlertTriangle, CornerUpLeft, Send, Stethoscope } from "lucide-react";
+import { MessageSquare, User, ShieldQuestion, Check, X, Loader2, Plus, Trash2, Circle, Brain, AlertTriangle, CornerUpLeft, Send, Stethoscope, RefreshCw } from "lucide-react";
 import type { Message } from "../../types";
 import type { DoctorQ } from "./types";
 import { useLanguage } from "../../lib/languageContext";
@@ -32,6 +32,9 @@ export function ElderlyNotificationsScreen({ careMessages, elderId, doctorQuesti
   const [replyingTo, setReplyingTo] = useState<number | null>(null);
   const [replyText, setReplyText] = useState("");
   const [tab, setTab] = useState<"messages" | "questions">("messages");
+  // Demo low-stock alert (no live push infra) — dismissible locally. Carries
+  // the notifications_tour's stable anchors (notif-refill-row / notif-ack-btn).
+  const [refillMockDismissed, setRefillMockDismissed] = useState(false);
 
   useEffect(() => {
     if (openQuestionsSignal) setTab("questions");
@@ -124,6 +127,30 @@ export function ElderlyNotificationsScreen({ careMessages, elderId, doctorQuesti
                 </div>
               </div>
             ))}
+          </div>
+        )}
+
+        {/* Mock low-stock/refill alert — mirrors the caregiver demo toast; the
+            notifications_tour spotlights this row and its Got it button. Sits
+            above the tabs so the tour's anchors are on screen from the start. */}
+        {!refillMockDismissed && (
+          <div data-walk="notif-refill-row" className="rounded-2xl border border-warn-border bg-warn-bg p-4">
+            <div className="flex items-center gap-2 mb-1.5">
+              <div className="w-9 h-9 rounded-full bg-card flex items-center justify-center shrink-0">
+                <RefreshCw size={15} className="text-warn-fg" />
+              </div>
+              <p className="text-[calc(15px*var(--dw-text,1))] font-bold text-warn-fg flex-1">{t(language, "notifications.lowStockTitle", { med: "Metformin" })}</p>
+            </div>
+            <p className="text-[calc(15px*var(--dw-text,1))] text-warn-fg/90 leading-relaxed mb-3">
+              {t(language, "notifications.lowStockBody", { med: "Metformin 500mg", days: 4 })}
+            </p>
+            <button
+              onClick={() => setRefillMockDismissed(true)}
+              data-walk="notif-ack-btn"
+              className="w-full bg-card border border-warn-border text-warn-fg rounded-xl py-2.5 text-[calc(15px*var(--dw-text,1))] font-bold flex items-center justify-center gap-1.5 active:scale-[0.98] transition-transform"
+            >
+              <Check size={16} />{t(language, "notifications.gotIt")}
+            </button>
           </div>
         )}
 

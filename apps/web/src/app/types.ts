@@ -53,6 +53,11 @@ export interface Patient {
   sleepTime?: string;
   pastMedications?: { id: string; name: string; dose: string; purpose: string }[];
   travelPlan?: { startDate: string; endDate: string; timezone: string };
+  // One-time reminder snoozes written by Mei's snooze_dose tool into
+  // profiles.accessibility.dose_snoozes (snake_case keys as stored —
+  // lib/profile.ts's DoseSnooze). Threaded from fetchProfile so the Home
+  // schedule can show a "Snoozed until …" chip on today's card.
+  doseSnoozes?: { medication_id: string; name?: string; slot: string; date: string; until: string }[];
 }
 
 export interface Notification {

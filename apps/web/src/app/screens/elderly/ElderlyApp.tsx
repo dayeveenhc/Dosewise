@@ -15,7 +15,7 @@ import type { AgentAction } from "../../lib/hermes";
 import { GuidedTour } from "../../components/GuidedTour";
 import type { TourStep } from "../../components/GuidedTour";
 import { ConfirmDialog } from "../../components/ConfirmDialog";
-import { logDoseTaken, unlogDoseTaken, addMedication, fetchElderMedications, to24h } from "../../lib/medications";
+import { logDoseTaken, unlogDoseTaken, addMedication, fetchElderMedications, fetchArchivedMedications, to24h } from "../../lib/medications";
 import { defaultDoseTime } from "../../components/TimesPicker";
 import { MED_COLOURS } from "../../data/medications";
 import { useLanguage } from "../../lib/languageContext";
@@ -23,6 +23,8 @@ import { useAccessibility } from "../../accessibility.tsx";
 import { t } from "../../lib/language";
 import { Walkthrough } from "../../components/Walkthrough";
 import { resolveWalkthroughSteps } from "../../lib/walkthrough/steps";
+import { PACING } from "../../lib/walkthrough/pacing";
+import { buildVerifyRunner } from "../../lib/walkthrough/verify";
 import type { WalkthroughScreen, WalkthroughTaskName, VerifyDirective, RevealDirective, WalkthroughParams } from "../../lib/walkthrough/types";
 import { loadWalkthroughSession, saveWalkthroughSession, clearWalkthroughSession } from "../../lib/walkthroughState";
 import { markWalkthroughCompleted, fetchProfile } from "../../lib/profile";
@@ -30,7 +32,7 @@ import { fetchDoctorQuestions, createDoctorQuestion } from "../../lib/doctor";
 import { hasActiveCareLink } from "../../lib/careLinks";
 import { formatClockAt } from "../../lib/medications";
 
-export function ElderlyApp({ patient, elderId, onUpdatePatient, onSignOut, startTour, careMessages, onDismissCareMessage, onReplyCareMessage }: {
+export function ElderlyApp({ patient, elderId, onUpdatePatient, onSignOut, startTour, careMessages, onDismissCareMessage, onReplyCareMessage, onStartOnboardingWizard }: {
   patient: Patient;
   elderId?: string;
   onUpdatePatient: (p: Patient | ((prev: Patient) => Patient)) => void;
@@ -39,6 +41,10 @@ export function ElderlyApp({ patient, elderId, onUpdatePatient, onSignOut, start
   careMessages: Message[];
   onDismissCareMessage: (id: number) => void;
   onReplyCareMessage: (id: number, text: string) => void;
+  // Chat asked for the "onboarding" walkthrough — its steps live on the
+  // wizard, a separate stage this shell can't spotlight, so the host (App)
+  // switches into it and resumes back here on exit.
+  onStartOnboardingWizard?: () => void;
 }) {
   const [tab, setTab] = useState<ElderlyTab>("home");
   // A screen with its own sub-view (the chat, an Ask Mei category, a Settings
@@ -181,6 +187,18 @@ export function ElderlyApp({ patient, elderId, onUpdatePatient, onSignOut, start
   const walkthroughSteps = walkthroughTask ? resolveWalkthroughSteps(walkthroughTask, "elder", walkthroughParams) : [];
 
   const handleWalkthroughStart = (taskName: WalkthroughTaskName, params: WalkthroughParams = {}) => {
+    // "onboarding" steps live on the wizard, not this shell — running them here
+    // would stall on selectors that never mount. Surface it to App instead
+    // (chat→wizard entry; scenario s30 finishes the UX). Deliberately does NOT
+    // save a walkthrough session: this shell's own <Walkthrough> never runs
+    // for this task, so a saved session would only get restored on return
+    // (after the wizard hands back via resumeElderAfterWizard) and mount an
+    // overlay whose first selector doesn't exist here — a permanent stuck
+    // scrim with no Exit, found live by scenario s30.
+    if (taskName === "onboarding" && onStartOnboardingWizard) {
+      onStartOnboardingWizard();
+      return;
+    }
     setWalkthroughTask(taskName);
     setWalkthroughStepIndex(0);
     setWalkthroughParams(params);
@@ -188,64 +206,20 @@ export function ElderlyApp({ patient, elderId, onUpdatePatient, onSignOut, start
   };
 
   // Guided Auto-Navigation Verify phase: re-query REAL state (never trust the
-  // write's own "Saved"). Polls briefly since the sheet's write is async and the
-  // Verify fires right after Mei taps Save.
+  // write's own "Saved"). All checks live in lib/walkthrough/verify.ts's
+  // buildVerifyRunner — this host only injects its real data fetchers (that
+  // module must not import anything Supabase-backed itself).
   const handleWalkthroughVerify = async (verify: VerifyDirective): Promise<boolean> => {
     if (!elderId) return false;
-    if (verify.kind === "medication-exists") {
-      const wanted = verify.name.trim().toLowerCase();
-      for (let attempt = 0; attempt < 12; attempt++) {
-        const meds = await fetchElderMedications(elderId);
-        if (meds.some(m => m.name.trim().toLowerCase() === wanted)) return true;
-        await new Promise(r => setTimeout(r, 400));
-      }
-      return false;
-    }
-    if (verify.kind === "travel-plan-saved") {
-      for (let attempt = 0; attempt < 12; attempt++) {
-        const profile = await fetchProfile(elderId);
-        if (profile?.details.travelPlan?.startDate) return true;
-        await new Promise(r => setTimeout(r, 400));
-      }
-      return false;
-    }
-    if (verify.kind === "profile-field") {
-      const want = verify.value.trim();
-      for (let attempt = 0; attempt < 12; attempt++) {
-        const profile = await fetchProfile(elderId);
-        const actual = profile?.details[verify.field as keyof typeof profile.details];
-        if (actual !== undefined && actual !== null && String(actual) === want) return true;
-        await new Promise(r => setTimeout(r, 400));
-      }
-      return false;
-    }
-    if (verify.kind === "profile-list-includes") {
-      const want = verify.value.trim().toLowerCase();
-      for (let attempt = 0; attempt < 12; attempt++) {
-        const profile = await fetchProfile(elderId);
-        const list = profile?.details[verify.field as keyof typeof profile.details];
-        if (Array.isArray(list) && list.some(v => String(v).trim().toLowerCase() === want)) return true;
-        await new Promise(r => setTimeout(r, 400));
-      }
-      return false;
-    }
-    if (verify.kind === "doctor-question-exists") {
-      const want = verify.question.trim().toLowerCase();
-      for (let attempt = 0; attempt < 12; attempt++) {
-        const rows = await fetchDoctorQuestions(elderId);
-        if (rows.some(r => r.question.trim().toLowerCase() === want)) return true;
-        await new Promise(r => setTimeout(r, 400));
-      }
-      return false;
-    }
-    if (verify.kind === "care-link-active") {
-      for (let attempt = 0; attempt < 12; attempt++) {
-        if (await hasActiveCareLink(elderId)) return true;
-        await new Promise(r => setTimeout(r, 400));
-      }
-      return false;
-    }
-    return true;
+    return buildVerifyRunner({
+      elderId,
+      fetchElderMedications,
+      fetchProfile,
+      hasActiveCareLink,
+      fetchArchivedMedications,
+      fetchAccessibility: async id => (await fetchProfile(id))?.details ?? null,
+      fetchDoctorQuestions,
+    })(verify);
   };
 
   // Guided Auto-Navigation Reveal phase: navigate to where the result lives and
@@ -255,15 +229,18 @@ export function ElderlyApp({ patient, elderId, onUpdatePatient, onSignOut, start
   const handleWalkthroughReveal = (reveal: RevealDirective) => {
     if (reveal.screen.mode === "elderly") setTab(reveal.screen.tab);
     if (reveal.pulse === false) return;
-    // Defer so the destination screen has mounted before we find + pulse the target.
+    // Defer one paced screen-settle so the destination has mounted before we
+    // find + pulse the target.
     setTimeout(() => {
       const el = document.querySelector<HTMLElement>(reveal.selector);
       if (!el) return;
       el.scrollIntoView({ block: "center", behavior: "smooth" });
       el.classList.add("walk-reveal-pulse");
-      setTimeout(() => el.classList.remove("walk-reveal-pulse"), 2600);
+      // Teardown matches the CSS animation exactly: one iteration of
+      // var(--dw-pulse-ms) = PACING.REVEAL_PULSE_MS (applyPacingCssVars).
+      setTimeout(() => el.classList.remove("walk-reveal-pulse"), PACING.REVEAL_PULSE_MS);
       // Show the same changed-fields-style caption ChangeHighlight uses, tracked
-      // to the element while the pulse is up (~2.6s).
+      // to the element while the pulse is up.
       if (reveal.caption) {
         const track = () => {
           setRevealCaption({ rect: el.getBoundingClientRect(), ...reveal.caption! });
@@ -273,9 +250,9 @@ export function ElderlyApp({ patient, elderId, onUpdatePatient, onSignOut, start
         setTimeout(() => {
           window.cancelAnimationFrame(revealCaptionRaf.current!);
           setRevealCaption(null);
-        }, 2600);
+        }, PACING.REVEAL_PULSE_MS);
       }
-    }, 350);
+    }, PACING.NAVIGATE_MS);
   };
 
   // Fallback when the add-prescription walkthrough can't prove the save (Verify
@@ -400,7 +377,10 @@ export function ElderlyApp({ patient, elderId, onUpdatePatient, onSignOut, start
       } : m),
     });
     const med = patient.medications.find(m => m.id === medId);
-    if (elderId && med?.medicationId) logDoseTaken(med.medicationId, elderId);
+    // Pass the TAPPED card's own slot so a medication with more than one
+    // pending dose today flips the one the elder actually tapped, not
+    // whichever is latest — found live, Phase-4 spot-check of scenario s03.
+    if (elderId && med?.medicationId) logDoseTaken(med.medicationId, elderId, to24h(med.time));
   };
 
   // Undo a mis-logged dose. Mirrors handleLogDose: optimistic local flip back to
@@ -432,10 +412,23 @@ export function ElderlyApp({ patient, elderId, onUpdatePatient, onSignOut, start
   // chat-logged dose/refill), refetch so the local list isn't stale. Merge with a
   // functional update rather than spreading a closed-over `patient`, so a
   // concurrent change (e.g. a dose just logged) isn't clobbered by a stale copy.
+  // Also re-pulls archived meds (a discontinue_medication moves a med there —
+  // the prescriptions screen renders them as Stopped cards) and the profile's
+  // dose_snoozes (a snooze_dose writes there — the Home card shows the chip);
+  // the Home timeline itself still renders only active meds' doses.
   const refreshMeds = async () => {
     if (!elderId) return;
-    const medications = await fetchElderMedications(elderId);
-    onUpdatePatient(prev => ({ ...prev, medications }));
+    const [medications, pastMedications, profile] = await Promise.all([
+      fetchElderMedications(elderId),
+      fetchArchivedMedications(elderId),
+      fetchProfile(elderId),
+    ]);
+    onUpdatePatient(prev => ({
+      ...prev,
+      medications,
+      pastMedications,
+      doseSnoozes: profile?.details.dose_snoozes ?? prev.doseSnoozes,
+    }));
   };
 
   // Safety net (mirrors the caregiver App): re-pull medications when returning to

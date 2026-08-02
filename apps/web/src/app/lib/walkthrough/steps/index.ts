@@ -13,6 +13,12 @@ import {
   checkScheduleSteps, logDoseSteps, undoDoseSteps, languageVoiceSteps,
   reminderSettingsSteps, emergencyContactSteps, textSizeSteps,
 } from "./narrated";
+import { languageVoiceTourSteps } from "./language_voice_tour";
+import { notificationsTourSteps } from "./notifications_tour";
+import { emergencyContactTourSteps } from "./emergency_contact_tour";
+import { caregiverViewToggleTourSteps } from "./caregiver_view_toggle_tour";
+import { patientScheduleTourSteps } from "./patient_schedule_tour";
+import { weeklySummaryTourSteps } from "./weekly_summary_tour";
 
 // The step library, keyed by task_name — the same names Hermes's
 // start_walkthrough tool accepts (services/hermes/src/hermes/tools/
@@ -52,6 +58,13 @@ export function resolveWalkthroughSteps(
     case "reminder_settings": return reminderSettingsSteps;
     case "emergency_contact": return emergencyContactSteps;
     case "text_size": return textSizeSteps;
+    // Spotlight tours (static, highlight-only; params ignored).
+    case "language_voice_tour": return languageVoiceTourSteps;
+    case "notifications_tour": return notificationsTourSteps;
+    case "emergency_contact_tour": return emergencyContactTourSteps;
+    case "caregiver_view_toggle_tour": return caregiverViewToggleTourSteps;
+    case "patient_schedule_tour": return patientScheduleTourSteps;
+    case "weekly_summary_tour": return weeklySummaryTourSteps;
     default: return [];
   }
 }

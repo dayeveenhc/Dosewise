@@ -250,12 +250,33 @@ def _pending_commit_call(state) -> tuple[str, dict] | None:
     return None
 
 
+# Every propose→confirm session slot — the tap-committable trio mapped by
+# _pending_commit_call PLUS the chat-text-confirm ones (dosage / missed-dose
+# list / bulk). A decline must clear them ALL: the old code cleared only the
+# tap-committable slots, so a declined dosage change stayed committable.
+_PENDING_SLOTS = (
+    "pending_proposal",
+    "pending_reminder",
+    "pending_profile",
+    "pending_dosage",
+    "pending_missed_doses",
+    "pending_bulk",
+)
+
+
+def _has_pending(state) -> bool:
+    """Any propose→confirm slot still holding a proposal."""
+    return any(getattr(state, slot, None) for slot in _PENDING_SLOTS)
+
+
 def _clear_pending(state) -> None:
     """Drop every pending proposal (and any held photo) — the elder said no, or a
-    commit failed and must be re-proposed rather than half-retried."""
-    state.pending_proposal = None
-    state.pending_reminder = None
-    state.pending_profile = None
+    commit failed and must be re-proposed rather than half-retried. Clears ALL
+    slots, including those with no ✅-tap commit path (pending_dosage /
+    pending_missed_doses / pending_bulk): a declined proposal must never stay
+    committable by a later confirmed=true call."""
+    for slot in _PENDING_SLOTS:
+        setattr(state, slot, None)
     state.pending_image = None
     state.awaiting_confirmation = False
 
@@ -301,7 +322,13 @@ async def _handle_callback(
         )
 
         call = _pending_commit_call(state)
-        if call is not None:
+        # A ✖ No is handled deterministically whenever ANY pending slot is set —
+        # including the chat-text-confirm slots _pending_commit_call doesn't map
+        # (dosage / missed doses / bulk): falling through to the LLM would leave
+        # the declined proposal committable. A ✅ Yes for those slots still goes
+        # through the LLM path on purpose (chat-text confirm covers them); the
+        # Yes-tap contract for the mapped slots is unchanged.
+        if call is not None or (data == "confirm:no" and _has_pending(state)):
             # Deterministic path — a cheap direct commit/discard, so it is exempt
             # from the per-user cap (same rationale as dose:taken below).
             if cq_id is not None:

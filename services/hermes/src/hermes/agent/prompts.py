@@ -54,6 +54,12 @@ _WALKTHROUGH_LABELS = {
     "reminder_settings": "turning medicine reminders and other alerts on or off",
     "emergency_contact": "finding and calling their emergency contact",
     "text_size": "making the text bigger and easier to read",
+    "language_voice_tour": "changing language & voice settings",
+    "notifications_tour": "checking their notifications and alerts",
+    "emergency_contact_tour": "setting up an emergency contact",
+    "caregiver_view_toggle_tour": "switching between the patient and caregiver views",
+    "patient_schedule_tour": "seeing the patient's medication schedule",
+    "weekly_summary_tour": "reading the weekly summary",
 }
 
 _FALLBACK_PROMPT = """\
