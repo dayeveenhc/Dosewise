@@ -80,7 +80,10 @@ the current-dose card), `#0E3B43` `--accent`, `#85B690` tints, `#E2DBBE`
 `--muted`, `#F5F2E7` `--background`. **Dose status has its own tokens** —
 `--taken-*` (palest green, recessive), `--upcoming-*` (saturated pine, leads),
 `--missed-*` (orange, deliberately outside the brand ramp), `--warn-*`. Adding a
-status colour means adding a token, not a class. `accessibility.tsx` layers
+status colour means adding a token, not a class. The **caregiver shell now follows the same idiom** (2026-08-02): round header
+controls, `dw-surface`/`dw-press`/`dw-display` everywhere, elder-style icon
+rows (`w-9 h-9 rounded-xl bg-secondary` + `text-primary` glyph), at caregiver
+text sizes rather than the elder's oversized type. `accessibility.tsx` layers
 `contrast: normal|high|max` and `colourVision: off|deuteranopia|protanopia|
 tritanopia` classes onto `<html>`, each overriding those same variables — which
 is why hardcoded palette classes break accessibility, not just consistency. The
@@ -111,7 +114,19 @@ a pragmatic non-strict `tsconfig.json`, added as a refactor safety net since the
 build doesn't type-check), `npm test` (vitest), `npm run e2e` (Playwright).
 Both have an AI assistant chat screen wired to Hermes:
 
-- `screens/AskMeiScreen.tsx` — caregiver chat ("Ask Mei").
+- `screens/AskMeiScreen.tsx` — caregiver "Ask Mei". **Rebuilt on the elder
+  screen's shape (2026-08-02):** one title row carrying a help↔chat switch, a
+  permanent composer (camera + mic *inside* the field), and a searchable help
+  view. Unlike the elder screen it uses **two flat labelled sections**
+  (`ai.sectionDoIt` / `ai.sectionShowHow`) rather than category tiles — a
+  caregiver's list is shorter at smaller text, and, decisively, it keeps
+  **Weekly Summary a top-level row**, which is the anchor
+  `weekly_summary_tour` (and e2e s29) spotlights. The "show you how" section
+  launches the four caregiver-shell walkthroughs (`patient_schedule_tour`,
+  `weekly_summary_tour`, `link_caregiver`, `caregiver_view_toggle_tour`).
+  Selectors `data-tour="cg-askmei"` (the title row, which contains the "Quick
+  help" switch) and `data-walk="cg-weeklysummary-tile"` are load-bearing —
+  don't rename them without updating those steps + s29.
 - `screens/elderly/ElderlyAIScreen.tsx` — **not a chat screen**: a grouped list
   of what Mei can do ("I can do this for you" — photo/report scan, travel sheet,
   doctor question; "I can show you how" — 10 narrated walkthroughs), with the

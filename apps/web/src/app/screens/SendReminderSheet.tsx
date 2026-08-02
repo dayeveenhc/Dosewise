@@ -45,10 +45,10 @@ export function SendReminderSheet({ patientName, medName, onClose, onSend }: Sen
 
         {sent ? (
           <div className="flex flex-col items-center justify-center gap-3 px-6 py-12">
-            <div className="w-16 h-16 rounded-full bg-taken-bg0 flex items-center justify-center animate-in zoom-in duration-300">
-              <Check size={30} className="text-white" strokeWidth={3} />
+            <div className="w-16 h-16 rounded-full bg-taken flex items-center justify-center animate-in zoom-in duration-300">
+              <Check size={30} className="text-primary-foreground" strokeWidth={3} />
             </div>
-            <p className="font-['Fraunces'] text-lg font-semibold text-foreground">{t(language, "reminder.sent")}</p>
+            <p className="dw-display text-lg font-semibold text-foreground">{t(language, "reminder.sent")}</p>
             <p className="text-sm text-muted-foreground text-center">{t(language, "reminder.willSeeIt", { name: patientName })}</p>
           </div>
         ) : (

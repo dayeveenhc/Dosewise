@@ -1,7 +1,8 @@
 import { useState, useRef, useEffect } from "react";
 import type { ReactNode, ChangeEvent } from "react";
-import { X, Check, Plus, Pill, Camera, PenLine, Image as ImageIcon, Sparkles } from "lucide-react";
+import { X, Check, Plus, Minus, Pill, Camera, PenLine, Image as ImageIcon, Sparkles } from "lucide-react";
 import type { Medication } from "../types";
+import { WEEKDAY_TOKENS } from "../lib/medications";
 import { MED_COLOURS, MEDICATION_CATALOG, COMMON_CONDITIONS, MED_PHOTOS, localizeCatalogValue } from "../data/medications";
 import { TimesPicker, defaultDoseTime } from "../components/TimesPicker";
 import type { RoutineTimes } from "../components/TimesPicker";
@@ -12,6 +13,12 @@ import { ConfirmDialog } from "../components/ConfirmDialog";
 import { checkDoseSafety } from "../lib/doseSafety";
 import { useLanguage } from "../lib/languageContext";
 import { t } from "../lib/language";
+
+// The three cadences the app can express. "days" writes medications.schedule.days
+// (which Hermes's reminder scheduler already understands); "interval" writes
+// schedule.interval_days — see lib/medications.ts::isDueOn for what that does and
+// does not reach.
+type Cadence = "daily" | "days" | "interval";
 
 interface AddPrescriptionSheetProps {
   onClose: () => void;
@@ -88,6 +95,9 @@ export function AddPrescriptionSheet({ onClose, onAdd, onAdded, initialTab = "ma
   const [dose, setDose] = useState("");
   const [purpose, setPurpose] = useState("");
   const [selectedTimes, setSelectedTimes] = useState<string[]>([defaultDoseTime(routine)]);
+  const [cadence, setCadence] = useState<Cadence>("daily");
+  const [weekDays, setWeekDays] = useState<string[]>([]);
+  const [intervalDays, setIntervalDays] = useState(2);
   const [refillDays, setRefillDays] = useState("");
   const [colour, setColour] = useState(MED_COLOURS[0].hex);
   const [showDoseConfirm, setShowDoseConfirm] = useState(false);
@@ -96,7 +106,20 @@ export function AddPrescriptionSheet({ onClose, onAdd, onAdded, initialTab = "ma
   const [doseConfirmed, setDoseConfirmed] = useState(false);
   useEffect(() => setDoseConfirmed(false), [dose, selectedTimes.length]);
 
-  const isValid = name.trim() && dose.trim() && purpose.trim() && selectedTimes.length > 0;
+  // "Certain days" with nothing ticked is not a schedule — block the save rather
+  // than silently falling back to daily, which would be a different medicine
+  // regimen than the person just described.
+  const isValid = !!(name.trim() && dose.trim() && purpose.trim() && selectedTimes.length > 0
+    && (cadence !== "days" || weekDays.length > 0));
+
+  const toggleWeekDay = (token: string) =>
+    setWeekDays(prev => prev.includes(token) ? prev.filter(d => d !== token) : [...prev, token]);
+
+  const cadenceSummary = cadence === "days"
+    ? WEEKDAY_TOKENS.filter(d => weekDays.includes(d)).map(d => t(language, `common.day.${d}`)).join(", ")
+    : cadence === "interval"
+      ? t(language, "prescription.everyNDays", { n: intervalDays })
+      : t(language, "prescription.everyDay");
 
   // An implausible count is caught between "Add" and the save, and asked about
   // once — never silently corrected, since only the label knows the truth.
@@ -117,6 +140,8 @@ export function AddPrescriptionSheet({ onClose, onAdd, onAdded, initialTab = "ma
         times: chosenTimes,
         refillDaysLeft: refillDays ? parseInt(refillDays) : undefined,
         colour,
+        days: cadence === "days" ? WEEKDAY_TOKENS.filter(d => weekDays.includes(d)) : undefined,
+        intervalDays: cadence === "interval" ? intervalDays : undefined,
       });
       setSubmitState("success");
       window.setTimeout(() => {
@@ -330,9 +355,6 @@ export function AddPrescriptionSheet({ onClose, onAdd, onAdded, initialTab = "ma
                   onChange={setPurpose}
                   onPick={c => setPurpose(c.value)}
                   items={withCatalogLabels(COMMON_CONDITIONS, language)}
-                  // Match the localized label OR the canonical English value —
-                  // filtering on the label alone meant typing "diab" in Chinese
-                  // matched nothing.
                   filter={(c, q) => c.label.toLowerCase().includes(q) || c.value.toLowerCase().includes(q)}
                   label={c => c.label}
                   placeholder={t(language, "wizard.conditionsPlaceholder")}
@@ -341,6 +363,74 @@ export function AddPrescriptionSheet({ onClose, onAdd, onAdded, initialTab = "ma
 
               {/* Time */}
               <TimesPicker times={selectedTimes} onChange={setSelectedTimes} label={t(language, "prescription.scheduledTimes")} routine={routine} />
+
+              {/* Which days — plenty of medicines aren't daily (alternate-day
+                  anti-inflammatories, a weekly bisphosphonate). Tap-only, like
+                  TimesPicker: no free-text, nothing to mistype. */}
+              <div data-walk="rx-cadence">
+                <label className="block text-xs font-semibold text-foreground mb-1.5">{t(language, "prescription.whichDays")}</label>
+                <div className="flex gap-1 bg-muted/60 rounded-xl p-1">
+                  {([
+                    ["daily", t(language, "prescription.everyDay")],
+                    ["days", t(language, "prescription.certainDays")],
+                    ["interval", t(language, "prescription.everyFewDays")],
+                  ] as [Cadence, string][]).map(([id, label]) => (
+                    <button
+                      key={id}
+                      onClick={() => setCadence(id)}
+                      className={`flex-1 py-2 rounded-lg text-[calc(12px*var(--dw-text,1))] font-bold transition-colors ${cadence === id ? "bg-card text-foreground shadow-sm" : "text-muted-foreground"}`}
+                    >
+                      {label}
+                    </button>
+                  ))}
+                </div>
+
+                {cadence === "days" && (
+                  <div className="flex gap-1 mt-2.5">
+                    {WEEKDAY_TOKENS.map(d => {
+                      const on = weekDays.includes(d);
+                      return (
+                        <button
+                          key={d}
+                          onClick={() => toggleWeekDay(d)}
+                          aria-pressed={on}
+                          className={`flex-1 h-11 rounded-xl text-[calc(12px*var(--dw-text,1))] font-bold border transition-colors ${on ? "bg-primary text-primary-foreground border-primary" : "bg-card text-foreground border-border"}`}
+                        >
+                          {t(language, `common.dayShort.${d}`)}
+                        </button>
+                      );
+                    })}
+                  </div>
+                )}
+
+                {cadence === "interval" && (
+                  <div className="flex items-center gap-3 mt-2.5 bg-card border border-border rounded-xl px-3 py-2.5">
+                    <button
+                      onClick={() => setIntervalDays(n => Math.max(2, n - 1))}
+                      disabled={intervalDays <= 2}
+                      aria-label={t(language, "prescription.fewerDays")}
+                      className="w-10 h-10 rounded-full bg-muted flex items-center justify-center text-foreground disabled:opacity-40 shrink-0"
+                    >
+                      <Minus size={16} />
+                    </button>
+                    <p className="flex-1 text-center text-[calc(14px*var(--dw-text,1))] font-bold text-foreground">
+                      {t(language, "prescription.everyNDays", { n: intervalDays })}
+                    </p>
+                    <button
+                      onClick={() => setIntervalDays(n => Math.min(30, n + 1))}
+                      disabled={intervalDays >= 30}
+                      aria-label={t(language, "prescription.moreDays")}
+                      className="w-10 h-10 rounded-full bg-muted flex items-center justify-center text-foreground disabled:opacity-40 shrink-0"
+                    >
+                      <Plus size={16} />
+                    </button>
+                  </div>
+                )}
+
+                {cadence === "days" && weekDays.length === 0 && (
+                  <p className="text-[calc(11px*var(--dw-text,1))] text-missed-fg mt-1.5">{t(language, "prescription.pickAtLeastOneDay")}</p>
+                )}
+              </div>
 
               {/* Refill supply */}
               <div>
@@ -376,6 +466,7 @@ export function AddPrescriptionSheet({ onClose, onAdd, onAdded, initialTab = "ma
                   <div>
                     <p className="text-sm font-semibold text-foreground">{name} <span className="text-xs font-normal text-muted-foreground">{dose}</span></p>
                     <p className="text-[calc(11px*var(--dw-text,1))] text-muted-foreground">{localizeCatalogValue(purpose, k => t(language, k))} · {selectedTimes.join(" • ") || "8:00 AM"}</p>
+                    <p className="text-[calc(11px*var(--dw-text,1))] text-muted-foreground">{cadenceSummary}</p>
                   </div>
                 </div>
               )}

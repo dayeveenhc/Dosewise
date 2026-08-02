@@ -16,7 +16,7 @@ import { GuidedTour } from "../../components/GuidedTour";
 import type { TourStep } from "../../components/GuidedTour";
 import { useContentZoom } from "../../accessibility";
 import { ConfirmDialog } from "../../components/ConfirmDialog";
-import { logDoseTaken, unlogDoseTaken, addMedication, fetchElderMedications, fetchArchivedMedications, to24h, anyMedicationRunningLow } from "../../lib/medications";
+import { logDoseTaken, unlogDoseTaken, addMedication, fetchElderMedications, fetchArchivedMedications, to24h, anyMedicationRunningLow, isDueOn } from "../../lib/medications";
 import { defaultDoseTime } from "../../components/TimesPicker";
 import { MED_COLOURS } from "../../data/medications";
 import { useLanguage } from "../../lib/languageContext";
@@ -150,6 +150,9 @@ export function ElderlyApp({ patient, elderId, onUpdatePatient, onSignOut, start
       const nowLabel = now.toLocaleTimeString("en-SG", { hour: "numeric", minute: "2-digit", hour12: true }).toUpperCase();
       const today = now.toISOString().slice(0, 10);
       for (const med of patient.medications) {
+        // A medicine that isn't due today (weekly / every-N-days cadence) must
+        // not fire a reminder just because the clock matched one of its times.
+        if (!isDueOn(med, now)) continue;
         if (med.status !== "upcoming" || med.time.toUpperCase() !== nowLabel) continue;
         const key = `${med.id}|${today}`;
         if (notifiedRef.current.has(key)) continue;
@@ -505,7 +508,10 @@ export function ElderlyApp({ patient, elderId, onUpdatePatient, onSignOut, start
     const nextId = patient.medications.reduce((max, m) => Math.max(max, m.id), 0) + 1;
     const timeHHMMs = (med.times && med.times.length ? med.times : [med.time]).map(t => to24h(t));
     const medicationId = elderId
-      ? await addMedication(elderId, { name: med.name, dosage: med.dose, purpose: med.purpose, timeHHMMs, refillDays: med.refillDaysLeft })
+      ? await addMedication(elderId, {
+          name: med.name, dosage: med.dose, purpose: med.purpose, timeHHMMs,
+          refillDays: med.refillDaysLeft, days: med.days, intervalDays: med.intervalDays,
+        })
       : undefined;
     onUpdatePatient({ ...patient, medications: [...patient.medications, { ...med, id: nextId, medicationId, status: "upcoming" as MedStatus }] });
     flagJustAdded(med.name);

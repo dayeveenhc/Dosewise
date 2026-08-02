@@ -38,16 +38,17 @@ export const weeklySummaryTourSteps: WalkthroughStep[] = [
     id: "weekly.open-quickhelp",
     screen: ON_AI,
     onEnter: ON_AI,
-    // The button itself, not its wrapping row (data-tour="cg-askmei" — also the
-    // onboarding GuidedTour's target, which stays on the row since a real user's
-    // click always lands on the actual button and bubbles to satisfy a native
-    // waitFor listener there). An AUTONOMOUS act:click calls el.click() directly
-    // on the selector, which does nothing on a plain container with no handler —
-    // it must target the real clickable element (mirrors travel_mode_auto.ts's
-    // identical gotcha/fix for the elder-side Quick Help button).
-    selector: '[data-walk="cg-quickhelp-btn"]',
+    // The "Check-ins" CATEGORY tile. The caregiver Ask Mei rebuild (2026-08-02)
+    // replaced the Quick-help popup with elder-style category tiles, deleting
+    // `cg-quickhelp-btn` — and Weekly Summary now lives inside the `checkins`
+    // category, so its row only mounts once this tile is opened.
+    //
+    // Still the real clickable BUTTON, never a wrapping container: an autonomous
+    // act:click calls el.click() directly on the selector, which does nothing on
+    // a plain <div> with no handler (the gotcha travel_mode_auto.ts documents).
+    selector: '[data-walk="cg-cat-checkins"]',
     instructionKey: "walk.weeklySummaryTour.step2",
-    act: { kind: "click", selector: '[data-walk="cg-quickhelp-btn"]' },
+    act: { kind: "click", selector: '[data-walk="cg-cat-checkins"]' },
   },
   {
     id: "weekly.tap-tile",

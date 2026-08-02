@@ -41,6 +41,71 @@ export function formatClockAt(when: Date | number, format: "12h" | "24h" = "12h"
   return formatClock(`${String(h).padStart(2, "0")}:${String(m).padStart(2, "0")}`, format);
 }
 
+/**
+ * Weekday tokens in the ORDER THE BACKEND USES — `services/hermes/src/hermes/
+ * dosing.py::WEEKDAYS` is indexed by Python's `date.weekday()`, i.e. Monday=0.
+ * JS `Date.getDay()` is Sunday=0, hence the rotation in `weekdayToken`. Getting
+ * this wrong shifts every weekly schedule by a day, silently.
+ */
+export const WEEKDAY_TOKENS = ["mon", "tue", "wed", "thu", "fri", "sat", "sun"] as const;
+export type WeekdayToken = (typeof WEEKDAY_TOKENS)[number];
+
+export const weekdayToken = (d: Date): WeekdayToken => WEEKDAY_TOKENS[(d.getDay() + 6) % 7];
+
+const isoDate = (d: Date) => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
+
+/**
+ * Whether a medication is due on a given calendar day.
+ *
+ * Three cadences, matching what `schedule` can hold:
+ *   - no `days`, no `intervalDays`  → every day (the default, and what every
+ *     medication created before this existed reads back as)
+ *   - `days: ["mon","thu"]`         → only those weekdays. This is the shape
+ *     Hermes already understands (`dosing.py::scheduled_today`), so the app and
+ *     the reminder scheduler agree.
+ *   - `intervalDays: 2`             → every other day, counted from `startDate`.
+ *     NOTE: `scheduled_today` does NOT understand this — it treats a schedule
+ *     with no `days` as daily — so an interval medication currently shows the
+ *     right cadence everywhere in the app but would still be reminded daily by
+ *     the Hermes scheduler. Closing that needs a change in `services/hermes`,
+ *     which is outside apps/web's ownership.
+ */
+export function isDueOn(
+  med: { days?: string[]; intervalDays?: number; startDate?: string },
+  day: Date,
+): boolean {
+  if (med.days?.length) {
+    const tokens = new Set(med.days.map(d => String(d).trim().toLowerCase().slice(0, 3)));
+    return tokens.has(weekdayToken(day));
+  }
+  const every = med.intervalDays ?? 1;
+  if (every <= 1) return true;
+  // Compare calendar days, not timestamps, so a dose time either side of
+  // midnight can't shift which day an interval lands on.
+  const start = med.startDate ? new Date(`${med.startDate}T00:00:00`) : null;
+  if (!start || Number.isNaN(start.getTime())) return true;
+  const target = new Date(day.getFullYear(), day.getMonth(), day.getDate());
+  const anchor = new Date(start.getFullYear(), start.getMonth(), start.getDate());
+  const diff = Math.round((target.getTime() - anchor.getTime()) / 86_400_000);
+  return ((diff % every) + every) % every === 0;
+}
+
+// Human-readable cadence ("Mon, Thu" / "Every 2 days"), or undefined for a plain
+// daily medication — the caller then shows nothing rather than the noise of
+// "Every day" on every single card.
+export function cadenceLabel(
+  med: { days?: string[]; intervalDays?: number },
+  dayNames: Record<string, string>,
+  everyNDays: (n: number) => string,
+): string | undefined {
+  if (med.days?.length) {
+    const set = new Set(med.days.map(d => String(d).trim().toLowerCase().slice(0, 3)));
+    return WEEKDAY_TOKENS.filter(t => set.has(t)).map(t => dayNames[t] ?? t).join(", ");
+  }
+  if ((med.intervalDays ?? 1) > 1) return everyNDays(med.intervalDays!);
+  return undefined;
+}
+
 // Deterministic positive numeric id for a (medication, time-slot) pair — the UI's
 // Medication.id is a number, but real rows are uuid-keyed. Stable across refetches
 // so React keys and local lookups don't jitter.
@@ -85,7 +150,15 @@ export async function fetchElderMedications(elderId: string): Promise<Medication
 
   const out: Medication[] = [];
   for (const med of medsRes.data ?? []) {
-    const times: string[] = (med.schedule as { times?: string[] } | null)?.times ?? [];
+    const sched = (med.schedule ?? null) as
+      | { times?: string[]; days?: string[]; interval_days?: number; start_date?: string }
+      | null;
+    const times: string[] = sched?.times ?? [];
+    // Only a genuinely non-daily cadence is carried forward — a `days` list of
+    // all seven, or an interval of 1, IS daily, and treating it as a special
+    // case would make every screen render a pointless "Mon, Tue, Wed…" line.
+    const days = sched?.days?.length && sched.days.length < 7 ? sched.days : undefined;
+    const intervalDays = (sched?.interval_days ?? 1) > 1 ? sched!.interval_days : undefined;
     const takenDose = doses.find(d => d.medication_id === med.id && d.status === "taken");
     const refill = refills.find(r => r.medication_id === med.id);
     const refillDaysLeft = refill?.run_out_forecast
@@ -108,6 +181,9 @@ export async function fetchElderMedications(elderId: string): Promise<Medication
         pillsRemaining: refill?.pills_remaining ?? undefined,
         purpose: med.purpose ?? "",
         colour: FALLBACK_COLOUR,
+        days,
+        intervalDays,
+        startDate: sched?.start_date,
       });
     }
   }
@@ -251,13 +327,27 @@ async function shiftSupply(medicationId: string, days: number): Promise<void> {
 
 export async function addMedication(elderId: string, input: {
   name: string; dosage: string; purpose: string; timeHHMM?: string; timeHHMMs?: string[]; refillDays?: number;
+  // Cadence. `days` is the shape Hermes already reads (dosing.py::scheduled_today);
+  // `intervalDays` is app-side only for now — see isDueOn's note.
+  days?: string[]; intervalDays?: number;
 }): Promise<string> {
   const times = (input.timeHHMMs && input.timeHHMMs.length ? input.timeHHMMs : input.timeHHMM ? [input.timeHHMM] : ["08:00"]).filter(Boolean);
+  // Mirrors what tools/medications.py writes, so a medication added here and one
+  // added by Mei read back identically.
+  const schedule: Record<string, unknown> = { times, frequency: "daily" };
+  if (input.days?.length && input.days.length < 7) {
+    schedule.days = input.days;
+    schedule.frequency = "weekly";
+  } else if ((input.intervalDays ?? 1) > 1) {
+    schedule.interval_days = input.intervalDays;
+    schedule.frequency = "interval";
+    schedule.start_date = isoDate(new Date()); // the anchor isDueOn counts from
+  }
   const { data, error } = await supabase
     .from("medications")
     .insert({
       elder_id: elderId, name: input.name, purpose: input.purpose,
-      dosage: input.dosage, schedule: { times },
+      dosage: input.dosage, schedule,
     })
     .select("id").single();
   if (error) throw error;

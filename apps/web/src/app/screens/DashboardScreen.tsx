@@ -6,6 +6,7 @@ import type { Patient, Screen } from "../types";
 import { Card, SectionHeader, QuickAction } from "../components/shared";
 import { PillIcon, shapeFor } from "../components/PillIcon";
 import { MED_SHAPES } from "../data/medications";
+import { isDueOn } from "../lib/medications";
 import { useAccessibility } from "../accessibility.tsx";
 import { useLanguage } from "../lib/languageContext";
 import { t } from "../lib/language";
@@ -13,10 +14,15 @@ import { t } from "../lib/language";
 export function DashboardScreen({ patient, onNavigate, onSendReminder }: { patient: Patient; onNavigate: (s: Screen) => void; onSendReminder: (medName?: string) => void }) {
   const { language } = useLanguage();
   const { colourBlind } = useAccessibility();
-  const taken = patient.medications.filter(m => m.status === "taken").length;
-  const missed = patient.medications.filter(m => m.status === "missed").length;
-  const upcoming = patient.medications.filter(m => m.status === "upcoming").length;
-  const total = patient.medications.length;
+  // "Today" means the doses actually due today — a medicine on a weekly or
+  // every-other-day cadence must not inflate the count on a day it isn't taken.
+  // Refill alerts deliberately stay across ALL medications: supply runs low
+  // whether or not today happens to be a dose day.
+  const dueToday = patient.medications.filter(m => isDueOn(m, new Date()));
+  const taken = dueToday.filter(m => m.status === "taken").length;
+  const missed = dueToday.filter(m => m.status === "missed").length;
+  const upcoming = dueToday.filter(m => m.status === "upcoming").length;
+  const total = dueToday.length;
   const refillAlerts = patient.medications.filter(m => m.refillDaysLeft && m.refillDaysLeft <= 7);
 
   return (
@@ -34,7 +40,7 @@ export function DashboardScreen({ patient, onNavigate, onSendReminder }: { patie
           </button>
         </div>
         <div className="flex flex-wrap gap-2 mt-1">
-          {patient.medications.map(m => (
+          {dueToday.map(m => (
             <div key={m.id} title={`${m.name} · ${m.time}${m.status === "taken" ? ` · ${t(language, "common.taken")}` : ""}`}>
               <PillIcon shape={shapeFor(m.name, MED_SHAPES[m.name]?.shape)} colour={m.colour} filled={m.status === "taken"} />
             </div>
@@ -43,7 +49,7 @@ export function DashboardScreen({ patient, onNavigate, onSendReminder }: { patie
         <p className="text-xs text-muted-foreground mt-2">{t(language, "dashboard.dosesTaken", { taken, total })}</p>
         {colourBlind && (
           <div className="flex flex-col gap-0.5 mt-1">
-            {[...new Set(patient.medications.map(m => m.name))].filter(n => MED_SHAPES[n]).map(n => (
+            {[...new Set(dueToday.map(m => m.name))].filter(n => MED_SHAPES[n]).map(n => (
               <p key={n} className="text-[calc(10px*var(--dw-text,1))] text-muted-foreground/70">{n}: {MED_SHAPES[n].shape}</p>
             ))}
           </div>
@@ -70,11 +76,11 @@ export function DashboardScreen({ patient, onNavigate, onSendReminder }: { patie
             <AlertTriangle size={18} className="text-missed-fg shrink-0 mt-0.5" />
             <div className="flex-1 min-w-0">
               <p className="text-sm font-semibold text-missed-fg">{t(language, "dashboard.missedDoseAlert")}</p>
-              {patient.medications.filter(m => m.status === "missed").map(m => (
+              {dueToday.filter(m => m.status === "missed").map(m => (
                 <p key={m.id} className="text-xs text-missed-fg mt-0.5">{t(language, "dashboard.wasDueAt", { name: m.name, dose: m.dose, time: m.time })}</p>
               ))}
             </div>
-            <button onClick={() => onSendReminder(patient.medications.find(m => m.status === "missed")?.name)} className="shrink-0 bg-missed-fg text-white text-xs font-semibold rounded-xl px-3 py-1.5 flex items-center gap-1">
+            <button onClick={() => onSendReminder(dueToday.find(m => m.status === "missed")?.name)} className="shrink-0 bg-card border border-missed-border text-missed-fg text-xs font-bold rounded-xl px-3 py-2 flex items-center gap-1.5 active:opacity-80 transition-opacity">
               <Send size={11} /> {t(language, "dashboard.remind")}
             </button>
           </div>
@@ -104,10 +110,13 @@ export function DashboardScreen({ patient, onNavigate, onSendReminder }: { patie
       <Card className="p-3.5">
         <p className="text-[calc(10px*var(--dw-text,1))] text-muted-foreground uppercase tracking-widest font-medium mb-2">{t(language, "dashboard.quickActions")}</p>
         <div className="flex gap-2">
+          {/* One tile treatment for all four, matching the elder help rows:
+              a pine icon on the same soft tint. Emergency is the exception —
+              it keeps the missed palette so it never reads as routine. */}
           <QuickAction
-            icon={<Clock size={20} className="text-taken-fg" />}
+            icon={<Clock size={20} className="text-primary" />}
             label={t(language, "common.checkSchedule")}
-            colour="bg-taken-bg"
+            colour="bg-secondary"
             onClick={() => onNavigate("timeline")}
           />
           <QuickAction
@@ -117,15 +126,15 @@ export function DashboardScreen({ patient, onNavigate, onSendReminder }: { patie
             onClick={() => onSendReminder()}
           />
           <QuickAction
-            icon={<MessageSquare size={20} className="text-accent" />}
+            icon={<MessageSquare size={20} className="text-primary" />}
             label={t(language, "common.leaveNote")}
-            colour="bg-missed-bg"
+            colour="bg-secondary"
             onClick={() => onNavigate("messages")}
           />
           <QuickAction
-            icon={<AlertTriangle size={20} className="text-red-600" />}
+            icon={<AlertTriangle size={20} className="text-missed-fg" />}
             label={t(language, "common.emergency")}
-            colour="bg-red-50"
+            colour="bg-missed-bg border border-missed-border"
             onClick={() => onNavigate("settings")}
           />
         </div>

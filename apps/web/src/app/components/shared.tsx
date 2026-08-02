@@ -76,9 +76,9 @@ export function StatusPill({ status, small = false }: { status: MedStatus; small
 
 export function SectionHeader({ title, action, onAction }: { title: string; action?: string; onAction?: () => void }) {
   return (
-    <div className="flex items-center justify-between mb-3">
-      <h3 className="text-sm font-semibold text-foreground/70 uppercase tracking-widest">{title}</h3>
-      {action && <button onClick={onAction} className="text-xs text-primary font-medium">{action}</button>}
+    <div className="flex items-center justify-between mb-2">
+      <h3 className="text-[calc(11px*var(--dw-text,1))] font-bold text-muted-foreground uppercase tracking-widest px-1">{title}</h3>
+      {action && <button onClick={onAction} className="text-[calc(12px*var(--dw-text,1))] text-primary font-bold px-1">{action}</button>}
     </div>
   );
 }
@@ -89,11 +89,11 @@ export function Card({ children, className = "", "data-tour": dataTour }: { chil
 
 export function QuickAction({ icon, label, colour, onClick }: { icon: React.ReactNode; label: string; colour: string; onClick?: () => void }) {
   return (
-    <button onClick={onClick} className="flex flex-col items-center gap-1.5 flex-1">
+    <button onClick={onClick} className="flex flex-col items-center gap-1.5 flex-1 dw-press">
       <div className={`w-12 h-12 rounded-2xl flex items-center justify-center ${colour}`}>
         {icon}
       </div>
-      <span className="text-[calc(10px*var(--dw-text,1))] font-medium text-muted-foreground text-center leading-tight">{label}</span>
+      <span className="text-[calc(11px*var(--dw-text,1))] font-semibold text-foreground text-center leading-tight">{label}</span>
     </button>
   );
 }
@@ -117,7 +117,7 @@ export function PatientSwitcher({ patients, selected, onSelect, onAdd, onScan }:
       <button
         onClick={() => setOpen(!open)}
         data-tour="cg-patientswitcher"
-        className="flex items-center gap-2.5 bg-white/70 backdrop-blur-sm border border-border rounded-2xl px-3 py-2 w-full"
+        className="flex items-center gap-2.5 bg-card/70 backdrop-blur-sm border border-border rounded-2xl px-3 py-2 w-full active:bg-muted/60 transition-colors"
       >
         <img src={patient.photo} alt={patient.name} className="w-8 h-8 rounded-full object-cover bg-muted" />
         <div className="flex-1 text-left">

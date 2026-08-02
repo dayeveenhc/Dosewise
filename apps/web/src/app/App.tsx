@@ -543,6 +543,7 @@ export default function App() {
     const medicationId = await addMedication(elderId, {
       name: med.name, dosage: med.dose, purpose: med.purpose,
       timeHHMMs, refillDays: med.refillDaysLeft,
+      days: med.days, intervalDays: med.intervalDays,
     });
     setPatients(prev => prev.map((p, i) => i !== selectedPatient ? p : {
       ...p,
@@ -767,27 +768,31 @@ export default function App() {
           <div className="relative z-30 px-4 pt-2 pb-3 bg-background/70 backdrop-blur-md border-b border-border/60 shrink-0">
             {showBack ? (
               <div className="flex items-center gap-2.5 mb-2">
-                <button onClick={() => setScreen("dashboard")} aria-label={t(uiLang, "common.back")} className="w-11 h-11 bg-card border border-border rounded-2xl flex items-center justify-center active:bg-muted transition-colors">
+                <button onClick={() => setScreen("dashboard")} aria-label={t(uiLang, "common.back")} className="w-11 h-11 bg-card border border-border rounded-full flex items-center justify-center active:bg-muted transition-colors">
                   <ArrowLeft size={20} className="text-foreground" />
                 </button>
                 <span className="text-base font-semibold text-foreground">{t(uiLang, "common.careTeamNotes")}</span>
               </div>
             ) : (
               /* Mirrors the elder header: app name centred, help left, profile
-                 right. Messages moved out — the dashboard already links to it. */
+                 right, all three controls round. Messages moved out — the
+                 dashboard already links to it. */
               <div className="flex items-center justify-between gap-2 mb-2">
-                <button onClick={() => setShowCaregiverTourConfirm(true)} aria-label={t(uiLang, "header.help")} className="w-11 h-11 bg-card border border-border rounded-2xl flex items-center justify-center active:bg-muted transition-colors">
+                <button onClick={() => setShowCaregiverTourConfirm(true)} aria-label={t(uiLang, "header.help")} className="w-11 h-11 bg-card border border-border rounded-full flex items-center justify-center active:bg-muted transition-colors">
                   <HelpCircle size={22} className="text-primary" />
                 </button>
-                <h1 className="font-['Fraunces'] text-[calc(24px*var(--dw-text,1))] font-semibold tracking-tight text-primary leading-none">Dosewise</h1>
+                <h1 className="dw-display text-[calc(24px*var(--dw-text,1))] font-semibold tracking-tight text-primary leading-none">Dosewise</h1>
                 <div className="flex items-center gap-1.5">
-                  <button onClick={() => setScreen("notifications")} aria-label={t(uiLang, "nav.notifications")} className="w-11 h-11 bg-card border border-border rounded-2xl flex items-center justify-center relative active:bg-muted transition-colors">
+                  <button onClick={() => setScreen("notifications")} aria-label={t(uiLang, "nav.notifications")} className="w-11 h-11 bg-card border border-border rounded-full flex items-center justify-center relative active:bg-muted transition-colors">
                     <Bell size={22} className="text-primary" />
                     {unreadCount > 0 && (
-                      <div className="absolute -top-1 -right-1 min-w-5 h-5 px-1 bg-destructive rounded-full flex items-center justify-center text-[calc(11px*var(--dw-text,1))] font-bold text-white">{unreadCount}</div>
+                      <div className="absolute -top-1 -right-1 min-w-5 h-5 px-1 bg-destructive rounded-full flex items-center justify-center text-[calc(11px*var(--dw-text,1))] font-bold text-destructive-foreground">{unreadCount}</div>
                     )}
                   </button>
-                  <button onClick={() => setScreen("settings")} aria-label={t(uiLang, "header.profile")} className="w-11 h-11 bg-card border border-border rounded-2xl flex items-center justify-center active:bg-muted transition-colors" title={t(uiLang, "common.openSettings")}>
+                  {/* The caregiver's OWN account, not the elder's — deliberately
+                      an icon, not a photo: the PatientSwitcher directly below
+                      already carries the care recipient's face. */}
+                  <button onClick={() => setScreen("settings")} aria-label={t(uiLang, "header.profile")} className="w-11 h-11 bg-card border border-border rounded-full flex items-center justify-center active:bg-muted transition-colors" title={t(uiLang, "common.openSettings")}>
                     <UserRound size={22} className="text-primary" />
                   </button>
                 </div>
@@ -819,7 +824,7 @@ export default function App() {
                 onDismiss={id => setNotifications(prev => prev.filter(n => n.id !== id))}
               />
             )}
-            {screen === "ai" && <AskMeiScreen patient={patient} elderId={elderId} onUpdatePatient={handleUpdatePatient} onNavigate={setScreen} onMedsChanged={refreshMedications} onMedAdded={flagJustAdded} onHighlightChange={setHighlightChange} onWalkthroughStart={handleWalkthroughStart} />}
+            {screen === "ai" && <AskMeiScreen patient={patient} elderId={elderId} onUpdatePatient={handleUpdatePatient} onNavigate={setScreen} onSendReminder={() => handleSendReminder()} onMedsChanged={refreshMedications} onMedAdded={flagJustAdded} onHighlightChange={setHighlightChange} onWalkthroughStart={handleWalkthroughStart} />}
             {screen === "messages" && <MessagesScreen elderId={elderId} />}
             {screen === "settings" && <SettingsScreen patient={patient} caregiverAccount={caregiverAccount} onSwitchMode={openModeSwitch} onSignOut={() => supabase.auth.signOut()} onEditProfile={() => setShowEditProfile(true)} />}
           </ZoomContent>
