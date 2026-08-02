@@ -38,10 +38,15 @@ export function ProfileAvatar({ photo, size, className = "" }: { photo?: string;
     return <img src={photo} alt="" style={{ width: size, height: size }} className={`object-cover bg-muted ${className}`} />;
   }
   return (
-    <div style={{ width: size, height: size }} className={`relative shrink-0 bg-muted text-muted-foreground ${className}`}>
+    <div style={{ width: size, height: size }} className={`relative shrink-0 overflow-hidden bg-muted text-muted-foreground ${className}`}>
+      {/* Plain inline transform, not Tailwind's top-1/2/-translate-x-1/2
+          utilities: Tailwind v4 compiles those to the standalone CSS
+          `translate` property rather than `transform: translate(...)`, which
+          is real but newer and not guaranteed everywhere `transform` is —
+          this keeps centering on the one mechanism every renderer supports. */}
       <User
         size={Math.round(size * 0.55)}
-        className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2"
+        style={{ position: "absolute", top: "50%", left: "50%", transform: "translate(-50%, -50%)" }}
       />
     </div>
   );
