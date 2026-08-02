@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import type { ChangeEvent } from "react";
-import { Send, TrendingUp, Plane, Check, Sparkles, MessageCircle, Camera, FileText, Pill, Globe, Mic, Volume2, X, Trash2, AlertTriangle, ChevronRight, Search, Stethoscope, RefreshCw, MessageSquare, CalendarDays, QrCode, Users, Bell } from "lucide-react";
+import { Send, TrendingUp, Plane, Check, Sparkles, MessageCircle, Camera, FileText, Pill, Globe, Mic, Volume2, X, Trash2, AlertTriangle, ChevronRight, Search, Stethoscope, RefreshCw, MessageSquare, CalendarDays, QrCode, Users, Bell, ChevronDown, CheckCircle2, SlidersHorizontal, ChevronLeft } from "lucide-react";
 import type { Patient, Screen } from "../types";
 import { agentTurnStream, fileToBase64 } from "../lib/hermes";
 import type { AgentTurnEvent, AgentAction } from "../lib/hermes";
@@ -514,17 +514,6 @@ export function AskMeiScreen({ patient, patients, selectedPatient, onSelectPatie
             <h2 className="flex-1 min-w-0 truncate dw-display text-[calc(18px*var(--dw-text,1))] font-semibold text-foreground">{t(language, "common.askMei")}</h2>
             <PatientPicker patients={roster} selectedIds={chatPatientIds} onChange={handlePickPatients} />
           </>
-        )}
-        {!category && messages.length > 0 && (
-          <button
-            onClick={() => { setMode(mode === "chat" ? "help" : "chat"); scrollToBottom(); }}
-            aria-label={t(language, mode === "chat" ? "ai.frequentlyUsed" : "ai.backToChat")}
-            className="shrink-0 w-9 h-9 rounded-full dw-surface flex items-center justify-center active:bg-muted transition-colors"
-          >
-            {mode === "chat"
-              ? <Sparkles size={16} className="text-primary" />
-              : <MessageCircle size={16} className="text-primary" />}
-          </button>
         )}
         {!category && mode === "chat" && (
           <button onClick={() => setShowClearConfirm(true)} aria-label={t(language, "ai.clearChat")} className="w-9 h-9 rounded-full dw-surface flex items-center justify-center shrink-0 active:bg-muted transition-colors">

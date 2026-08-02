@@ -11,6 +11,12 @@ letting this grow forever — it's a memory aid, not an audit log.
 
 ## 2026-08-02 — Caregiver UI revamp: Ask Mei on the elder shape, weekly calendar, token cleanup
 
+**Blank AI tab root cause:** the caregiver Ask Mei screen referenced `ChevronDown`,
+`CheckCircle2`, `SlidersHorizontal`, and `ChevronLeft` without importing them from
+`lucide-react`. That caused a render-time runtime error when the caregiver AI tab
+mounted, leaving the screen blank even though the router branch itself was correct.
+
+
 User-directed pass over the caregiver interface, mirroring the 2026-07-29
 elderly revamp at caregiver text sizes. `apps/web` only — no backend touched.
 
