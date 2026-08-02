@@ -577,7 +577,7 @@ export function ElderlyAIScreen({ patient, elderId, onNavigate, onMedsChanged, o
       title: t(language, "ai.catDisplay"),
       items: [
         { icon: Type,   label: t(language, "ai.rowContrast"),             run: () => startWalk("text_size") },
-        { icon: Bell,   label: t(language, "settings.reminders"),         run: () => startWalk("reminder_settings") },
+        { icon: Bell,   label: t(language, "ai.rowManageAlerts"),         run: () => startWalk("reminder_settings") },
         // Show-me-how variants of the two above: Mei drives the spotlight
         // herself rather than waiting on the person to tap each control.
         { icon: Globe,  label: t(language, "ai.rowLanguageTour"),         run: () => startWalk("language_voice_tour") },

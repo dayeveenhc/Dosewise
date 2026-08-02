@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { CheckCircle2, AlertTriangle, Circle, X, ChevronDown, Plus, Droplets, QrCode } from "lucide-react";
+import { CheckCircle2, AlertTriangle, Circle, X, ChevronDown, Plus, Droplets, QrCode, User } from "lucide-react";
 import type { MedStatus, Patient } from "../types";
 import { MED_PHOTOS, MED_PHOTO_FALLBACKS } from "../data/medications";
 import { useLanguage } from "../lib/languageContext";
@@ -28,6 +28,22 @@ export function MedAvatar({ name, size, className = "" }: { name: string; size: 
       style={{ width: size, height: size }}
       className={`object-cover bg-muted ${className}`}
     />
+  );
+}
+
+// A person's own profile photo, not a medicine's — falls back to a plain
+// silhouette (never stock imagery) once they haven't uploaded one.
+export function ProfileAvatar({ photo, size, className = "" }: { photo?: string; size: number; className?: string }) {
+  if (photo) {
+    return <img src={photo} alt="" style={{ width: size, height: size }} className={`object-cover bg-muted ${className}`} />;
+  }
+  return (
+    <div style={{ width: size, height: size }} className={`relative shrink-0 bg-muted text-muted-foreground ${className}`}>
+      <User
+        size={Math.round(size * 0.55)}
+        className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2"
+      />
+    </div>
   );
 }
 
@@ -119,7 +135,7 @@ export function PatientSwitcher({ patients, selected, onSelect, onAdd, onScan }:
         data-tour="cg-patientswitcher"
         className="flex items-center gap-2.5 bg-card/70 backdrop-blur-sm border border-border rounded-2xl px-3 py-2 w-full active:bg-muted/60 transition-colors"
       >
-        <img src={patient.photo} alt={patient.name} className="w-8 h-8 rounded-full object-cover bg-muted" />
+        <ProfileAvatar photo={patient.photo} size={32} className="rounded-full shrink-0" />
         <div className="flex-1 text-left">
           <div className="text-xs font-semibold text-foreground leading-tight">{patient.nickname} · {patient.relation}</div>
           <div className="text-[calc(10px*var(--dw-text,1))] text-muted-foreground">{t(language, "patientSwitcher.checked", { time: patient.lastChecked })}</div>
@@ -135,7 +151,7 @@ export function PatientSwitcher({ patients, selected, onSelect, onAdd, onScan }:
               onClick={() => { onSelect(i); setOpen(false); }}
               className={`flex items-center gap-3 w-full px-3 py-2.5 text-left transition-colors ${i === selected ? "bg-secondary" : "hover:bg-muted"}`}
             >
-              <img src={p.photo} alt={p.name} className="w-8 h-8 rounded-full object-cover bg-muted" />
+              <ProfileAvatar photo={p.photo} size={32} className="rounded-full shrink-0" />
               <div>
                 <div className="text-xs font-semibold text-foreground">{p.name}</div>
                 <div className="text-[calc(10px*var(--dw-text,1))] text-muted-foreground">{t(language, "common.relationAge", { relation: p.relation, age: p.age })}</div>

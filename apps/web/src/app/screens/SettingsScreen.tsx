@@ -1,11 +1,12 @@
 import { useState } from "react";
-import { ChevronRight, Lock, Shield, Edit3, RefreshCw, Plus, CheckCircle2, LogOut, Phone, Star, User } from "lucide-react";
-import { Card, SectionHeader } from "../components/shared";
+import { Lock, Shield, Edit3, RefreshCw, Plus, CheckCircle2, LogOut, Phone, Star, User } from "lucide-react";
+import { Card, SectionHeader, ProfileAvatar } from "../components/shared";
 import { Switch } from "../components/ui/switch";
+import { ChoiceRow } from "./elderly/ElderlySettingsScreen";
 import { useLanguage } from "../lib/languageContext";
 import { LANGUAGE_OPTIONS, t } from "../lib/language";
 import { useAccessibility } from "../accessibility.tsx";
-import type { FontSize } from "../accessibility.tsx";
+import type { FontSize, ContrastMode } from "../accessibility.tsx";
 import type { Patient, Contact } from "../types";
 import { CallMockup } from "../components/CallMockup";
 
@@ -20,15 +21,21 @@ const CARE_TEAM_SEED: CareTeamMember[] = [
 
 interface CaregiverAccount { name: string | null; email: string | null }
 
-export function SettingsScreen({ patient, caregiverAccount, onSwitchMode, onSignOut, onEditProfile }: {
+export function SettingsScreen({ patient, caregiverAccount, onSwitchMode, onSignOut, onEditProfile, onEditAccount }: {
   patient: Patient;
   caregiverAccount: CaregiverAccount;
   onSwitchMode: () => void;
   onSignOut: () => void;
   onEditProfile: () => void;
+  onEditAccount: () => void;
 }) {
   const { language, setLanguage } = useLanguage();
-  const { fontSize, setFontSize, highContrast, setContrast, voiceOutput, setVoiceOutput } = useAccessibility();
+  const { fontSize, setFontSize, contrast, setContrast, voiceOutput, setVoiceOutput } = useAccessibility();
+  const contrastOptions: { id: ContrastMode; label: string }[] = [
+    { id: "normal", label: t(language, "settings.contrastNormal") },
+    { id: "high", label: t(language, "settings.contrastHigh") },
+    { id: "max", label: t(language, "settings.contrastMax") },
+  ];
   const [callTarget, setCallTarget] = useState<Contact | null>(null);
   const [notifMissed, setNotifMissed] = useState(true);
   const [notifRefill, setNotifRefill] = useState(true);
@@ -58,12 +65,19 @@ export function SettingsScreen({ patient, caregiverAccount, onSwitchMode, onSign
         <Card>
           <div className="flex items-center gap-3 px-4 py-4">
             <div className="w-12 h-12 rounded-2xl bg-primary flex items-center justify-center text-primary-foreground font-bold text-lg shrink-0">{caregiverInitials}</div>
-            <div className="min-w-0">
+            <div className="min-w-0 flex-1">
               <p className="text-sm font-semibold text-foreground truncate">{caregiverAccount.name || caregiverAccount.email || "—"}</p>
               {caregiverAccount.name && caregiverAccount.email && (
                 <p className="text-xs text-muted-foreground truncate">{caregiverAccount.email}</p>
               )}
             </div>
+            <button
+              onClick={onEditAccount}
+              aria-label={t(language, "settings.editAccount")}
+              className="w-9 h-9 rounded-full bg-primary/10 flex items-center justify-center shrink-0 active:bg-primary/20 transition-colors"
+            >
+              <Edit3 size={15} className="text-primary" />
+            </button>
           </div>
         </Card>
       </div>
@@ -73,16 +87,20 @@ export function SettingsScreen({ patient, caregiverAccount, onSwitchMode, onSign
       <div>
         <SectionHeader title={t(language, "settings.careRecipient")} />
         <Card>
-          <div className="flex items-center gap-3 px-4 py-4 border-b border-border">
-            <img src={patient.photo} alt={patient.nickname} className="w-12 h-12 rounded-2xl object-cover bg-muted shrink-0" />
-            <div className="min-w-0">
+          <div className="flex items-center gap-3 px-4 py-4">
+            <ProfileAvatar photo={patient.photo} size={48} className="rounded-2xl shrink-0" />
+            <div className="min-w-0 flex-1">
               <p className="text-sm font-semibold text-foreground truncate">{patient.nickname}</p>
               <p className="text-xs text-muted-foreground truncate">{patient.relation}</p>
             </div>
+            <button
+              onClick={onEditProfile}
+              aria-label={t(language, "settings.editCareRecipientProfile", { name: patient.nickname })}
+              className="w-9 h-9 rounded-full bg-primary/10 flex items-center justify-center shrink-0 active:bg-primary/20 transition-colors"
+            >
+              <Edit3 size={15} className="text-primary" />
+            </button>
           </div>
-          <button onClick={onEditProfile} className="w-full flex items-center justify-between px-4 py-3 text-sm text-foreground font-medium">
-            {t(language, "settings.editCareRecipientProfile", { name: patient.nickname })} <ChevronRight size={14} className="text-muted-foreground" />
-          </button>
         </Card>
       </div>
 
@@ -112,8 +130,7 @@ export function SettingsScreen({ patient, caregiverAccount, onSwitchMode, onSign
         <SectionHeader title={t(language, "settings.accessibility")} />
         <Card className="divide-y divide-border">
           <div className="px-4 py-4">
-            <p className="text-sm font-medium text-foreground mb-0.5">{t(language, "settings.textSize")}</p>
-            <p className="text-xs text-muted-foreground mb-3">{t(language, "settings.textSizeDesc")}</p>
+            <p className="text-sm font-medium text-foreground mb-3">{t(language, "settings.textSize")}</p>
             <div className="flex items-center gap-3">
               <span className="text-xs font-semibold text-muted-foreground shrink-0">A</span>
               <input
@@ -128,12 +145,9 @@ export function SettingsScreen({ patient, caregiverAccount, onSwitchMode, onSign
               <span className="text-xl font-semibold text-muted-foreground shrink-0">A</span>
             </div>
           </div>
-          <div className="px-4 py-4 flex items-center justify-between gap-3">
-            <div className="flex-1">
-              <p className="text-sm font-medium text-foreground">{t(language, "settings.highContrast")}</p>
-              <p className="text-xs text-muted-foreground">{t(language, "settings.highContrastDesc")}</p>
-            </div>
-            <Switch checked={highContrast} onCheckedChange={on => setContrast(on ? "high" : "normal")} />
+          <div className="px-4 py-4">
+            <p className="text-sm font-medium text-foreground mb-3">{t(language, "settings.contrast")}</p>
+            <ChoiceRow value={contrast} options={contrastOptions} onChange={setContrast} />
           </div>
         </Card>
       </div>
@@ -143,10 +157,7 @@ export function SettingsScreen({ patient, caregiverAccount, onSwitchMode, onSign
         <SectionHeader title={t(language, "settings.voiceAndLanguage")} />
         <Card className="divide-y divide-border">
           <div className="px-4 py-4 flex items-center justify-between gap-3">
-            <div>
-              <p className="text-sm font-medium text-foreground">{t(language, "settings.language")}</p>
-              <p className="text-xs text-muted-foreground">{t(language, "settings.languageDesc")}</p>
-            </div>
+            <p className="text-sm font-medium text-foreground">{t(language, "settings.language")}</p>
             <select value={language} onChange={e => setLanguage(e.target.value as any)} className="bg-muted rounded-xl px-3 py-2 text-sm font-medium text-foreground outline-none">
               {LANGUAGE_OPTIONS.map(option => <option key={option.id} value={option.id}>{option.label}</option>)}
             </select>

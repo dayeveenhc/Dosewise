@@ -1,5 +1,5 @@
 import { useState, useEffect } from "react";
-import { Plus, BookOpen, ChevronDown, History, Check, RefreshCw, ShieldAlert } from "lucide-react";
+import { Plus, BookOpen, ChevronDown, History, Check, RefreshCw, ShieldAlert, X, Pencil } from "lucide-react";
 import { useAccessibility } from "../../accessibility.tsx";
 import type { Medication, Patient } from "../../types";
 import { to24h, formatClock, supplyDaysLeft, cadenceLabel, WEEKDAY_TOKENS, LOW_SUPPLY_DAYS, REFILL_PROMPT_DAYS } from "../../lib/medications";
@@ -8,7 +8,7 @@ import { MedAvatar } from "../../components/shared";
 import { useLanguage } from "../../lib/languageContext";
 import { t } from "../../lib/language";
 
-interface GroupedMed extends Medication { times: string[] }
+export interface GroupedMed extends Medication { times: string[] }
 
 // Collapse the schedule's per-time-slot entries back into one entry per real
 // medication, keeping every time it's taken. Falls back to the name as the key
@@ -30,13 +30,16 @@ function groupByMedication(meds: Medication[]): GroupedMed[] {
   return out;
 }
 
-export function ElderlyPrescriptionScreen({ patient, onAddRx, onRequestRefill, justAddedMed, highlightIds }: {
+export function ElderlyPrescriptionScreen({ patient, onAddRx, onRequestRefill, onEditRx, justAddedMed, highlightIds }: {
   patient: Patient;
   onAddRx: () => void;
   // Opens Ask Mei with a refill message PRE-FILLED (never auto-sent — the
   // elder still taps Send themselves), so nothing is sent on their behalf.
 
   onRequestRefill: (medName: string) => void;
+  // Opens AddPrescriptionSheet pre-filled with this medication so the elder
+  // can correct it, from the detail popup's Edit button.
+  onEditRx: (med: GroupedMed) => void;
   justAddedMed?: string | null;
   // Entity ids ChangeHighlight is currently trying to ring. Stopped medicines
   // live behind a collapsed accordion, so a discontinue highlight had nothing
@@ -48,6 +51,7 @@ export function ElderlyPrescriptionScreen({ patient, onAddRx, onRequestRefill, j
   const { language } = useLanguage();
   const [helpOpen, setHelpOpen] = useState<number | null>(null);
   const [pastOpen, setPastOpen] = useState(false);
+  const [detailMed, setDetailMed] = useState<GroupedMed | null>(null);
   // Open the stopped list whenever the change being highlighted is in it. The
   // ring is this app's proof that something really happened; an elder who stops
   // a medicine used to get the write with no visible confirmation at all.
@@ -131,7 +135,11 @@ export function ElderlyPrescriptionScreen({ patient, onAddRx, onRequestRefill, j
             <div
               key={m.id}
               data-testid={m.medicationId ? `medication-${m.medicationId}` : undefined}
-              className={`rounded-2xl border overflow-hidden shadow-sm ${
+              onClick={() => setDetailMed(m)}
+              role="button"
+              tabIndex={0}
+              onKeyDown={e => { if (e.key === "Enter" || e.key === " ") setDetailMed(m); }}
+              className={`rounded-2xl border overflow-hidden shadow-sm text-left active:opacity-90 transition-opacity ${
                 justAdded ? "bg-card border-2 border-taken ring-2 ring-taken/40"
                 : lowRefill ? "bg-missed-bg border-missed-border"
                 : "bg-card border-border"
@@ -201,7 +209,7 @@ export function ElderlyPrescriptionScreen({ patient, onAddRx, onRequestRefill, j
                     matters before whether more is needed. */}
                 {isEyeDrop && (
                   <button
-                    onClick={() => setHelpOpen(isHelpOpen ? null : m.id)}
+                    onClick={e => { e.stopPropagation(); setHelpOpen(isHelpOpen ? null : m.id); }}
                     className={`mt-3 w-full flex items-center gap-2.5 px-3.5 h-11 rounded-xl text-[calc(14px*var(--dw-text,1))] font-bold border transition-colors ${
                       isHelpOpen ? "bg-primary text-primary-foreground border-primary" : "bg-secondary text-secondary-foreground border-primary/20"
                     }`}
@@ -214,7 +222,7 @@ export function ElderlyPrescriptionScreen({ patient, onAddRx, onRequestRefill, j
 
                 {needsRefill && (
                   <button
-                    onClick={() => onRequestRefill(m.name)}
+                    onClick={e => { e.stopPropagation(); onRequestRefill(m.name); }}
                     data-walk="med-request-refill-btn"
                     className="mt-2.5 w-full flex items-center justify-center gap-2 h-11 rounded-xl border border-border text-[calc(14px*var(--dw-text,1))] font-bold text-foreground active:bg-muted transition-colors"
                   >
@@ -280,6 +288,65 @@ export function ElderlyPrescriptionScreen({ patient, onAddRx, onRequestRefill, j
           </div>
         )}
       </div>
+
+      {/* Detail popup — minimal set only (name, dose, times/day, condition),
+          plus Edit (reopens AddPrescriptionSheet pre-filled) and Close. */}
+      {detailMed && (
+        <div className="absolute inset-0 z-50 flex flex-col justify-end">
+          <div className="absolute inset-0 bg-black/40 backdrop-blur-[1px]" onClick={() => setDetailMed(null)} />
+          <div className="relative bg-card rounded-t-3xl shadow-2xl overflow-hidden flex flex-col max-h-[80%]">
+            <div className="flex justify-center pt-3 pb-1 shrink-0">
+              <div className="w-10 h-1 bg-border rounded-full" />
+            </div>
+            <div className="flex items-center justify-between px-5 pb-3 pt-1 border-b border-border shrink-0">
+              <div className="flex items-center gap-3 min-w-0">
+                <MedAvatar name={detailMed.name} size={44} className="rounded-xl shrink-0" />
+                <div className="min-w-0">
+                  <p className="font-['Fraunces'] text-lg font-semibold text-foreground truncate">{detailMed.name}</p>
+                  {detailMed.dose && <p className="text-xs text-muted-foreground">{detailMed.dose}</p>}
+                </div>
+              </div>
+              <button onClick={() => setDetailMed(null)} aria-label={t(language, "link.close")} className="w-8 h-8 rounded-full bg-muted flex items-center justify-center shrink-0">
+                <X size={14} className="text-foreground" />
+              </button>
+            </div>
+            <div className="overflow-y-auto scrollbar-none px-5 py-4 space-y-3.5">
+              <div>
+                <p className="text-xs font-semibold text-muted-foreground mb-1">{t(language, "prescription.dose")}</p>
+                <p className="text-sm text-foreground">{detailMed.dose || "—"}</p>
+              </div>
+              <div>
+                <p className="text-xs font-semibold text-muted-foreground mb-1">{t(language, "prescription.scheduledTimes")}</p>
+                <div className="flex flex-wrap gap-1.5">
+                  {detailMed.times.map(time => (
+                    <span key={time} className="text-sm font-bold text-secondary-foreground bg-secondary border border-primary/20 rounded-lg px-2.5 py-1">
+                      {formatClock(time, timeFormat)}
+                    </span>
+                  ))}
+                </div>
+              </div>
+              <div>
+                <p className="text-xs font-semibold text-muted-foreground mb-1">{t(language, "prescription.purposeCondition")}</p>
+                <p className="text-sm text-foreground">{localizeCatalogValue(detailMed.purpose, k => t(language, k))}</p>
+              </div>
+            </div>
+            <div className="px-5 py-4 border-t border-border shrink-0 flex gap-2">
+              <button
+                onClick={() => setDetailMed(null)}
+                className="flex-1 h-12 rounded-2xl border border-border text-sm font-semibold text-foreground"
+              >
+                {t(language, "link.close")}
+              </button>
+              <button
+                onClick={() => { const med = detailMed; setDetailMed(null); onEditRx(med); }}
+                className="flex-1 h-12 rounded-2xl bg-primary text-primary-foreground text-sm font-semibold flex items-center justify-center gap-2"
+              >
+                <Pencil size={15} />{t(language, "common.edit")}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

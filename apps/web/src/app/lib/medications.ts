@@ -325,15 +325,17 @@ async function shiftSupply(medicationId: string, days: number): Promise<void> {
   }).eq("id", refill.id);
 }
 
-export async function addMedication(elderId: string, input: {
+interface MedicationInput {
   name: string; dosage: string; purpose: string; timeHHMM?: string; timeHHMMs?: string[]; refillDays?: number;
   // Cadence. `days` is the shape Hermes already reads (dosing.py::scheduled_today);
   // `intervalDays` is app-side only for now — see isDueOn's note.
   days?: string[]; intervalDays?: number;
-}): Promise<string> {
+}
+
+// Mirrors what tools/medications.py writes, so a medication added here and one
+// added by Mei read back identically.
+function buildSchedule(input: MedicationInput): Record<string, unknown> {
   const times = (input.timeHHMMs && input.timeHHMMs.length ? input.timeHHMMs : input.timeHHMM ? [input.timeHHMM] : ["08:00"]).filter(Boolean);
-  // Mirrors what tools/medications.py writes, so a medication added here and one
-  // added by Mei read back identically.
   const schedule: Record<string, unknown> = { times, frequency: "daily" };
   if (input.days?.length && input.days.length < 7) {
     schedule.days = input.days;
@@ -343,11 +345,15 @@ export async function addMedication(elderId: string, input: {
     schedule.frequency = "interval";
     schedule.start_date = isoDate(new Date()); // the anchor isDueOn counts from
   }
+  return schedule;
+}
+
+export async function addMedication(elderId: string, input: MedicationInput): Promise<string> {
   const { data, error } = await supabase
     .from("medications")
     .insert({
       elder_id: elderId, name: input.name, purpose: input.purpose,
-      dosage: input.dosage, schedule,
+      dosage: input.dosage, schedule: buildSchedule(input),
     })
     .select("id").single();
   if (error) throw error;
@@ -362,6 +368,18 @@ export async function addMedication(elderId: string, input: {
     });
   }
   return medicationId;
+}
+
+// Edits an existing medication in place (name/dose/purpose/schedule) — used by
+// the elder's "Edit" flow on a medication card. Deliberately does not touch
+// `refills`: the person is correcting the prescription's details, not
+// re-reporting how much supply they currently have on hand.
+export async function updateMedication(medicationId: string, input: MedicationInput): Promise<void> {
+  const { error } = await supabase
+    .from("medications")
+    .update({ name: input.name, purpose: input.purpose, dosage: input.dosage, schedule: buildSchedule(input) })
+    .eq("id", medicationId);
+  if (error) throw error;
 }
 
 // No DELETE policy exists on medications (supabase/migrations/0002_rls_policies.sql)

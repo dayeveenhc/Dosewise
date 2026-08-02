@@ -40,7 +40,9 @@ export interface Patient {
   nickname: string;
   age: number;
   relation: string;
-  photo: string;
+  // Absent until the person uploads one — ProfileAvatar falls back to a plain
+  // silhouette rather than stock imagery.
+  photo?: string;
   bloodType: string;
   conditions: string[];
   allergies: string[];

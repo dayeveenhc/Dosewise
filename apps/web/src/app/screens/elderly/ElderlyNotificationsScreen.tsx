@@ -183,13 +183,26 @@ export function ElderlyNotificationsScreen({ careMessages, elderId, doctorQuesti
             <p className="text-[calc(15px*var(--dw-text,1))] text-warn-fg/90 leading-relaxed mb-3">
               {t(language, "notifications.lowStockBody", { med: "Metformin 500mg", days: 4 })}
             </p>
-            <button
-              onClick={() => setRefillMockDismissed(true)}
-              data-walk="notif-ack-btn"
-              className="w-full bg-card border border-warn-border text-warn-fg rounded-xl py-2.5 text-[calc(15px*var(--dw-text,1))] font-bold flex items-center justify-center gap-1.5 active:scale-[0.98] transition-transform"
-            >
-              <Check size={16} />{t(language, "notifications.gotIt")}
-            </button>
+            <div className="flex gap-2">
+              <button
+                onClick={() => setRefillMockDismissed(true)}
+                data-walk="notif-ack-btn"
+                className="flex-1 bg-card border border-warn-border text-warn-fg rounded-xl py-2.5 text-[calc(15px*var(--dw-text,1))] font-bold flex items-center justify-center gap-1.5 active:scale-[0.98] transition-transform"
+              >
+                <Check size={16} />{t(language, "notifications.dismiss")}
+              </button>
+              <button
+                onClick={() => {
+                  onAddDoctorQ(t(language, "ai.refillRequestMsg", { name: "Metformin" }));
+                  setRefillMockDismissed(true);
+                  setTab("questions");
+                }}
+                data-walk="notif-request-refill-btn"
+                className="flex-1 bg-warn-fg text-white rounded-xl py-2.5 text-[calc(15px*var(--dw-text,1))] font-bold flex items-center justify-center gap-1.5 active:scale-[0.98] transition-transform"
+              >
+                <RefreshCw size={16} />{t(language, "prescription.requestRefill")}
+              </button>
+            </div>
           </div>
         )}
 

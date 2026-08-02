@@ -30,12 +30,12 @@ export function DashboardScreen({ patient, onNavigate, onSendReminder }: { patie
       {/* Adherence overview */}
       <Card className="p-3.5" data-tour="cg-dashboard">
         <div className="flex items-start justify-between gap-3">
-          <p className="text-[calc(10px*var(--dw-text,1))] text-muted-foreground uppercase tracking-widest font-medium mb-0.5">{t(language, "home.today")} {t(language, "nav.medications")}</p>
+          <p className="text-[calc(12px*var(--dw-text,1))] text-muted-foreground uppercase tracking-widest font-medium mb-0.5">{t(language, "home.today")} {t(language, "nav.medications")}</p>
           <button
             onClick={() => onNavigate("timeline")}
-            className="shrink-0 flex items-center gap-1 text-xs font-semibold text-primary bg-secondary rounded-full px-3 py-1.5 active:opacity-80 transition-opacity whitespace-nowrap -mt-1"
+            className="shrink-0 flex items-center gap-1 text-sm font-semibold text-primary bg-secondary rounded-full px-3 py-1.5 active:opacity-80 transition-opacity whitespace-nowrap -mt-1"
           >
-            <ClipboardList size={12} />
+            <ClipboardList size={14} />
             {t(language, "common.viewSchedule")}
           </button>
         </div>
@@ -46,7 +46,7 @@ export function DashboardScreen({ patient, onNavigate, onSendReminder }: { patie
             </div>
           ))}
         </div>
-        <p className="text-xs text-muted-foreground mt-2">{t(language, "dashboard.dosesTaken", { taken, total })}</p>
+        <p className="text-sm text-muted-foreground mt-2">{t(language, "dashboard.dosesTaken", { taken, total })}</p>
         {colourBlind && (
           <div className="flex flex-col gap-0.5 mt-1">
             {[...new Set(dueToday.map(m => m.name))].filter(n => MED_SHAPES[n]).map(n => (
@@ -55,16 +55,16 @@ export function DashboardScreen({ patient, onNavigate, onSendReminder }: { patie
           </div>
         )}
         <div className="flex gap-2 mt-2">
-          <span className="inline-flex items-center gap-1 text-[calc(10px*var(--dw-text,1))] font-medium text-taken-fg bg-taken-bg border border-taken-border rounded-full px-2 py-0.5 whitespace-nowrap">
-            <CheckCircle2 size={10} /> {taken} {t(language, "common.taken")}
+          <span className="inline-flex items-center gap-1 text-[calc(12px*var(--dw-text,1))] font-medium text-taken-fg bg-taken-bg border border-taken-border rounded-full px-2 py-0.5 whitespace-nowrap">
+            <CheckCircle2 size={12} /> {taken} {t(language, "common.taken")}
           </span>
           {missed > 0 && (
-            <span className="inline-flex items-center gap-1 text-[calc(10px*var(--dw-text,1))] font-medium text-missed-fg bg-missed-bg border border-missed-border rounded-full px-2 py-0.5 whitespace-nowrap">
-              <AlertTriangle size={10} /> {missed} {t(language, "common.missed")}
+            <span className="inline-flex items-center gap-1 text-[calc(12px*var(--dw-text,1))] font-medium text-missed-fg bg-missed-bg border border-missed-border rounded-full px-2 py-0.5 whitespace-nowrap">
+              <AlertTriangle size={12} /> {missed} {t(language, "common.missed")}
             </span>
           )}
-          <span className="inline-flex items-center gap-1 text-[calc(10px*var(--dw-text,1))] font-medium text-upcoming-fg bg-upcoming-bg border border-upcoming-border rounded-full px-2 py-0.5 whitespace-nowrap">
-            <Circle size={10} /> {upcoming} {t(language, "common.upcoming")}
+          <span className="inline-flex items-center gap-1 text-[calc(12px*var(--dw-text,1))] font-medium text-upcoming-fg bg-upcoming-bg border border-upcoming-border rounded-full px-2 py-0.5 whitespace-nowrap">
+            <Circle size={12} /> {upcoming} {t(language, "common.upcoming")}
           </span>
         </div>
       </Card>

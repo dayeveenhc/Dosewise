@@ -8,9 +8,6 @@ import { t } from "../lib/language";
 // itself owns the provider and would not re-render on a language change.
 export function BottomNav({ activeTab, onSelect }: { activeTab: string; onSelect: (s: Screen) => void }) {
   const { language } = useLanguage();
-  // Icon-only, matching the elder shell. aria-label carries what the removed
-  // visible text used to say — an icon-only tab bar is otherwise silent to a
-  // screen reader.
   return (
     <div className="shrink-0 bg-card/85 backdrop-blur-xl border-t border-border/60 px-3 pt-4 pb-6">
       {/* items-END so every control shares one baseline — see ElderlyApp's nav. */}
@@ -42,10 +39,11 @@ export function BottomNav({ activeTab, onSelect }: { activeTab: string; onSelect
               aria-current={isActive ? "page" : undefined}
               className="flex-1 min-w-0 flex justify-center relative"
             >
-              {/* Coloured icon + dot rather than a filled pill — see ElderlyApp's nav. */}
-              <div className="w-16 h-12 flex flex-col items-center justify-end gap-1.5">
-                <item.icon size={26} className={`transition-colors ${isActive ? "text-primary" : "text-muted-foreground/70"}`} />
-                <span className={`h-1.5 w-1.5 rounded-full transition-colors ${isActive ? "bg-primary" : "bg-transparent"}`} />
+              {/* Active state pops the icon up a size and colours both the
+                  icon and its label — see ElderlyApp's nav. */}
+              <div className="w-16 h-12 flex flex-col items-center justify-end gap-1">
+                <item.icon size={26} className={`transition-all duration-150 ${isActive ? "text-primary scale-125" : "text-muted-foreground/70 scale-100"}`} />
+                <span className={`text-[calc(10px*var(--dw-text,1))] font-medium leading-none transition-colors ${isActive ? "text-primary" : "text-muted-foreground/70"}`}>{label}</span>
               </div>
             </button>
           );

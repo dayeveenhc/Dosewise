@@ -32,6 +32,10 @@ interface AddPrescriptionSheetProps {
   // parent can refetch the medication list (there is no local onAdd for this path).
   // Receives the added medication name so the parent can highlight it as proof.
   onAgentAdded?: (name?: string) => void;
+  // When set, the sheet opens pre-filled for this medication and calls onAdd
+  // with the edited values instead of a blank one — the scan tab makes no
+  // sense for an edit, so it's hidden and manual is forced.
+  editing?: Medication & { times?: string[] };
 }
 
 // A small type-ahead input: shows filtered suggestions as the user types.
@@ -77,9 +81,9 @@ function TypeAhead<T>({ value, onChange, onPick, items, filter, label, render, p
   );
 }
 
-export function AddPrescriptionSheet({ onClose, onAdd, onAdded, initialTab = "manual", routine, onAgentAdded }: AddPrescriptionSheetProps) {
+export function AddPrescriptionSheet({ onClose, onAdd, onAdded, initialTab = "manual", routine, onAgentAdded, editing }: AddPrescriptionSheetProps) {
   const { language } = useLanguage();
-  const [tab, setTab] = useState<"scan" | "manual">(initialTab);
+  const [tab, setTab] = useState<"scan" | "manual">(editing ? "manual" : initialTab);
   const [scannedPhoto, setScannedPhoto] = useState<string | null>(null);
   const [scanning, setScanning] = useState(false);
   const [proposal, setProposal] = useState<string | null>(null);
@@ -91,15 +95,15 @@ export function AddPrescriptionSheet({ onClose, onAdd, onAdded, initialTab = "ma
   const libraryRef = useRef<HTMLInputElement>(null);
   const [showPhotoSource, setShowPhotoSource] = useState(false);
 
-  const [name, setName] = useState("");
-  const [dose, setDose] = useState("");
-  const [purpose, setPurpose] = useState("");
-  const [selectedTimes, setSelectedTimes] = useState<string[]>([defaultDoseTime(routine)]);
-  const [cadence, setCadence] = useState<Cadence>("daily");
-  const [weekDays, setWeekDays] = useState<string[]>([]);
-  const [intervalDays, setIntervalDays] = useState(2);
-  const [refillDays, setRefillDays] = useState("");
-  const [colour, setColour] = useState(MED_COLOURS[0].hex);
+  const [name, setName] = useState(editing?.name ?? "");
+  const [dose, setDose] = useState(editing?.dose ?? "");
+  const [purpose, setPurpose] = useState(editing?.purpose ?? "");
+  const [selectedTimes, setSelectedTimes] = useState<string[]>(editing?.times ?? (editing?.time ? [editing.time] : [defaultDoseTime(routine)]));
+  const [cadence, setCadence] = useState<Cadence>(editing?.days?.length ? "days" : (editing?.intervalDays ?? 1) > 1 ? "interval" : "daily");
+  const [weekDays, setWeekDays] = useState<string[]>(editing?.days ?? []);
+  const [intervalDays, setIntervalDays] = useState(editing?.intervalDays ?? 2);
+  const [refillDays, setRefillDays] = useState(editing?.refillDaysLeft ? String(editing.refillDaysLeft) : "");
+  const [colour, setColour] = useState(editing?.colour ?? MED_COLOURS[0].hex);
   const [showDoseConfirm, setShowDoseConfirm] = useState(false);
   // Cleared whenever the dose or its schedule changes, so an "I'm sure" given
   // for "10 tablets" can't carry over to a different number typed after it.
@@ -221,31 +225,34 @@ export function AddPrescriptionSheet({ onClose, onAdd, onAdded, initialTab = "ma
         {/* Header */}
         <div className="flex items-center justify-between px-5 pb-3 pt-1 border-b border-border shrink-0">
           <div>
-            <h2 className="font-['Fraunces'] text-lg font-semibold text-foreground">{t(language, "prescription.add")}</h2>
-            <p className="text-xs text-muted-foreground">{t(language, "prescription.snapOrType")}</p>
+            <h2 className="font-['Fraunces'] text-lg font-semibold text-foreground">{t(language, editing ? "prescription.editTitle" : "prescription.add")}</h2>
+            <p className="text-xs text-muted-foreground">{t(language, editing ? "prescription.editSubtitle" : "prescription.snapOrType")}</p>
           </div>
           <button onClick={onClose} className="w-8 h-8 rounded-full bg-muted flex items-center justify-center">
             <X size={14} className="text-foreground" />
           </button>
         </div>
 
-        {/* Mode toggle */}
-        <div className="px-5 pt-3 shrink-0">
-          <div className="flex gap-2 bg-muted rounded-xl p-1">
-            <button
-              onClick={() => setTab("scan")}
-              className={`flex-1 flex items-center justify-center gap-1.5 py-2.5 rounded-lg text-sm font-semibold transition-colors ${tab === "scan" ? "bg-card text-foreground shadow-sm" : "text-muted-foreground"}`}
-            >
-              <Camera size={16} />{t(language, "prescription.scanPhotoTab")}
-            </button>
-            <button
-              onClick={() => setTab("manual")}
-              className={`flex-1 flex items-center justify-center gap-1.5 py-2.5 rounded-lg text-sm font-semibold transition-colors ${tab === "manual" ? "bg-card text-foreground shadow-sm" : "text-muted-foreground"}`}
-            >
-              <PenLine size={16} />{t(language, "prescription.enterManuallyTab")}
-            </button>
+        {/* Mode toggle — hidden when editing: re-scanning a label makes no
+            sense once a medication already exists. */}
+        {!editing && (
+          <div className="px-5 pt-3 shrink-0">
+            <div className="flex gap-2 bg-muted rounded-xl p-1">
+              <button
+                onClick={() => setTab("scan")}
+                className={`flex-1 flex items-center justify-center gap-1.5 py-2.5 rounded-lg text-sm font-semibold transition-colors ${tab === "scan" ? "bg-card text-foreground shadow-sm" : "text-muted-foreground"}`}
+              >
+                <Camera size={16} />{t(language, "prescription.scanPhotoTab")}
+              </button>
+              <button
+                onClick={() => setTab("manual")}
+                className={`flex-1 flex items-center justify-center gap-1.5 py-2.5 rounded-lg text-sm font-semibold transition-colors ${tab === "manual" ? "bg-card text-foreground shadow-sm" : "text-muted-foreground"}`}
+              >
+                <PenLine size={16} />{t(language, "prescription.enterManuallyTab")}
+              </button>
+            </div>
           </div>
-        </div>
+        )}
 
         {/* Body */}
         <div className="overflow-y-auto scrollbar-none px-5 py-4 space-y-4">
@@ -495,7 +502,7 @@ export function AddPrescriptionSheet({ onClose, onAdd, onAdded, initialTab = "ma
               className="w-full bg-primary text-primary-foreground rounded-2xl py-3.5 text-sm font-semibold flex items-center justify-center gap-2 disabled:opacity-40 transition-opacity"
             >
               {submitState === "saving" ? <Sparkles size={16} className="animate-pulse" /> : submitState === "success" ? <Check size={16} /> : <Plus size={16} />}
-              {submitState === "saving" ? t(language, "prescription.adding") : submitState === "success" ? t(language, "prescription.added") : t(language, "prescription.addNamed", { name: name || t(language, "prescription.medicationFallback") })}
+              {submitState === "saving" ? t(language, "prescription.adding") : submitState === "success" ? t(language, "prescription.added") : editing ? t(language, "prescription.saveChanges") : t(language, "prescription.addNamed", { name: name || t(language, "prescription.medicationFallback") })}
             </button>
           </div>
         )}

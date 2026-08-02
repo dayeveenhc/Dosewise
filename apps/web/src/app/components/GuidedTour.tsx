@@ -37,20 +37,27 @@ export function GuidedTour({ steps, onFinish }: { steps: TourStep[]; onFinish: (
     let attempts = 0;
     let raf = 0;
     const measure = () => {
-      const parent = rootRef.current?.parentElement;
+      // Measure THIS element's own box, not its parentElement's — the parent
+      // may have a border (e.g. the desktop phone-bezel frame's md:border-6),
+      // and position:absolute's containing block is the parent's PADDING edge
+      // while getBoundingClientRect() on the parent reports its BORDER edge.
+      // That mismatch used to shift every cutout down-right by the border
+      // width; this element (itself position:absolute; inset:0 in that same
+      // parent) already sits exactly at the padding edge, so its own rect IS
+      // the correct (0,0) origin with no border-width math needed.
+      const origin = rootRef.current?.getBoundingClientRect();
       const targetEl = document.querySelector(step.target);
-      if (parent && targetEl) {
+      if (origin && targetEl) {
         // Scroll first — measuring before the scroll settles captures stale
         // coordinates that don't match where the element ends up on screen.
         targetEl.scrollIntoView({ block: "center" });
-        const p = parent.getBoundingClientRect();
         const t = targetEl.getBoundingClientRect();
-        setRect({ top: t.top - p.top, left: t.left - p.left, width: t.width, height: t.height });
-        setContainerHeight(p.height);
+        setRect({ top: t.top - origin.top, left: t.left - origin.left, width: t.width, height: t.height });
+        setContainerHeight(origin.height);
         const navEl = step.navTarget ? document.querySelector(step.navTarget) : null;
         if (navEl) {
           const n = navEl.getBoundingClientRect();
-          setNavRect({ top: n.top - p.top, left: n.left - p.left, width: n.width, height: n.height });
+          setNavRect({ top: n.top - origin.top, left: n.left - origin.left, width: n.width, height: n.height });
         }
       } else if (attempts < 20) {
         attempts++;

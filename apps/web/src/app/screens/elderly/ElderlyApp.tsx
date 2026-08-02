@@ -1,9 +1,11 @@
 import { useEffect, useRef, useState } from "react";
 import { Droplets, Home, Pill, Brain, Bell, Settings, HelpCircle, ChevronLeft } from "lucide-react";
 import type { Patient, Medication, MedStatus, Message } from "../../types";
+import { ProfileAvatar } from "../../components/shared";
 import type { ElderlyTab, DoctorQ } from "./types";
 import { ElderlyHomeScreen } from "./ElderlyHomeScreen";
 import { ElderlyPrescriptionScreen } from "./ElderlyPrescriptionScreen";
+import type { GroupedMed } from "./ElderlyPrescriptionScreen";
 import { ElderlyAIScreen } from "./ElderlyAIScreen";
 import { ElderlyNotificationsScreen } from "./ElderlyNotificationsScreen";
 import { ElderlySettingsScreen } from "./ElderlySettingsScreen";
@@ -16,7 +18,7 @@ import { GuidedTour } from "../../components/GuidedTour";
 import type { TourStep } from "../../components/GuidedTour";
 import { useContentZoom } from "../../accessibility";
 import { ConfirmDialog } from "../../components/ConfirmDialog";
-import { logDoseTaken, unlogDoseTaken, addMedication, fetchElderMedications, fetchArchivedMedications, to24h, anyMedicationRunningLow, isDueOn } from "../../lib/medications";
+import { logDoseTaken, unlogDoseTaken, addMedication, updateMedication, fetchElderMedications, fetchArchivedMedications, to24h, anyMedicationRunningLow, isDueOn } from "../../lib/medications";
 import { defaultDoseTime } from "../../components/TimesPicker";
 import { MED_COLOURS } from "../../data/medications";
 import { useLanguage } from "../../lib/languageContext";
@@ -91,6 +93,9 @@ export function ElderlyApp({ patient, elderId, onUpdatePatient, onSignOut, start
   // tour merely reaches its final step's own timeoutMs and says so honestly.
   const [hasCaregiver, setHasCaregiver] = useState<boolean | undefined>(undefined);
   const [addRx, setAddRx] = useState<null | "scan" | "manual">(null);
+  // Set when AddPrescriptionSheet is opened from a medication's Edit button
+  // rather than the "+" add flow — see handleSavePrescription below.
+  const [editingMed, setEditingMed] = useState<GroupedMed | null>(null);
   const [showTravel, setShowTravel] = useState(false);
   const [showTour, setShowTour] = useState(!!startTour);
   const [showTourConfirm, setShowTourConfirm] = useState(false);
@@ -517,6 +522,33 @@ export function ElderlyApp({ patient, elderId, onUpdatePatient, onSignOut, start
     flagJustAdded(med.name);
   };
 
+  // Saves an edit from a medication card's detail popup. Real, Supabase-backed
+  // medications (medicationId set) go through updateMedication + a refetch, so
+  // the schedule/refill logic reads back exactly as Hermes would see it; local
+  // demo/seed data (no medicationId) has nothing to update server-side, so its
+  // per-time-slot rows are rebuilt in place instead.
+  const handleEditPrescription = async (original: GroupedMed, med: Omit<Medication, "id" | "status"> & { times?: string[] }) => {
+    const timeHHMMs = (med.times && med.times.length ? med.times : [med.time]).map(t => to24h(t));
+    if (elderId && original.medicationId) {
+      await updateMedication(original.medicationId, {
+        name: med.name, dosage: med.dose, purpose: med.purpose, timeHHMMs,
+        days: med.days, intervalDays: med.intervalDays,
+      });
+      await refreshMeds();
+    } else {
+      const key = original.medicationId ?? original.name;
+      const others = patient.medications.filter(m => (m.medicationId ?? m.name) !== key);
+      let nextId = patient.medications.reduce((max, m) => Math.max(max, m.id), 0);
+      const rows: Medication[] = timeHHMMs.map((time, i) => ({
+        ...original, name: med.name, dose: med.dose, purpose: med.purpose, time,
+        days: med.days, intervalDays: med.intervalDays,
+        id: i === 0 ? original.id : ++nextId,
+      }));
+      onUpdatePatient({ ...patient, medications: [...others, ...rows] });
+    }
+    flagJustAdded(med.name);
+  };
+
   // After the agent writes a medication change server-side (photo prescription,
   // chat-logged dose/refill), refetch so the local list isn't stale. Merge with a
   // functional update rather than spreading a closed-over `patient`, so a
@@ -566,9 +598,9 @@ export function ElderlyApp({ patient, elderId, onUpdatePatient, onSignOut, start
 
   const NAV: { id: ElderlyTab; icon: any; label: string; fab?: boolean }[] = [
     { id: "home",          icon: Home,        label: t(language, "nav.home") },
-    { id: "prescriptions", icon: Pill,        label: t(language, "nav.medicines") },
+    { id: "prescriptions", icon: Pill,        label: t(language, "nav.medications") },
     { id: "ai",            icon: Brain,       label: t(language, "nav.askMei"), fab: true },
-    { id: "notifications", icon: Bell,        label: t(language, "nav.reminders") },
+    { id: "notifications", icon: Bell,        label: t(language, "nav.notifications") },
     { id: "settings",      icon: Settings,    label: t(language, "nav.settings") },
   ];
 
@@ -617,7 +649,7 @@ export function ElderlyApp({ patient, elderId, onUpdatePatient, onSignOut, start
               aria-label={t(language, "header.profile")}
               className="w-11 h-11 rounded-full overflow-hidden border-2 border-primary/30 shrink-0 active:opacity-80 transition-opacity"
             >
-              <img src={patient.photo} alt="" className="w-full h-full object-cover" />
+              <ProfileAvatar photo={patient.photo} size={44} />
             </button>
           </div>
         )}
@@ -626,7 +658,7 @@ export function ElderlyApp({ patient, elderId, onUpdatePatient, onSignOut, start
       {/* Screen content */}
       <div className="flex-1 min-h-0 overflow-hidden flex flex-col" style={{ zoom: contentZoom } as React.CSSProperties}>
         {tab === "home"          && <ElderlyHomeScreen         patient={patient} onLogDose={handleLogDose} onUnlogDose={handleUnlogDose} onOpenTravel={() => setShowTravel(true)} justAddedMed={justAddedMed} onAskMei={openAIPrefill} />}
-        {tab === "prescriptions" && <ElderlyPrescriptionScreen patient={patient} onAddRx={() => setAddRx("manual")} onRequestRefill={name => openAIPrefill(t(language, "ai.refillRequestMsg", { name }))} justAddedMed={justAddedMed} highlightIds={highlightEntityIds} />}
+        {tab === "prescriptions" && <ElderlyPrescriptionScreen patient={patient} onAddRx={() => setAddRx("manual")} onRequestRefill={name => openAIPrefill(t(language, "ai.refillRequestMsg", { name }))} onEditRx={med => { setEditingMed(med); setAddRx("manual"); }} justAddedMed={justAddedMed} highlightIds={highlightEntityIds} />}
         {tab === "ai"            && (
           <ElderlyAIScreen
             patient={patient}
@@ -664,9 +696,6 @@ export function ElderlyApp({ patient, elderId, onUpdatePatient, onSignOut, start
 
       {/* Bottom nav — z-40 keeps it (and the Ask Mei FAB peeking above it) painting
           over any scrolled content behind it, regardless of that content's own layout. */}
-      {/* Icon-only. The visible labels are gone at the user's request, so each
-          control carries an aria-label — without one an icon-only tab bar is
-          silent to a screen reader. */}
       {/* Row is items-END so every control shares one baseline: the FAB's
           negative margin then only controls how far it rises above the bar, not
           where it sits in it (with items-center it drifted a few px high). Five
@@ -686,14 +715,11 @@ export function ElderlyApp({ patient, elderId, onUpdatePatient, onSignOut, start
             }
             return (
               <button key={item.id} onClick={() => setTab(item.id)} data-tour={`nav-${item.id}`} aria-label={item.label} aria-current={isActive ? "page" : undefined} className="flex-1 min-w-0 flex justify-center">
-                {/* Active state is a coloured icon plus a dot, not a filled
-                    pill: with the labels gone, a filled active tab was visually
-                    identical to the filled Ask Mei circle. Only the FAB is
-                    filled now, so "where am I" and "the assistant" never read
-                    as the same thing. */}
-                <div className="w-16 h-12 flex flex-col items-center justify-end gap-1.5">
-                  <item.icon size={26} className={`transition-colors ${isActive ? "text-primary" : "text-muted-foreground/70"}`} />
-                  <span className={`h-1.5 w-1.5 rounded-full transition-colors ${isActive ? "bg-primary" : "bg-transparent"}`} />
+                {/* Active state pops the icon up a size and colours both the
+                    icon and its label, so "where am I" reads at a glance. */}
+                <div className="w-16 h-12 flex flex-col items-center justify-end gap-1">
+                  <item.icon size={26} className={`transition-all duration-150 ${isActive ? "text-primary scale-125" : "text-muted-foreground/70 scale-100"}`} />
+                  <span className={`text-[calc(10px*var(--dw-text,1))] font-medium leading-none transition-colors ${isActive ? "text-primary" : "text-muted-foreground/70"}`}>{item.label}</span>
                 </div>
               </button>
             );
@@ -701,7 +727,17 @@ export function ElderlyApp({ patient, elderId, onUpdatePatient, onSignOut, start
         </div>
       </div>
 
-      {addRx && <AddPrescriptionSheet initialTab={addRx} routine={{ ...patient.mealTimes, sleepTime: patient.sleepTime }} onClose={() => setAddRx(null)} onAdd={handleAddPrescription} onAdded={() => { if (!walkthroughTask) setTab("prescriptions"); }} onAgentAdded={(name?: string) => { void refreshMeds(); flagJustAdded(name); setTab("prescriptions"); }} />}
+      {addRx && (
+        <AddPrescriptionSheet
+          initialTab={addRx}
+          editing={editingMed ?? undefined}
+          routine={{ ...patient.mealTimes, sleepTime: patient.sleepTime }}
+          onClose={() => { setAddRx(null); setEditingMed(null); }}
+          onAdd={med => editingMed ? handleEditPrescription(editingMed, med) : handleAddPrescription(med)}
+          onAdded={() => { setEditingMed(null); if (!walkthroughTask) setTab("prescriptions"); }}
+          onAgentAdded={(name?: string) => { void refreshMeds(); flagJustAdded(name); setTab("prescriptions"); }}
+        />
+      )}
       {showTravel && (
         <TravelModeSheet
           patient={patient}

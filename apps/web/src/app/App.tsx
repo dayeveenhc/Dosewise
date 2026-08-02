@@ -7,10 +7,10 @@ import { BottomNav } from "./components/BottomNav";
 import { LiveStatusBar, PatientSwitcher } from "./components/shared";
 import { supabase } from "./lib/supabase";
 import { ensureProfile, fetchElderMedications, fetchArchivedMedications, addMedication, archiveMedication, to24h } from "./lib/medications";
-import { fetchProfileRole, fetchProfile, calculateAge } from "./lib/profile";
+import { fetchProfileRole, fetchProfile, saveProfile, calculateAge } from "./lib/profile";
 import type { WizardPrefill } from "./lib/profile";
 import { normalizeAllergies } from "./lib/changeHighlight";
-import { readStoredAppMode, persistAppMode } from "./lib/sessionState";
+import { readStoredAppMode, persistAppMode, clearStoredAppMode } from "./lib/sessionState";
 import { WelcomeScreen } from "./screens/setup/WelcomeScreen";
 import { SetupMethodScreen } from "./screens/setup/SetupMethodScreen";
 import { GuidedSetupWizard } from "./screens/setup/GuidedSetupWizard";
@@ -25,6 +25,7 @@ import { MessagesScreen } from "./screens/MessagesScreen";
 import { SettingsScreen } from "./screens/SettingsScreen";
 import { AddPrescriptionSheet } from "./screens/AddPrescriptionSheet";
 import { EditProfileSheet } from "./screens/EditProfileSheet";
+import { EditCaregiverAccountSheet } from "./screens/EditCaregiverAccountSheet";
 import { ElderlyApp } from "./screens/elderly/ElderlyApp";
 import { ChangeHighlight } from "./components/ChangeHighlight";
 import type { AgentAction } from "./lib/hermes";
@@ -93,6 +94,7 @@ export default function App() {
   const [patients, setPatients] = useState<Patient[]>(PATIENTS);
   const [showAddPrescription, setShowAddPrescription] = useState(false);
   const [showEditProfile, setShowEditProfile] = useState(false);
+  const [showEditAccount, setShowEditAccount] = useState(false);
   // Set true the moment the guided setup wizard finishes, so the app that
   // follows can auto-start the tour exactly once. Cleared shortly after so a
   // later mode-switch remount doesn't auto-start it again.
@@ -339,13 +341,9 @@ export default function App() {
   // link, etc.) — this appends a locally-held patient at the same mock depth as
   // PATIENTS, not a real linked account. Revisit once that backend exists.
   const handleAddPatient = (name: string, relation: string) => {
-    const initials = name.trim().split(/\s+/).map(w => w[0]).slice(0, 2).join("").toUpperCase();
-    const photo = `data:image/svg+xml;utf8,${encodeURIComponent(
-      `<svg xmlns="http://www.w3.org/2000/svg" width="80" height="80"><rect width="80" height="80" rx="40" fill="#D9CFC1"/><text x="50%" y="50%" dy=".35em" text-anchor="middle" font-family="sans-serif" font-size="28" fill="#5B4636">${initials}</text></svg>`
-    )}`;
     const newId = patients.reduce((max, p) => Math.max(max, p.id), 0) + 1;
     setPatients(prev => [...prev, {
-      id: newId, name, nickname: name.split(" ")[0], age: 0, relation, photo,
+      id: newId, name, nickname: name.split(" ")[0], age: 0, relation,
       bloodType: "Unknown", conditions: [], allergies: [], medications: [], contacts: [],
       adherenceToday: 0, adherenceWeek: 0, lastChecked: "Just added",
     }]);
@@ -616,6 +614,31 @@ export default function App() {
     setPatients(prev => prev.map((p, i) => i === selectedPatient ? updated : p));
   };
 
+  const handleSignOut = () => {
+    clearStoredAppMode(elderId);
+    void supabase.auth.signOut();
+  };
+
+  // Saves the caregiver's OWN name/email — never the elder's. Name goes
+  // through the same fetch-merge-write as saveProfile's other callers (a
+  // blind write would blow away this same row's accessibility jsonb); email
+  // is a real auth change, so it goes through Supabase auth directly and
+  // triggers its own confirmation flow rather than a plain table write.
+  const handleSaveCaregiverAccount = async (updated: { name: string | null; email: string | null }) => {
+    if (!elderId) return;
+    if (updated.name !== caregiverAccount.name) {
+      const existing = await fetchProfile(elderId);
+      await saveProfile(elderId, "caregiver", updated.name ?? "", existing?.details ?? {});
+    }
+    if (updated.email && updated.email !== caregiverAccount.email) {
+      await supabase.auth.updateUser({ email: updated.email });
+    }
+    // Email deliberately NOT applied to local state here: Supabase holds the
+    // change pending until the confirmation link is clicked, so showing it as
+    // already-changed would claim something that hasn't happened yet.
+    setCaregiverAccount(prev => ({ ...prev, name: updated.name }));
+  };
+
   const unreadCount = notifications.filter(n => !n.read).length;
   const activeTab = ["dashboard", "timeline", "ai", "patient"].includes(screen)
     ? screen
@@ -715,7 +738,7 @@ export default function App() {
                 patient={patients[0]}
                 elderId={elderId}
                 onUpdatePatient={(p) => setPatients(prev => [typeof p === "function" ? p(prev[0]) : p, ...prev.slice(1)])}
-                onSignOut={() => supabase.auth.signOut()}
+                onSignOut={handleSignOut}
                 startTour={justOnboarded}
                 careMessages={careMessages}
                 onDismissCareMessage={id => setCareMessages(prev => prev.filter(m => m.id !== id))}
@@ -826,7 +849,7 @@ export default function App() {
             )}
             {screen === "ai" && <AskMeiScreen patient={patient} elderId={elderId} onUpdatePatient={handleUpdatePatient} onNavigate={setScreen} onSendReminder={() => handleSendReminder()} onMedsChanged={refreshMedications} onMedAdded={flagJustAdded} onHighlightChange={setHighlightChange} onWalkthroughStart={handleWalkthroughStart} />}
             {screen === "messages" && <MessagesScreen elderId={elderId} />}
-            {screen === "settings" && <SettingsScreen patient={patient} caregiverAccount={caregiverAccount} onSwitchMode={openModeSwitch} onSignOut={() => supabase.auth.signOut()} onEditProfile={() => setShowEditProfile(true)} />}
+            {screen === "settings" && <SettingsScreen patient={patient} caregiverAccount={caregiverAccount} onSwitchMode={openModeSwitch} onSignOut={handleSignOut} onEditProfile={() => setShowEditProfile(true)} onEditAccount={() => setShowEditAccount(true)} />}
           </ZoomContent>
 
           {/* Modals */}
@@ -844,6 +867,13 @@ export default function App() {
               patient={patient}
               onClose={() => setShowEditProfile(false)}
               onSave={handleUpdatePatient}
+            />
+          )}
+          {showEditAccount && (
+            <EditCaregiverAccountSheet
+              account={caregiverAccount}
+              onClose={() => setShowEditAccount(false)}
+              onSave={handleSaveCaregiverAccount}
             />
           )}
           {showSendReminder && (

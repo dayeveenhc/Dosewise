@@ -1,8 +1,11 @@
-import { useState } from "react";
-import { X, AlertTriangle, Trash2, Star, Check, Plus } from "lucide-react";
+import { useRef, useState } from "react";
+import type { ChangeEvent } from "react";
+import { X, AlertTriangle, Trash2, Star, Check, Plus, Camera } from "lucide-react";
 import type { Patient, Contact } from "../types";
 import { COMMON_ALLERGIES, COMMON_DRUG_ALLERGIES, localizeCatalogValue } from "../data/medications";
 import { withCatalogLabels } from "./setup/GuidedSetupWizard";
+import { ProfileAvatar } from "../components/shared";
+import { PhotoSourceSheet } from "../components/PhotoSourceSheet";
 import { useLanguage } from "../lib/languageContext";
 import { t } from "../lib/language";
 
@@ -10,6 +13,15 @@ interface EditProfileSheetProps {
   patient: Patient;
   onClose: () => void;
   onSave: (updated: Patient) => void;
+}
+
+function fileToDataUrl(file: Blob): Promise<string> {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => resolve(String(reader.result));
+    reader.onerror = () => reject(reader.error);
+    reader.readAsDataURL(file);
+  });
 }
 
 function AllergyTypeAhead({ value, onChange, onSelect }: { value: string; onChange: (v: string) => void; onSelect: (v: string) => void }) {
@@ -35,6 +47,10 @@ function AllergyTypeAhead({ value, onChange, onSelect }: { value: string; onChan
 
 export function EditProfileSheet({ patient, onClose, onSave }: EditProfileSheetProps) {
   const { language } = useLanguage();
+  const [photo, setPhoto] = useState(patient.photo);
+  const [showPhotoSource, setShowPhotoSource] = useState(false);
+  const cameraRef = useRef<HTMLInputElement>(null);
+  const libraryRef = useRef<HTMLInputElement>(null);
   const [name, setName] = useState(patient.name);
   const [nickname, setNickname] = useState(patient.nickname);
   const [age, setAge] = useState(String(patient.age));
@@ -64,8 +80,15 @@ export function EditProfileSheet({ patient, onClose, onSave }: EditProfileSheetP
   };
 
   const handleSave = () => {
-    onSave({ ...patient, name: name.trim(), nickname: nickname.trim(), age: parseInt(age) || patient.age, relation: relation.trim(), bloodType, conditions, allergies, contacts });
+    onSave({ ...patient, name: name.trim(), nickname: nickname.trim(), age: parseInt(age) || patient.age, relation: relation.trim(), bloodType, conditions, allergies, contacts, photo });
     onClose();
+  };
+
+  const onPhotoFile = (e: ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    e.target.value = "";
+    if (!file) return;
+    void fileToDataUrl(file).then(setPhoto);
   };
 
   const fieldCls = "w-full bg-input-background border border-border rounded-xl px-3.5 py-2.5 text-sm text-foreground placeholder:text-muted-foreground outline-none focus:border-primary transition-colors";
@@ -109,6 +132,27 @@ export function EditProfileSheet({ patient, onClose, onSave }: EditProfileSheetP
 
           {tab === "profile" && (
             <>
+              <div className="flex justify-center">
+                <div className="relative">
+                  <ProfileAvatar photo={photo} size={80} className="rounded-full border-2 border-primary/20" />
+                  <button
+                    onClick={() => setShowPhotoSource(true)}
+                    aria-label={t(language, "photoSource.takePhoto")}
+                    className="absolute bottom-0 right-0 w-8 h-8 rounded-full bg-primary text-primary-foreground flex items-center justify-center border-2 border-card"
+                  >
+                    <Camera size={14} />
+                  </button>
+                </div>
+              </div>
+              <input ref={cameraRef} type="file" accept="image/*" capture="user" className="sr-only" onChange={onPhotoFile} />
+              <input ref={libraryRef} type="file" accept="image/*" className="sr-only" onChange={onPhotoFile} />
+              {showPhotoSource && (
+                <PhotoSourceSheet
+                  onTakePhoto={() => { setShowPhotoSource(false); cameraRef.current?.click(); }}
+                  onChooseFile={() => { setShowPhotoSource(false); libraryRef.current?.click(); }}
+                  onClose={() => setShowPhotoSource(false)}
+                />
+              )}
               <div>
                 <label className="block text-xs font-semibold text-foreground mb-1.5">{t(language, "editProfile.fullName")}</label>
                 <input value={name} onChange={e => setName(e.target.value)} className={fieldCls} placeholder={t(language, "editProfile.fullName")} />

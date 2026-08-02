@@ -1,7 +1,7 @@
 import { Activity, AlertTriangle, Info, Star, User, Phone, Plus, Trash2, History, Check } from "lucide-react";
 import { slugify } from "../lib/changeHighlight";
 import type { Patient } from "../types";
-import { Card, SectionHeader, MedAvatar } from "../components/shared";
+import { Card, SectionHeader, MedAvatar, ProfileAvatar } from "../components/shared";
 import { MED_FREQUENCY, localizeCatalogValue } from "../data/medications";
 import { cadenceLabel, WEEKDAY_TOKENS } from "../lib/medications";
 import type { Medication } from "../types";
@@ -73,7 +73,7 @@ export function PatientScreen({ patient, justAddedMed, onEditProfile, onAddPresc
       <Card className="overflow-hidden">
         <div className="h-20 bg-gradient-to-br from-primary to-accent" />
         <div className="px-4 pb-4 -mt-10">
-          <img src={patient.photo} alt={patient.name} className="w-20 h-20 rounded-2xl object-cover border-4 border-card shadow-md bg-muted" />
+          <ProfileAvatar photo={patient.photo} size={80} className="rounded-2xl border-4 border-card shadow-md" />
           <h2 className="dw-display text-[calc(20px*var(--dw-text,1))] font-semibold text-foreground mt-2">{patient.name}</h2>
           <p className="text-sm text-muted-foreground">{t(language, "common.relationAge", { relation: patient.relation, age: patient.age })}</p>
           <div className="flex gap-2 mt-3 flex-wrap">

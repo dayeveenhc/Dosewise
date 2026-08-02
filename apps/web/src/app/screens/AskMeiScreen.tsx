@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from "react";
 import type { ChangeEvent } from "react";
 import { Send, TrendingUp, Plane, Check, Sparkles, MessageCircle, Camera, FileText, Pill, Globe, Mic, Volume2, X, Trash2, AlertTriangle, ChevronRight, Search, Stethoscope, RefreshCw, MessageSquare, CalendarDays, QrCode, Users, Bell, ChevronDown, CheckCircle2, SlidersHorizontal, ChevronLeft } from "lucide-react";
 import type { Patient, Screen } from "../types";
+import { ProfileAvatar } from "../components/shared";
 import { agentTurnStream, fileToBase64 } from "../lib/hermes";
 import type { AgentTurnEvent, AgentAction } from "../lib/hermes";
 import { firstRoutableAction, ACTION_TARGETS } from "../lib/agentActions";
@@ -137,7 +138,7 @@ function PatientPicker({ patients, selectedIds, onChange }: {
         data-walk="cg-ai-patient-picker"
         className="flex items-center gap-2 rounded-full dw-surface pl-1.5 pr-2.5 py-1.5 active:bg-muted transition-colors max-w-[52vw] md:max-w-[190px]"
       >
-        {chosen.length === 1 && <img src={chosen[0].photo} alt="" className="w-6 h-6 rounded-full object-cover bg-muted shrink-0" />}
+        {chosen.length === 1 && <ProfileAvatar photo={chosen[0].photo} size={24} className="rounded-full shrink-0" />}
         {chosen.length !== 1 && (
           <span className="w-6 h-6 rounded-full bg-secondary flex items-center justify-center shrink-0">
             <Users size={13} className="text-primary" />
@@ -163,7 +164,7 @@ function PatientPicker({ patients, selectedIds, onChange }: {
                   aria-pressed={on}
                   className={`flex items-center gap-2.5 w-full px-3 py-2.5 text-left transition-colors ${on ? "bg-secondary/60" : "active:bg-muted"}`}
                 >
-                  <img src={p.photo} alt="" className="w-8 h-8 rounded-full object-cover bg-muted shrink-0" />
+                  <ProfileAvatar photo={p.photo} size={32} className="rounded-full shrink-0" />
                   <div className="flex-1 min-w-0">
                     <p className="text-[calc(13px*var(--dw-text,1))] font-bold text-foreground truncate">{p.nickname || p.name}</p>
                     <p className="text-[calc(11px*var(--dw-text,1))] text-muted-foreground truncate">{p.relation}</p>

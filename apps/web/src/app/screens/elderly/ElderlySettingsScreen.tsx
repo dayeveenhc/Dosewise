@@ -1,9 +1,10 @@
 import { useState, useEffect, useMemo, useRef } from "react";
+import type { ChangeEvent } from "react";
 import { QRCodeSVG } from "qrcode.react";
 import {
   ChevronRight, ChevronDown, Eye, Phone, LogOut, Check, Loader2,
   Sunrise, Coffee, Utensils, UtensilsCrossed, Moon, QrCode, Search, X, Bell, Globe, UserRound,
-  Info, Type, HeartPulse,
+  Info, Type, HeartPulse, Camera,
 } from "lucide-react";
 import { buildCareLinkPayload, fetchLinkedCaregivers } from "../../lib/careLinks";
 import type { LinkedCaregiver } from "../../lib/careLinks";
@@ -15,9 +16,19 @@ import { fetchProfile, saveProfile, calculateAge } from "../../lib/profile";
 import type { SymptomReport } from "../../lib/profile";
 import { normalizeAllergies, slugify } from "../../lib/changeHighlight";
 import { TagList, GenderPicker, withCatalogLabels } from "../setup/GuidedSetupWizard";
-import { MedAvatar } from "../../components/shared";
+import { MedAvatar, ProfileAvatar } from "../../components/shared";
+import { PhotoSourceSheet } from "../../components/PhotoSourceSheet";
 import { MeiSuggestButton } from "../../components/MeiSuggestButton";
 import { TimeField } from "../../components/TimesPicker";
+
+function fileToDataUrl(file: Blob): Promise<string> {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => resolve(String(reader.result));
+    reader.onerror = () => reject(reader.error);
+    reader.readAsDataURL(file);
+  });
+}
 import { CallMockup } from "../../components/CallMockup";
 import { useLanguage } from "../../lib/languageContext";
 import { LANGUAGE_OPTIONS, t, type AppLanguage } from "../../lib/language";
@@ -55,7 +66,7 @@ type Anchor = "profile" | "accessibility" | "reminders" | "voice" | "emergency" 
 // for its column truncates rather than wrapping or spilling.
 const CHOICE_COLS: Record<number, string> = { 2: "grid-cols-2", 3: "grid-cols-3", 4: "grid-cols-4" };
 
-function ChoiceRow<T extends string>({ value, options, onChange, "data-walk": dataWalk }: {
+export function ChoiceRow<T extends string>({ value, options, onChange, "data-walk": dataWalk }: {
   value: T; options: { id: T; label: string }[]; onChange: (v: T) => void; "data-walk"?: string;
 }) {
   return (
@@ -236,6 +247,9 @@ export function ElderlySettingsScreen({ patient, elderId, onUpdatePatient, onSig
   // The profile screen opens read-only, showing what's on file; "Edit profile"
   // there is what makes the fields editable.
   const [profileEditing, setProfileEditing] = useState(false);
+  const [showPhotoSource, setShowPhotoSource] = useState(false);
+  const cameraRef = useRef<HTMLInputElement>(null);
+  const libraryRef = useRef<HTMLInputElement>(null);
 
   // A walkthrough is starting: return to the hub it expects to spotlight.
   useEffect(() => {
@@ -382,8 +396,7 @@ export function ElderlySettingsScreen({ patient, elderId, onUpdatePatient, onSig
   // --- controls, defined once and reused by both the hub and the sub-screens ---
   const textSizeControl = (
     <div className="px-4 py-4" data-tour="elder-fontsize">
-      <p className="text-[calc(15px*var(--dw-text,1))] font-semibold text-foreground mb-0.5">{t(language, "settings.textSize")}</p>
-      <p className="text-[calc(14px*var(--dw-text,1))] text-muted-foreground mb-3">{t(language, "settings.textSizeDesc")}</p>
+      <p className="text-[calc(15px*var(--dw-text,1))] font-semibold text-foreground mb-3">{t(language, "settings.textSize")}</p>
       <div className="flex items-center gap-3">
         <span className="text-[calc(14px*var(--dw-text,1))] font-bold text-muted-foreground shrink-0">A</span>
         <input
@@ -407,8 +420,7 @@ export function ElderlySettingsScreen({ patient, elderId, onUpdatePatient, onSig
 
   const contrastControl = (
     <div className="px-4 py-4">
-      <p className="text-[calc(15px*var(--dw-text,1))] font-semibold text-foreground mb-0.5">{t(language, "settings.contrast")}</p>
-      <p className="text-[calc(14px*var(--dw-text,1))] text-muted-foreground mb-3">{t(language, "settings.contrastDesc")}</p>
+      <p className="text-[calc(15px*var(--dw-text,1))] font-semibold text-foreground mb-3">{t(language, "settings.contrast")}</p>
       <ChoiceRow value={contrast} options={contrastOptions} onChange={setContrast} data-walk="elder-contrast" />
     </div>
   );
@@ -468,8 +480,7 @@ export function ElderlySettingsScreen({ patient, elderId, onUpdatePatient, onSig
 
   const languageControl = (
     <div className="px-4 py-4">
-      <p className="text-[calc(15px*var(--dw-text,1))] font-semibold text-foreground mb-0.5">{t(language, "settings.language")}</p>
-      <p className="text-[calc(14px*var(--dw-text,1))] text-muted-foreground mb-3">{t(language, "settings.languageDesc")}</p>
+      <p className="text-[calc(15px*var(--dw-text,1))] font-semibold text-foreground mb-3">{t(language, "settings.language")}</p>
       {/* A native <select>: it opens the OS's own picker, which is bigger and
           more familiar than anything drawn in-page — and six languages as a
           button grid was a block of colour competing with the settings around
@@ -601,6 +612,16 @@ export function ElderlySettingsScreen({ patient, elderId, onUpdatePatient, onSig
     setSubScreen("profile");
   };
 
+  // Applies immediately (like the rest of patient.photo's local-only, cosmetic
+  // history) rather than waiting on the DOB/weight/etc. Save button below,
+  // which only writes the separate profile-jsonb draft fields.
+  const onPhotoFile = (e: ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    e.target.value = "";
+    if (!file) return;
+    void fileToDataUrl(file).then(photo => onUpdatePatient({ ...patient, photo }));
+  };
+
   // A search hit scrolls to the section that owns it — unless that section is
   // one of the two real screens. The sections aren't mounted while results are
   // up (they replace the list), so clear the query first and scroll next paint.
@@ -656,6 +677,27 @@ export function ElderlySettingsScreen({ patient, elderId, onUpdatePatient, onSig
   if (subScreen === "profile") {
       return (
         <SubScreen>
+          <div className="flex justify-center pb-1">
+            <div className="relative">
+              <ProfileAvatar photo={patient.photo} size={80} className="rounded-full border-2 border-primary/20" />
+              <button
+                onClick={() => setShowPhotoSource(true)}
+                aria-label={t(language, "photoSource.takePhoto")}
+                className="absolute bottom-0 right-0 w-8 h-8 rounded-full bg-primary text-primary-foreground flex items-center justify-center border-2 border-card"
+              >
+                <Camera size={14} />
+              </button>
+            </div>
+          </div>
+          <input ref={cameraRef} type="file" accept="image/*" capture="user" className="sr-only" onChange={onPhotoFile} />
+          <input ref={libraryRef} type="file" accept="image/*" className="sr-only" onChange={onPhotoFile} />
+          {showPhotoSource && (
+            <PhotoSourceSheet
+              onTakePhoto={() => { setShowPhotoSource(false); cameraRef.current?.click(); }}
+              onChooseFile={() => { setShowPhotoSource(false); libraryRef.current?.click(); }}
+              onClose={() => setShowPhotoSource(false)}
+            />
+          )}
           {/* Editing keeps the SAME record layout — same sections, same rows,
               same order. Only the values change: each becomes a filled field,
               which is what says "you can type here now". Nothing moves, so
@@ -791,7 +833,7 @@ export function ElderlySettingsScreen({ patient, elderId, onUpdatePatient, onSig
               className="dw-surface dw-press w-full p-4 text-left scroll-mt-3 active:bg-secondary/50 transition-colors"
             >
               <div className="flex items-center gap-3.5">
-                <img src={patient.photo} alt="" className="w-[60px] h-[60px] rounded-full object-cover bg-muted border-2 border-primary/20 shrink-0" />
+                <ProfileAvatar photo={patient.photo} size={60} className="rounded-full border-2 border-primary/20 shrink-0" />
                 <div className="flex-1 min-w-0">
                   <p className="dw-display font-semibold text-foreground text-[calc(22px*var(--dw-text,1))] leading-tight break-words">{patient.nickname}</p>
                   <p className="text-[calc(14px*var(--dw-text,1))] text-muted-foreground break-words">{patient.name} · {patient.age}</p>

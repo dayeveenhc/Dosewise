@@ -22,8 +22,19 @@ export function calloutTop(
   const bottomFloor = Math.max(HEADER_RESERVE, containerHeight - NAV_RESERVE - calloutHeight);
   if (!rect) return bottomFloor;
   const spaceBelow = containerHeight - NAV_RESERVE - (rect.top + rect.height);
-  const pos = spaceBelow >= calloutHeight + GAP
-    ? rect.top + rect.height + GAP
-    : rect.top - calloutHeight - GAP;
+  const spaceAbove = rect.top - HEADER_RESERVE;
+  let pos: number;
+  if (spaceBelow >= calloutHeight + GAP) {
+    pos = rect.top + rect.height + GAP;
+  } else if (spaceAbove >= calloutHeight + GAP) {
+    pos = rect.top - calloutHeight - GAP;
+  } else {
+    // Neither side fully clears the target — e.g. a target that fills most of
+    // the screen, like the Ask Mei categories list. Anchor to the bottom of
+    // the usable band instead of the top: the old unconditional "place above"
+    // clamped up against the header and landed on whatever a person reaches
+    // for first just below it (a search box, a "frequently used" shortcut).
+    pos = bottomFloor;
+  }
   return Math.min(Math.max(pos, HEADER_RESERVE), bottomFloor);
 }

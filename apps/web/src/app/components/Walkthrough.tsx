@@ -123,18 +123,23 @@ export function Walkthrough({
     let disposed = false;
 
     const recompute = (doScroll: boolean): boolean => {
-      const parent = rootRef.current?.parentElement;
+      // Measure THIS element's own box, not its parentElement's — see
+      // GuidedTour's measure() for why: the parent's border (e.g. the desktop
+      // phone-bezel frame) sits outside position:absolute's containing block,
+      // so getBoundingClientRect() on the parent over-reports by the border
+      // width. This element is already position:absolute; inset:0 in that
+      // same parent, so its own rect IS the correct (0,0) origin.
+      const origin = rootRef.current?.getBoundingClientRect();
       const targetEl = document.querySelector(step.selector);
-      if (!parent || !targetEl) return false;
+      if (!origin || !targetEl) return false;
       if (doScroll) targetEl.scrollIntoView({ block: "center" });
-      const p = parent.getBoundingClientRect();
       const r = targetEl.getBoundingClientRect();
-      setRect({ top: r.top - p.top, left: r.left - p.left, width: r.width, height: r.height });
-      setContainerHeight(p.height);
+      setRect({ top: r.top - origin.top, left: r.left - origin.left, width: r.width, height: r.height });
+      setContainerHeight(origin.height);
       const navEl = step.navSelector ? document.querySelector(step.navSelector) : null;
       if (navEl) {
         const n = navEl.getBoundingClientRect();
-        setNavRect({ top: n.top - p.top, left: n.left - p.left, width: n.width, height: n.height });
+        setNavRect({ top: n.top - origin.top, left: n.left - origin.left, width: n.width, height: n.height });
       }
       return true;
     };
@@ -381,14 +386,13 @@ export function Walkthrough({
     const first = step.review?.[0];
     if (!first) return;
     const el = document.querySelector<HTMLInputElement>(first.selector);
-    const parent = rootRef.current?.parentElement;
-    if (!el || !parent) return;
+    const origin = rootRef.current?.getBoundingClientRect();
+    if (!el || !origin) return;
     el.scrollIntoView({ block: "center" });
     el.focus();
     el.setSelectionRange?.(el.value.length, el.value.length);
-    const p = parent.getBoundingClientRect();
     const r = el.getBoundingClientRect();
-    setChangeRect({ top: r.top - p.top, left: r.left - p.left, width: r.width, height: r.height });
+    setChangeRect({ top: r.top - origin.top, left: r.left - origin.left, width: r.width, height: r.height });
   };
 
   return (

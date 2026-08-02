@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useState } from "react";
 import { ChevronLeft, ChevronRight, Clock, Send, Check, X, Minus } from "lucide-react";
 import type { Patient, Medication, MedStatus } from "../types";
 import { StatusPill, MedAvatar } from "../components/shared";
@@ -13,12 +13,6 @@ export function TimelineScreen({ patient, justAddedMed, onSendReminder }: { pati
   const today = new Date();
   const [weekOffset, setWeekOffset] = useState(0);
   const [selectedDay, setSelectedDay] = useState<Date>(today);
-  const [now, setNow] = useState(new Date());
-
-  useEffect(() => {
-    const id = setInterval(() => setNow(new Date()), 1000 * 30);
-    return () => clearInterval(id);
-  }, []);
 
   const statusConfig: Record<MedStatus, { dot: string; line: string }> = {
     taken: { dot: "bg-taken", line: "border-taken-border" },
@@ -98,13 +92,6 @@ export function TimelineScreen({ patient, justAddedMed, onSendReminder }: { pati
 
   return (
     <div className="px-4 py-5">
-      <div className="flex items-baseline justify-between mb-4">
-        <h2 className="dw-display text-[calc(20px*var(--dw-text,1))] font-semibold text-foreground">{t(language, "common.schedule")}</h2>
-        <span className="text-lg font-mono font-bold text-foreground">
-          {now.toLocaleTimeString("en-SG", { hour: "numeric", minute: "2-digit" })}
-        </span>
-      </div>
-
       {/* Week strip — each day carries its own adherence bar rather than a dot,
           so "how did Tuesday go" is answerable at a glance instead of only
           "green or red". */}
@@ -285,7 +272,7 @@ export function TimelineScreen({ patient, justAddedMed, onSendReminder }: { pati
             {/* Week header — the day column doubles as that day's taken/due
                 count, so the grid has a total per column as well as per row. */}
             <div className="grid grid-cols-[minmax(0,1fr)_repeat(7,28px)] gap-x-0.5 px-3 pt-3 pb-2 border-b border-border">
-              <span />
+              <span className="text-[calc(11px*var(--dw-text,1))] font-bold text-muted-foreground self-end">{t(language, "nav.medications")}</span>
               {weekDays.map((d, i) => {
                 const { taken, done } = dayScore(d);
                 return (
