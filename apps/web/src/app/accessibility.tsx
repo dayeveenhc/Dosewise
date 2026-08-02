@@ -10,6 +10,10 @@ export type ContrastMode = "normal" | "high" | "max";
 // dose-status hues onto an axis that deficiency preserves AND raises contrast
 // — the same person usually benefits from both.
 export type ColourVisionMode = "off" | "deuteranopia" | "protanopia" | "tritanopia";
+// Clock format for every time the app SHOWS. Stored times are unaffected —
+// Medication.times stay 12h display strings; this only decides how they render
+// (see lib/medications.ts::formatClock).
+export type TimeFormat = "12h" | "24h";
 
 export interface NotificationPrefs {
   doseReminders: boolean;
@@ -22,6 +26,7 @@ interface AccessibilitySettings {
   fontSize: FontSize;
   contrast: ContrastMode;
   colourVision: ColourVisionMode;
+  timeFormat: TimeFormat;
   // Whether Mei reads her replies aloud (browser speechSynthesis). The single
   // persisted source of truth for the "Read Aloud" toggle *and* the in-chat
   // voice switch — both read/write it here so they never disagree.
@@ -41,6 +46,7 @@ interface AccessibilityContextValue extends AccessibilitySettings {
   setFontSize: (size: FontSize) => void;
   setContrast: (mode: ContrastMode) => void;
   setColourVision: (mode: ColourVisionMode) => void;
+  setTimeFormat: (format: TimeFormat) => void;
   setVoiceOutput: (on: boolean) => void;
   setNotification: (key: keyof NotificationPrefs, on: boolean) => void;
 }
@@ -49,6 +55,14 @@ const STORAGE_KEY = "dosewise:accessibility";
 
 // html { font-size: var(--font-size) } in theme.css drives every rem-based
 // Tailwind text utility, so changing this one variable rescales the app.
+//
+// It is NOT enough on its own: the screens size their text in explicit pixels
+// (a bare `text-[NNpx]` utility), and a px value ignores the rem base
+// entirely — which is why the slider used to move and change almost nothing.
+// Those classes are written as `text-[calc(15px*var(--dw-text))]`, so
+// `--dw-text` below is what actually resizes the app's text. Scaling type
+// rather than the whole UI (`zoom`) is deliberate: the layouts are tuned to a
+// fixed 390px frame, and zooming the surface pushed cards off the edge of it.
 const FONT_SIZE_PX: Record<FontSize, string> = {
   small: "13px",
   normal: "15px",
@@ -56,6 +70,12 @@ const FONT_SIZE_PX: Record<FontSize, string> = {
   xlarge: "19px",
   xxlarge: "21px",
 };
+
+// Multiplier applied to every px-sized text class in the app, DERIVED from the
+// table above rather than hand-tuned beside it: two near-identical curves would
+// drift the first time either end was adjusted.
+const BASE_FONT_PX = Number.parseFloat(FONT_SIZE_PX.normal);
+const textScale = (size: FontSize) => String(Number.parseFloat(FONT_SIZE_PX[size]) / BASE_FONT_PX);
 
 const CONTRAST_CLASS: Record<ContrastMode, string | null> = {
   normal: null,
@@ -86,6 +106,7 @@ const DEFAULTS: AccessibilitySettings = {
   fontSize: "large",
   contrast: "normal",
   colourVision: "off",
+  timeFormat: "12h",
   voiceOutput: true,
   notifications: DEFAULT_NOTIFICATIONS,
 };
@@ -120,6 +141,7 @@ export function AccessibilityProvider({ children }: { children: ReactNode }) {
     window.localStorage.setItem(STORAGE_KEY, JSON.stringify(settings));
     const root = document.documentElement;
     root.style.setProperty("--font-size", FONT_SIZE_PX[settings.fontSize]);
+    root.style.setProperty("--dw-text", textScale(settings.fontSize));
     root.classList.remove(...ALL_CLASSES);
     const contrastClass = CONTRAST_CLASS[settings.contrast];
     const colourClass = COLOUR_VISION_CLASS[settings.colourVision];
@@ -127,6 +149,7 @@ export function AccessibilityProvider({ children }: { children: ReactNode }) {
     if (colourClass) root.classList.add(colourClass);
     return () => {
       root.style.removeProperty("--font-size");
+      root.style.removeProperty("--dw-text");
       root.classList.remove(...ALL_CLASSES);
     };
   }, [settings]);
@@ -138,6 +161,7 @@ export function AccessibilityProvider({ children }: { children: ReactNode }) {
     setFontSize: (fontSize) => setSettings(s => ({ ...s, fontSize })),
     setContrast: (contrast) => setSettings(s => ({ ...s, contrast })),
     setColourVision: (colourVision) => setSettings(s => ({ ...s, colourVision })),
+    setTimeFormat: (timeFormat) => setSettings(s => ({ ...s, timeFormat })),
     setVoiceOutput: (voiceOutput) => setSettings(s => ({ ...s, voiceOutput })),
     setNotification: (key, on) => setSettings(s => ({ ...s, notifications: { ...s.notifications, [key]: on } })),
   };

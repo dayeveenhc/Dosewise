@@ -89,10 +89,13 @@ Both have an AI assistant chat screen wired to Hermes:
   Dismiss + Reply, and the elder's **questions for their doctor** (moved here
   from the AI screen, and now persisted to `doctor_questions` for real via
   `lib/doctor.ts::createDoctorQuestion`).
-- `screens/elderly/ElderlySettingsScreen.tsx` — a **hub + sub-screens**: profile
-  card (with its Edit button on the card), collapsible caregiver QR, a search
-  box over every setting, then one card per area showing its most-used control
-  inline with "More settings" opening the full page (back button).
+- `screens/elderly/ElderlySettingsScreen.tsx` — **one page, every setting on
+  it**: search box at the top (a hit scrolls to the section that owns it),
+  profile card (Edit button on the card), collapsible caregiver QR, then one
+  card per area holding its controls in full. No "More settings". Two things
+  open as their own screen, both because they aren't settings about this
+  person's care: Edit profile (long form, own Save) and About Dosewise (about
+  text + Switch to Caregiver Mode + Sign out).
 
 Real backend wiring (Supabase + Hermes) exists for: login/signup, medication
 CRUD, profile save, dose logging, travel plan, and the full chat/photo/report

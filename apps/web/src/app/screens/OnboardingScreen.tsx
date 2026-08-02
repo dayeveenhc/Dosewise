@@ -21,7 +21,7 @@ export function OnboardingScreen({ onSelect, onBack }: { onSelect: (mode: "careg
       {/* Hero area */}
       <div className={`flex flex-col items-center pb-6 px-6 ${onBack ? "pt-4" : "pt-10"}`}>
         {/* Wordmark */}
-        <p className="text-[10px] text-muted-foreground uppercase tracking-[0.25em] font-medium mb-1">DOSEWISE</p>
+        <p className="text-[calc(10px*var(--dw-text,1))] text-muted-foreground uppercase tracking-[0.25em] font-medium mb-1">DOSEWISE</p>
         {/* Pill icon cluster */}
         <div className="relative w-20 h-20 mb-6 mt-2">
           <div className="absolute inset-0 rounded-full bg-primary/10 flex items-center justify-center">
@@ -55,7 +55,7 @@ export function OnboardingScreen({ onSelect, onBack }: { onSelect: (mode: "careg
             <Users size={20} className="text-primary-foreground" />
           </div>
           <div>
-            <p className="font-semibold text-foreground text-[15px] leading-snug mb-1">{t(language, "common.forLovedOne")}</p>
+            <p className="font-semibold text-foreground text-[calc(15px*var(--dw-text,1))] leading-snug mb-1">{t(language, "common.forLovedOne")}</p>
             <p className="text-sm text-muted-foreground leading-relaxed">{t(language, "common.forLovedOneDesc")}</p>
           </div>
           <ChevronRight size={18} className="text-muted-foreground mt-1.5 ml-auto shrink-0" />
@@ -70,7 +70,7 @@ export function OnboardingScreen({ onSelect, onBack }: { onSelect: (mode: "careg
             <User size={20} className="text-accent" />
           </div>
           <div>
-            <p className="font-semibold text-foreground text-[15px] leading-snug mb-1">{t(language, "common.forMyself")}</p>
+            <p className="font-semibold text-foreground text-[calc(15px*var(--dw-text,1))] leading-snug mb-1">{t(language, "common.forMyself")}</p>
             <p className="text-sm text-muted-foreground leading-relaxed">{t(language, "common.forMyselfDesc")}</p>
           </div>
           <ChevronRight size={18} className="text-muted-foreground mt-1.5 ml-auto shrink-0" />
@@ -79,7 +79,7 @@ export function OnboardingScreen({ onSelect, onBack }: { onSelect: (mode: "careg
 
       {/* Footer */}
       <div className="px-6 pb-10 pt-6">
-        <p className="text-center text-[11px] text-muted-foreground leading-relaxed">
+        <p className="text-center text-[calc(11px*var(--dw-text,1))] text-muted-foreground leading-relaxed">
           {t(language, "common.switchModesHint")}
         </p>
       </div>

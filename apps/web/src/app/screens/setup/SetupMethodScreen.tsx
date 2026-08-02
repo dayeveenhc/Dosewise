@@ -79,7 +79,7 @@ export function SetupMethodScreen({
             <Lock size={20} className="text-muted-foreground" />
           </div>
           <div className="flex-1">
-            <p className="font-semibold text-foreground text-[15px] leading-snug mb-1">{t(language, "common.healthHub")}</p>
+            <p className="font-semibold text-foreground text-[calc(15px*var(--dw-text,1))] leading-snug mb-1">{t(language, "common.healthHub")}</p>
             <p className="text-sm text-muted-foreground leading-relaxed">{t(language, "common.healthHubComingSoon")}</p>
           </div>
         </div>
@@ -98,7 +98,7 @@ export function SetupMethodScreen({
             )}
           </div>
           <div className="flex-1">
-            <p className="font-semibold text-foreground text-[15px] leading-snug">
+            <p className="font-semibold text-foreground text-[calc(15px*var(--dw-text,1))] leading-snug">
               {loading ? t(language, "setup.reading") : t(language, "setup.uploadRecords")}
             </p>
             <p className="text-sm text-muted-foreground leading-relaxed">{t(language, "setup.uploadRecordsDesc")}</p>
@@ -125,13 +125,13 @@ export function SetupMethodScreen({
             <ClipboardList size={20} className="text-primary-foreground" />
           </div>
           <div className="flex-1">
-            <p className="font-semibold text-foreground text-[15px] leading-snug">{t(language, "common.guidedSetup")}</p>
+            <p className="font-semibold text-foreground text-[calc(15px*var(--dw-text,1))] leading-snug">{t(language, "common.guidedSetup")}</p>
           </div>
           <ChevronRight size={18} className="text-muted-foreground mt-1 shrink-0" />
         </button>
       </div>
 
-      <p className="text-center text-[11px] text-muted-foreground leading-relaxed px-6 pb-10">
+      <p className="text-center text-[calc(11px*var(--dw-text,1))] text-muted-foreground leading-relaxed px-6 pb-10">
         {t(language, "common.setupMinutes")}
       </p>
     </div>

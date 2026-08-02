@@ -21,6 +21,26 @@ export function to12h(clock24: string): string {
   return `${h12}:${String(mm).padStart(2, "0")} ${period}`;
 }
 
+/**
+ * Render any stored clock string in the format the reader asked for. Times are
+ * STORED as 12h display strings ("8:00 AM") or 24h ("08:00") depending on the
+ * surface; this is the single place that decides how one is shown, so the 24h
+ * accessibility setting cannot half-apply to some screens and not others.
+ */
+export function formatClock(value: string, format: "12h" | "24h" = "12h"): string {
+  const trimmed = value.trim();
+  const hhmm = /^\d{1,2}:\d{2}$/.test(trimmed)
+    ? `${trimmed.split(":")[0].padStart(2, "0")}:${trimmed.split(":")[1]}`
+    : to24h(trimmed);
+  return format === "24h" ? hhmm : to12h(hhmm);
+}
+
+/** The same rendering, for a Date or an hour-of-day — the live clock surfaces. */
+export function formatClockAt(when: Date | number, format: "12h" | "24h" = "12h"): string {
+  const [h, m] = typeof when === "number" ? [when, 0] : [when.getHours(), when.getMinutes()];
+  return formatClock(`${String(h).padStart(2, "0")}:${String(m).padStart(2, "0")}`, format);
+}
+
 // Deterministic positive numeric id for a (medication, time-slot) pair — the UI's
 // Medication.id is a number, but real rows are uuid-keyed. Stable across refetches
 // so React keys and local lookups don't jitter.
@@ -113,21 +133,39 @@ export const LOW_SUPPLY_DAYS = 10;
 // warning, so the action is available before it becomes urgent.
 export const REFILL_PROMPT_DAYS = 15;
 
-// Whether ANY medication is low enough to be worth a refill. Ask Mei uses this
-// to decide whether the refill walkthrough has a button to point at; it has to
-// group the per-time-slot rows back into real medications first, since doses
-// per day is exactly what the calculation needs.
-export function anyMedicationRunningLow(meds: Medication[]): boolean {
+/**
+ * Medications running low, ONE ENTRY PER MEDICINE, soonest first.
+ *
+ * The single source of truth for "needs a refill", so Home's banner, the
+ * Reminders tab and the Medications page can never disagree about which
+ * medicines are on the list. Two things it has to get right, and which every
+ * ad-hoc version of this got wrong: `Medication[]` holds one row per (medicine,
+ * time-slot), so it must group first — both to avoid listing a twice-daily
+ * medicine twice, and because doses-per-day is exactly what days-left divides
+ * by.
+ */
+export function lowSupplyMedications(
+  meds: Medication[],
+  thresholdDays = LOW_SUPPLY_DAYS,
+): { name: string; daysLeft: number }[] {
   const byMed = new Map<string, Medication[]>();
   for (const m of meds) {
     const key = m.medicationId ?? m.name;
     (byMed.get(key) ?? byMed.set(key, []).get(key)!).push(m);
   }
+  const out: { name: string; daysLeft: number }[] = [];
   for (const slots of byMed.values()) {
     const days = supplyDaysLeft(slots[0], slots.length);
-    if (days != null && days < REFILL_PROMPT_DAYS) return true;
+    if (days != null && days < thresholdDays) out.push({ name: slots[0].name, daysLeft: days });
   }
-  return false;
+  return out.sort((a, b) => a.daysLeft - b.daysLeft);
+}
+
+// Whether ANY medication is low enough to be worth a refill. Ask Mei uses this
+// to decide whether the refill walkthrough has a button to point at. Same
+// grouping as above, one step earlier on the scale: offered before it's urgent.
+export function anyMedicationRunningLow(meds: Medication[]): boolean {
+  return lowSupplyMedications(meds, REFILL_PROMPT_DAYS).length > 0;
 }
 
 // Mirrors Hermes's log_dose tool (services/hermes/src/hermes/tools/doses.py): flip

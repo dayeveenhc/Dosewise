@@ -509,7 +509,6 @@ export default function App() {
                 patient={patients[0]}
                 elderId={elderId}
                 onUpdatePatient={(p) => setPatients(prev => [typeof p === "function" ? p(prev[0]) : p, ...prev.slice(1)])}
-                onBack={openModeSwitch}
                 onSignOut={() => supabase.auth.signOut()}
                 startTour={justOnboarded}
                 careMessages={careMessages}
@@ -573,12 +572,12 @@ export default function App() {
                 <button onClick={() => setShowCaregiverTourConfirm(true)} aria-label={t(uiLang, "header.help")} className="w-11 h-11 bg-card border border-border rounded-2xl flex items-center justify-center active:bg-muted transition-colors">
                   <HelpCircle size={22} className="text-primary" />
                 </button>
-                <h1 className="font-['Fraunces'] text-[24px] font-semibold tracking-tight text-primary leading-none">Dosewise</h1>
+                <h1 className="font-['Fraunces'] text-[calc(24px*var(--dw-text,1))] font-semibold tracking-tight text-primary leading-none">Dosewise</h1>
                 <div className="flex items-center gap-1.5">
                   <button onClick={() => setScreen("notifications")} aria-label={t(uiLang, "nav.notifications")} className="w-11 h-11 bg-card border border-border rounded-2xl flex items-center justify-center relative active:bg-muted transition-colors">
                     <Bell size={22} className="text-primary" />
                     {unreadCount > 0 && (
-                      <div className="absolute -top-1 -right-1 min-w-5 h-5 px-1 bg-destructive rounded-full flex items-center justify-center text-[11px] font-bold text-white">{unreadCount}</div>
+                      <div className="absolute -top-1 -right-1 min-w-5 h-5 px-1 bg-destructive rounded-full flex items-center justify-center text-[calc(11px*var(--dw-text,1))] font-bold text-white">{unreadCount}</div>
                     )}
                   </button>
                   <button onClick={() => setScreen("settings")} aria-label={t(uiLang, "header.profile")} className="w-11 h-11 bg-card border border-border rounded-2xl flex items-center justify-center active:bg-muted transition-colors" title={t(uiLang, "common.openSettings")}>

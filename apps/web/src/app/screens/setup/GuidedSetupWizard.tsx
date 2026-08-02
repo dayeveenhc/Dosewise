@@ -23,20 +23,28 @@ export const withCatalogLabels = (items: { value: string; labelKey: string }[], 
 
 // A small shared gender picker — icon + label per option, used both here and
 // in ElderlySettingsScreen's "edit what you answered" section.
-export function GenderPicker({ value, onChange, size = "base" }: { value: string; onChange: (g: string) => void; size?: "base" | "sm" }) {
+// `inline` is the settings-row variant: two equal buttons the same height as the
+// fields beside them, icon and word on ONE line. Stacked icon-over-label at that
+// width left two squat boxes with the label crushed under the icon.
+export function GenderPicker({ value, onChange, size = "base" }: { value: string; onChange: (g: string) => void; size?: "base" | "sm" | "inline" }) {
   const options = [{ g: "Female", Icon: Venus }, { g: "Male", Icon: Mars }] as const;
+  const inline = size === "inline";
   return (
-    <div className="flex gap-2">
+    <div className={`flex gap-2 ${inline ? "w-full" : ""}`}>
       {options.map(({ g, Icon }) => (
         <button
           key={g}
           type="button"
           onClick={() => onChange(g)}
           aria-pressed={value === g}
-          className={`flex-1 flex flex-col items-center gap-1 rounded-xl border transition-colors ${size === "sm" ? "py-2.5" : "py-3"} ${value === g ? "bg-primary text-primary-foreground border-primary" : "bg-input-background text-foreground border-border"}`}
+          className={`flex-1 min-w-0 border transition-colors ${
+            inline
+              ? "h-10 rounded-lg flex items-center justify-center gap-1.5 px-2"
+              : `flex flex-col items-center gap-1 rounded-xl ${size === "sm" ? "py-2.5" : "py-3"}`
+          } ${value === g ? "bg-primary text-primary-foreground border-primary" : "bg-input-background text-foreground border-border"}`}
         >
-          <Icon size={size === "sm" ? 16 : 20} />
-          <span className={`font-semibold ${size === "sm" ? "text-sm" : "text-base"}`}>{g}</span>
+          <Icon size={inline ? 15 : size === "sm" ? 16 : 20} className="shrink-0" />
+          <span className={`font-semibold truncate ${inline ? "text-[calc(14px*var(--dw-text,1))]" : size === "sm" ? "text-sm" : "text-base"}`}>{g}</span>
         </button>
       ))}
     </div>
@@ -107,7 +115,7 @@ function ContinueButton({ onClick, disabled, loading, children = "Continue" }: {
       // time (one wizard step renders at once), so "whichever Continue/Create
       // button is currently shown" is unambiguous.
       data-walk="wizard-continue-button"
-      className="w-full h-13 py-3.5 mt-auto rounded-2xl bg-primary text-primary-foreground text-[15px] font-semibold flex items-center justify-center gap-2 disabled:opacity-40 active:scale-[0.98] transition-transform"
+      className="w-full h-13 py-3.5 mt-auto rounded-2xl bg-primary text-primary-foreground text-[calc(15px*var(--dw-text,1))] font-semibold flex items-center justify-center gap-2 disabled:opacity-40 active:scale-[0.98] transition-transform"
     >
       {loading && <Loader2 size={16} className="animate-spin" />}
       {children}

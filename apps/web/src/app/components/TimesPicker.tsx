@@ -1,11 +1,12 @@
-import { useState } from "react";
+import { useState, useRef } from "react";
 import type { ReactNode } from "react";
 import { Bed, Check, ChevronDown, ChevronUp, Clock, Coffee, Plus, Sun, Sunset, X } from "lucide-react";
 import { MEAL_TIMES } from "../data/medications";
-import { to12h, to24h } from "../lib/medications";
+import { to12h, to24h, formatClock } from "../lib/medications";
 import { useLanguage } from "../lib/languageContext";
 import { t } from "../lib/language";
 import { emitWalkthroughEvent } from "../lib/walkthrough/bus";
+import { useAccessibility } from "../accessibility.tsx";
 
 // The elder's own routine, as collected by the wizard's routine step and stored
 // on `ProfileDetails` (note `sleepTime` sits beside `mealTimes`, not inside it).
@@ -36,9 +37,10 @@ export const defaultDoseTime = (routine?: RoutineTimes) =>
 /** Normalise any accepted time form to the app's 12h display string. */
 export const toDisplayTime = (value: string) => to12h(toHHMM(value));
 
-// Medication schedules are never finer than five minutes, and coarser steps mean
-// fewer taps to cross an hour.
-const MINUTE_STEP = 5;
+// One minute at a time. Five-minute jumps meant a time like 7:23 simply could
+// not be entered, and made the wheel feel like it was skipping rather than
+// turning — the drag is what covers distance quickly now.
+const MINUTE_STEP = 1;
 
 const HHMM = /^(\d{1,2}):(\d{2})$/;
 // Callers hand us 12h display strings ("8:00 AM"), but a record extraction can
@@ -63,40 +65,115 @@ function fromDraft({ h12, min, pm }: Draft): string {
   return `${String(h).padStart(2, "0")}:${String(min).padStart(2, "0")}`;
 }
 
-function Stepper({ value, onUp, onDown, upLabel, downLabel }: {
-  value: string; onUp: () => void; onDown: () => void; upLabel: string; downLabel: string;
+// One column of the picker: the arrows still step it one value at a time (up
+// goes later, down goes earlier), and now the number itself is a wheel — drag
+// it, or scroll it, to run through values quickly. The wheel is additive: every
+// value remains reachable by tapping alone, which is what shaky hands need.
+function Stepper({ value, onUp, onDown, upLabel, downLabel, wheelLabel }: {
+  value: string; onUp: () => void; onDown: () => void; upLabel: string; downLabel: string; wheelLabel: string;
 }) {
   const btn = "w-14 h-9 rounded-xl bg-muted border border-border flex items-center justify-center text-foreground active:bg-secondary transition-colors";
+  // Drag/scroll distance for one step. Short enough that a normal thumb-swipe
+  // crosses a useful range now that steps are single minutes, long enough that
+  // a tap-with-a-wobble doesn't move anything. Every step goes through the same
+  // callbacks the buttons use, so there's one source of truth for wrapping.
+  const STEP_PX = 10;
+  const dragRef = useRef<{ startY: number; steps: number } | null>(null);
+  const wheelRef = useRef(0);
+
+  // Dragging UP raises the value, matching the arrow above it and every
+  // physical wheel: the numbers travel with your finger.
+  const applyDelta = (deltaSteps: number) => {
+    for (let i = 0; i < Math.abs(deltaSteps); i++) (deltaSteps > 0 ? onUp : onDown)();
+  };
+
   return (
     <div className="flex flex-col items-center gap-1.5">
       <button type="button" onClick={onUp} aria-label={upLabel} className={btn}><ChevronUp size={18} /></button>
-      <span className="text-3xl font-semibold text-foreground tabular-nums leading-none py-0.5">{value}</span>
+      <div
+        role="slider"
+        tabIndex={0}
+        aria-label={wheelLabel}
+        aria-valuetext={value}
+        onKeyDown={e => {
+          if (e.key === "ArrowUp") { e.preventDefault(); onUp(); }
+          if (e.key === "ArrowDown") { e.preventDefault(); onDown(); }
+        }}
+        onWheel={e => {
+          wheelRef.current += e.deltaY;
+          while (Math.abs(wheelRef.current) >= STEP_PX) {
+            const dir = wheelRef.current > 0 ? -1 : 1; // wheel down = earlier
+            wheelRef.current -= Math.sign(wheelRef.current) * STEP_PX;
+            applyDelta(dir);
+          }
+        }}
+        onPointerDown={e => {
+          dragRef.current = { startY: e.clientY, steps: 0 };
+          e.currentTarget.setPointerCapture(e.pointerId);
+        }}
+        onPointerMove={e => {
+          const d = dragRef.current;
+          if (!d) return;
+          const wanted = Math.round((d.startY - e.clientY) / STEP_PX); // up = positive
+          if (wanted !== d.steps) {
+            applyDelta(wanted - d.steps);
+            d.steps = wanted;
+          }
+        }}
+        onPointerUp={() => { dragRef.current = null; }}
+        onPointerCancel={() => { dragRef.current = null; }}
+        className="w-14 select-none touch-none cursor-ns-resize rounded-xl py-0.5 flex flex-col items-center outline-none focus-visible:ring-2 focus-visible:ring-primary"
+      >
+        <span className="text-3xl font-semibold text-foreground tabular-nums leading-none">{value}</span>
+        {/* Two short rules under the number: the only affordance that says
+            "this one scrolls" without adding words to a picker. */}
+        <span className="mt-1 flex flex-col gap-[3px] opacity-40">
+          <span className="block w-6 h-[2px] rounded-full bg-foreground" />
+          <span className="block w-6 h-[2px] rounded-full bg-foreground" />
+        </span>
+      </div>
       <button type="button" onClick={onDown} aria-label={downLabel} className={btn}><ChevronDown size={18} /></button>
     </div>
   );
 }
 
-// Discrete taps only — no dragging or scrolling to land on a value, which is the
-// part that defeats shaky hands. Also renders identically everywhere, unlike
+// Taps first, wheel optional: the ∧/∨ buttons alone can reach every value, which
+// is what shaky hands need, and the number doubles as a wheel for anyone who
+// would rather flick through an hour. Renders identically everywhere, unlike
 // <input type="time">, which collapses to a cramped spinner on desktop.
 function TimeEditor({ initial, onCancel, onSave }: {
   initial: string; onCancel: () => void; onSave: (hhmm: string) => void;
 }) {
   const { language } = useLanguage();
+  const { timeFormat } = useAccessibility();
+  const is24h = timeFormat === "24h";
   const [draft, setDraft] = useState<Draft>(() => toDraft(initial));
   const set = (patch: Partial<Draft>) => setDraft(d => ({ ...d, ...patch }));
-  const stepHour = (by: number) => set({ h12: ((draft.h12 - 1 + by + 12) % 12) + 1 });
-  const stepMin = (by: number) => set({ min: (draft.min + by * MINUTE_STEP + 60) % 60 });
+  // In 24h there is no AM/PM to flip, so the hour has to run 0–23 and carry the
+  // half-day itself — stepping past 23 wraps to 0, and past 11 flips to PM.
+  const stepHour = (by: number) => setDraft(d => {
+    if (!is24h) return { ...d, h12: ((d.h12 - 1 + by + 12) % 12) + 1 };
+    const h24 = (fromDraft(d).split(":").map(Number)[0] + by + 24) % 24;
+    return { ...d, h12: h24 % 12 === 0 ? 12 : h24 % 12, pm: h24 >= 12 };
+  });
+  // Functional update, like stepHour: a drag fires this several times in one
+  // tick, and reading `draft` from the closure made every call after the first
+  // one a no-op — the wheel moved a single minute however far you pulled it.
+  const stepMin = (by: number) => setDraft(d => ({ ...d, min: (d.min + by * MINUTE_STEP + 60) % 60 }));
+  const hourText = is24h ? fromDraft(draft).split(":")[0] : String(draft.h12);
 
   return (
     <div className="rounded-xl border border-primary/30 bg-card p-3">
+      {/* Without an AM/PM column the two wheels centre on their own, so the row
+          stays balanced instead of sitting off to the left. */}
       <div className="flex items-center justify-center gap-3 mb-3">
         <Stepper
-          value={String(draft.h12)}
+          value={hourText}
           onUp={() => stepHour(1)}
           onDown={() => stepHour(-1)}
           upLabel={t(language, "times.hourUp")}
           downLabel={t(language, "times.hourDown")}
+          wheelLabel={t(language, "times.hourWheel")}
         />
         <span className="text-2xl font-semibold text-muted-foreground pb-1">:</span>
         <Stepper
@@ -105,20 +182,23 @@ function TimeEditor({ initial, onCancel, onSave }: {
           onDown={() => stepMin(-1)}
           upLabel={t(language, "times.minuteUp")}
           downLabel={t(language, "times.minuteDown")}
+          wheelLabel={t(language, "times.minuteWheel")}
         />
-        <div className="flex flex-col gap-1.5 ml-1">
-          {[false, true].map(pm => (
-            <button
-              key={String(pm)}
-              type="button"
-              onClick={() => set({ pm })}
-              aria-pressed={draft.pm === pm}
-              className={`w-14 h-9 rounded-xl border text-sm font-bold transition-colors ${draft.pm === pm ? "bg-primary text-primary-foreground border-primary" : "bg-muted text-muted-foreground border-border"}`}
-            >
-              {pm ? "PM" : "AM"}
-            </button>
-          ))}
-        </div>
+        {!is24h && (
+          <div className="flex flex-col gap-1.5 ml-1">
+            {[false, true].map(pm => (
+              <button
+                key={String(pm)}
+                type="button"
+                onClick={() => set({ pm })}
+                aria-pressed={draft.pm === pm}
+                className={`w-14 h-9 rounded-xl border text-sm font-bold transition-colors ${draft.pm === pm ? "bg-primary text-primary-foreground border-primary" : "bg-muted text-muted-foreground border-border"}`}
+              >
+                {pm ? "PM" : "AM"}
+              </button>
+            ))}
+          </div>
+        )}
       </div>
       <div className="flex gap-2">
         <button type="button" onClick={onCancel} className="flex-1 h-10 rounded-xl border border-border text-muted-foreground text-sm font-semibold">
@@ -150,6 +230,7 @@ export function TimeField({ value, onChange, label, icon, "data-walk": dataWalk,
   walkEvent?: string;
 }) {
   const { language } = useLanguage();
+  const { timeFormat } = useAccessibility();
   const [open, setOpen] = useState(false);
   const hhmm = toHHMM(value);
   return (
@@ -163,8 +244,8 @@ export function TimeField({ value, onChange, label, icon, "data-walk": dataWalk,
         <span className="w-8 h-8 rounded-lg bg-secondary flex items-center justify-center shrink-0">
           {icon ?? <Clock size={15} className="text-primary" />}
         </span>
-        <span className="flex-1 text-base font-semibold text-foreground">{to12h(hhmm)}</span>
-        <span className="text-[11px] text-muted-foreground">{t(language, "times.change")}</span>
+        <span className="flex-1 text-base font-semibold text-foreground">{formatClock(hhmm, timeFormat)}</span>
+        <span className="text-[calc(11px*var(--dw-text,1))] text-muted-foreground">{t(language, "times.change")}</span>
       </button>
       {open && (
         <div className="mt-2">
@@ -202,6 +283,7 @@ export function TimesPicker({ times, onChange, label, routine, "data-walk": data
   walkEvent?: string;
 }) {
   const { language } = useLanguage();
+  const { timeFormat } = useAccessibility();
   // Which row is open in the editor: an index, "new" while adding, or null.
   const [editing, setEditing] = useState<number | "new" | null>(null);
   const slots = normalize(times);
@@ -244,8 +326,8 @@ export function TimesPicker({ times, onChange, label, routine, "data-walk": data
               className={`flex flex-col items-center gap-1 rounded-xl border px-1 py-2.5 transition-colors ${on ? "bg-primary text-primary-foreground border-primary" : "bg-muted text-muted-foreground border-border"}`}
             >
               <Icon size={16} />
-              <span className="text-[11px] font-semibold leading-tight">{t(language, labelKey)}</span>
-              <span className={`text-[10px] leading-tight ${on ? "text-primary-foreground/80" : "text-muted-foreground"}`}>{to12h(hhmm)}</span>
+              <span className="text-[calc(11px*var(--dw-text,1))] font-semibold leading-tight">{t(language, labelKey)}</span>
+              <span className={`text-[calc(10px*var(--dw-text,1))] leading-tight ${on ? "text-primary-foreground/80" : "text-muted-foreground"}`}>{formatClock(hhmm, timeFormat)}</span>
             </button>
           );
         })}
@@ -262,8 +344,8 @@ export function TimesPicker({ times, onChange, label, routine, "data-walk": data
                   className={`flex-1 flex items-center gap-2.5 rounded-xl border px-3 py-2.5 text-left transition-colors ${editing === i ? "bg-secondary border-primary" : "bg-input-background border-border"}`}
                 >
                   <Clock size={15} className="text-primary shrink-0" />
-                  <span className="flex-1 text-base font-semibold text-foreground">{to12h(hhmm)}</span>
-                  <span className="text-[11px] text-muted-foreground">{t(language, "times.change")}</span>
+                  <span className="flex-1 text-base font-semibold text-foreground">{formatClock(hhmm, timeFormat)}</span>
+                  <span className="text-[calc(11px*var(--dw-text,1))] text-muted-foreground">{t(language, "times.change")}</span>
                 </button>
                 <button
                   type="button"
@@ -299,7 +381,7 @@ export function TimesPicker({ times, onChange, label, routine, "data-walk": data
       )}
 
       {slots.length === 0 && editing !== "new" && (
-        <p className="text-[11px] text-destructive mt-1.5">{t(language, "times.needOne")}</p>
+        <p className="text-[calc(11px*var(--dw-text,1))] text-destructive mt-1.5">{t(language, "times.needOne")}</p>
       )}
     </div>
   );

@@ -40,7 +40,7 @@ export function LoginScreen({ onBack, onGetStarted }: { onBack: () => void; onGe
 
       {/* Hero area */}
       <div className="flex flex-col items-center pt-6 pb-6 px-6">
-        <p className="text-[10px] text-muted-foreground uppercase tracking-[0.25em] font-medium mb-1">DOSEWISE</p>
+        <p className="text-[calc(10px*var(--dw-text,1))] text-muted-foreground uppercase tracking-[0.25em] font-medium mb-1">DOSEWISE</p>
         <div className="relative w-20 h-20 mb-6 mt-2">
           <div className="absolute inset-0 rounded-full bg-primary/10 flex items-center justify-center">
             <div className="w-14 h-14 rounded-full bg-primary/20 flex items-center justify-center">

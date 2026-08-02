@@ -79,19 +79,15 @@ export const undoDoseSteps: WalkthroughStep[] = [
   },
 ];
 
+// Settings has no sub-screens any more — every control is on the one page — so
+// these no longer open a section first; the spotlight scrolls straight to the
+// control (Walkthrough.tsx scrollIntoViews its target).
 export const languageVoiceSteps: WalkthroughStep[] = [
   navStep("langVoice.open", "settings", "walk.langVoice.openSettings"),
   {
-    id: "langVoice.section",
-    screen: ON_SETTINGS,
-    onEnter: ON_SETTINGS,
-    selector: '[data-walk="elder-settings-voice"]',
-    instructionKey: "walk.langVoice.openSection",
-    waitFor: { type: "click", source: "dom" },
-  },
-  {
     id: "langVoice.pickLanguage",
     screen: ON_SETTINGS,
+    onEnter: ON_SETTINGS,
     selector: '[data-walk="elder-language-select"]',
     instructionKey: "walk.langVoice.pickLanguage",
     waitFor: { type: "acknowledge", source: "dom" },
@@ -108,16 +104,9 @@ export const languageVoiceSteps: WalkthroughStep[] = [
 export const reminderSettingsSteps: WalkthroughStep[] = [
   navStep("reminders.open", "settings", "walk.reminders.openSettings"),
   {
-    id: "reminders.section",
-    screen: ON_SETTINGS,
-    onEnter: ON_SETTINGS,
-    selector: '[data-walk="elder-settings-notifications"]',
-    instructionKey: "walk.reminders.openSection",
-    waitFor: { type: "click", source: "dom" },
-  },
-  {
     id: "reminders.medsToggle",
     screen: ON_SETTINGS,
+    onEnter: ON_SETTINGS,
     selector: '[data-walk="elder-reminder-meds"]',
     instructionKey: "walk.reminders.medsToggle",
     waitFor: { type: "acknowledge", source: "dom" },
@@ -127,19 +116,12 @@ export const reminderSettingsSteps: WalkthroughStep[] = [
 export const emergencyContactSteps: WalkthroughStep[] = [
   navStep("emergency.open", "settings", "walk.emergency.openSettings"),
   {
-    id: "emergency.section",
-    screen: ON_SETTINGS,
-    onEnter: ON_SETTINGS,
-    selector: '[data-walk="elder-settings-emergency"]',
-    instructionKey: "walk.emergency.openSection",
-    waitFor: { type: "click", source: "dom" },
-  },
-  {
     // Ends on "here is the button", not on pressing it: this walkthrough is
     // about being able to FIND the contact in a hurry, and placing a call is
     // not something to trigger as a side effect of a lesson.
     id: "emergency.callButton",
     screen: ON_SETTINGS,
+    onEnter: ON_SETTINGS,
     selector: '[data-walk="elder-emergency-call"]',
     instructionKey: "walk.emergency.callButton",
     waitFor: { type: "acknowledge", source: "dom" },
@@ -149,16 +131,9 @@ export const emergencyContactSteps: WalkthroughStep[] = [
 export const textSizeSteps: WalkthroughStep[] = [
   navStep("textSize.open", "settings", "walk.textSize.openSettings"),
   {
-    id: "textSize.section",
-    screen: ON_SETTINGS,
-    onEnter: ON_SETTINGS,
-    selector: '[data-walk="elder-settings-accessibility"]',
-    instructionKey: "walk.textSize.openSection",
-    waitFor: { type: "click", source: "dom" },
-  },
-  {
     id: "textSize.slider",
     screen: ON_SETTINGS,
+    onEnter: ON_SETTINGS,
     selector: '[data-tour="elder-fontsize"]',
     instructionKey: "walk.textSize.slider",
     waitFor: { type: "input", source: "dom", on: "change" },

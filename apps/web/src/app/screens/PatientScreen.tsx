@@ -62,9 +62,9 @@ export function PatientScreen({ patient, justAddedMed, onEditProfile, onAddPresc
           <h2 className="font-['Fraunces'] text-xl font-semibold text-foreground mt-2">{patient.name}</h2>
           <p className="text-sm text-muted-foreground">{t(language, "common.relationAge", { relation: patient.relation, age: patient.age })}</p>
           <div className="flex gap-2 mt-3 flex-wrap">
-            <span className="text-[11px] bg-secondary text-primary border border-primary/20 rounded-full px-2.5 py-1 font-medium">{t(language, "common.bloodType", { type: patient.bloodType })}</span>
-            <span className="text-[11px] bg-muted text-muted-foreground border border-border rounded-full px-2.5 py-1 font-medium">{t(language, "common.conditionsCount", { count: patient.conditions.length })}</span>
-            <span className="text-[11px] bg-muted text-muted-foreground border border-border rounded-full px-2.5 py-1 font-medium">{t(language, "common.medicationsCount", { count: patient.medications.length })}</span>
+            <span className="text-[calc(11px*var(--dw-text,1))] bg-secondary text-primary border border-primary/20 rounded-full px-2.5 py-1 font-medium">{t(language, "common.bloodType", { type: patient.bloodType })}</span>
+            <span className="text-[calc(11px*var(--dw-text,1))] bg-muted text-muted-foreground border border-border rounded-full px-2.5 py-1 font-medium">{t(language, "common.conditionsCount", { count: patient.conditions.length })}</span>
+            <span className="text-[calc(11px*var(--dw-text,1))] bg-muted text-muted-foreground border border-border rounded-full px-2.5 py-1 font-medium">{t(language, "common.medicationsCount", { count: patient.medications.length })}</span>
           </div>
         </div>
       </Card>
@@ -113,17 +113,17 @@ export function PatientScreen({ patient, justAddedMed, onEditProfile, onAddPresc
                 <p className="text-sm font-semibold text-foreground flex items-center gap-1.5 flex-wrap">
                   <span>{m.name} <span className="text-xs font-normal text-muted-foreground">{m.dose}</span></span>
                   {justAdded && (
-                    <span className="inline-flex items-center gap-1 bg-taken-bg text-taken-fg text-[10px] font-bold px-2 py-0.5 rounded-full">
+                    <span className="inline-flex items-center gap-1 bg-taken-bg text-taken-fg text-[calc(10px*var(--dw-text,1))] font-bold px-2 py-0.5 rounded-full">
                       <Check size={9} strokeWidth={3} />{t(language, "prescription.justAdded")}
                     </span>
                   )}
                 </p>
-                <p className="text-[11px] text-muted-foreground">{m.purpose} · {m.times.join(" & ")}</p>
+                <p className="text-[calc(11px*var(--dw-text,1))] text-muted-foreground">{m.purpose} · {m.times.join(" & ")}</p>
                 {MED_FREQUENCY[m.name] && (
-                  <p className="text-[11px] text-muted-foreground">{MED_FREQUENCY[m.name]}</p>
+                  <p className="text-[calc(11px*var(--dw-text,1))] text-muted-foreground">{MED_FREQUENCY[m.name]}</p>
                 )}
                 {m.refillDaysLeft && m.refillDaysLeft <= 7 && (
-                  <p className="text-[11px] text-warn-fg font-medium mt-0.5">{t(language, "common.daysOfSupplyLeft", { count: m.refillDaysLeft })}</p>
+                  <p className="text-[calc(11px*var(--dw-text,1))] text-warn-fg font-medium mt-0.5">{t(language, "common.daysOfSupplyLeft", { count: m.refillDaysLeft })}</p>
                 )}
               </div>
               <button
@@ -160,7 +160,7 @@ export function PatientScreen({ patient, justAddedMed, onEditProfile, onAddPresc
                 </div>
                 <div className="flex-1 min-w-0">
                   <p className="text-sm font-semibold text-muted-foreground">{m.name} <span className="text-xs font-normal">{m.dose}</span></p>
-                  <p className="text-[11px] text-muted-foreground/80">{m.purpose}</p>
+                  <p className="text-[calc(11px*var(--dw-text,1))] text-muted-foreground/80">{m.purpose}</p>
                 </div>
               </div>
             ))}
@@ -179,7 +179,7 @@ export function PatientScreen({ patient, justAddedMed, onEditProfile, onAddPresc
               </div>
               <div className="flex-1 min-w-0">
                 <p className="text-sm font-semibold text-foreground">{c.name}</p>
-                <p className="text-[11px] text-muted-foreground">{c.role}</p>
+                <p className="text-[calc(11px*var(--dw-text,1))] text-muted-foreground">{c.role}</p>
               </div>
               <a href={`tel:${c.phone}`} className="w-8 h-8 bg-taken-bg border border-taken-border rounded-full flex items-center justify-center">
                 <Phone size={13} className="text-taken-fg" />

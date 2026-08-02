@@ -124,7 +124,7 @@ export function TimelineScreen({ patient, justAddedMed, onSendReminder }: { pati
                   ${!todayDay && !selectedDay_ && view === "daily" ? "active:bg-muted/50" : ""}
                 `}
               >
-                <p className={`text-[10px] font-semibold ${todayDay ? "text-primary" : selectedDay_ ? "text-primary" : "text-muted-foreground"}`}>
+                <p className={`text-[calc(10px*var(--dw-text,1))] font-semibold ${todayDay ? "text-primary" : selectedDay_ ? "text-primary" : "text-muted-foreground"}`}>
                   {DASH_DAYS[d.getDay()]}
                 </p>
                 <p className={`text-sm font-bold ${todayDay || selectedDay_ ? "text-primary" : "text-foreground"}`}>
@@ -179,13 +179,13 @@ export function TimelineScreen({ patient, justAddedMed, onSendReminder }: { pati
                       <div className="flex items-center gap-2 flex-wrap">
                         <p className="text-sm font-semibold text-foreground">{med.name}{med.dose ? ` · ${med.dose}` : ""}</p>
                         {justAdded && (
-                          <span className="flex items-center gap-1 bg-taken-bg text-taken-fg text-[10px] font-bold px-2 py-0.5 rounded-full">
+                          <span className="flex items-center gap-1 bg-taken-bg text-taken-fg text-[calc(10px*var(--dw-text,1))] font-bold px-2 py-0.5 rounded-full">
                             <Check size={9} strokeWidth={3} />{t(language, "prescription.justAdded")}
                           </span>
                         )}
                       </div>
                       <p className="text-xs text-muted-foreground">{direction}</p>
-                      <p className="text-[11px] text-muted-foreground font-mono mt-0.5 whitespace-nowrap">
+                      <p className="text-[calc(11px*var(--dw-text,1))] text-muted-foreground font-mono mt-0.5 whitespace-nowrap">
                         {med.status === "taken" ? `Taken at ${med.takenAt}` : `Scheduled ${med.time}`}
                       </p>
                     </div>
@@ -193,8 +193,8 @@ export function TimelineScreen({ patient, justAddedMed, onSendReminder }: { pati
                   </div>
                   <div className="px-4 pb-3">
                     <div className="flex items-center justify-between mb-1">
-                      <p className="text-[10px] text-muted-foreground">{t(language, "prescription.supply")}</p>
-                      <p className={`text-[10px] font-bold ${lowRefill ? "text-red-600" : "text-foreground"}`}>{supplyDays}/30 days</p>
+                      <p className="text-[calc(10px*var(--dw-text,1))] text-muted-foreground">{t(language, "prescription.supply")}</p>
+                      <p className={`text-[calc(10px*var(--dw-text,1))] font-bold ${lowRefill ? "text-red-600" : "text-foreground"}`}>{supplyDays}/30 days</p>
                     </div>
                     <div className="w-full h-1.5 bg-muted rounded-full overflow-hidden">
                       <div
@@ -222,8 +222,8 @@ export function TimelineScreen({ patient, justAddedMed, onSendReminder }: { pati
             <span />
             {weekDays.map((d, i) => (
               <div key={i} className="flex flex-col items-center">
-                <span className={`text-[9px] font-semibold ${isToday(d) ? "text-primary" : "text-muted-foreground"}`}>{DASH_DAYS[d.getDay()]}</span>
-                <span className={`text-[11px] font-bold ${isToday(d) ? "text-primary" : "text-foreground"}`}>{d.getDate()}</span>
+                <span className={`text-[calc(9px*var(--dw-text,1))] font-semibold ${isToday(d) ? "text-primary" : "text-muted-foreground"}`}>{DASH_DAYS[d.getDay()]}</span>
+                <span className={`text-[calc(11px*var(--dw-text,1))] font-bold ${isToday(d) ? "text-primary" : "text-foreground"}`}>{d.getDate()}</span>
               </div>
             ))}
           </div>
@@ -233,7 +233,7 @@ export function TimelineScreen({ patient, justAddedMed, onSendReminder }: { pati
               <div key={med.id} className="grid grid-cols-[1fr_repeat(7,28px)] gap-1 items-center px-3 py-2.5">
                 <div className="min-w-0 pr-2">
                   <p className="text-xs font-semibold text-foreground truncate">{med.name}</p>
-                  <p className="text-[10px] text-muted-foreground">{med.time}</p>
+                  <p className="text-[calc(10px*var(--dw-text,1))] text-muted-foreground">{med.time}</p>
                 </div>
                 {weekDays.map((d, i) => {
                   if (!isDueOnDay(med.name, d)) {
@@ -254,10 +254,10 @@ export function TimelineScreen({ patient, justAddedMed, onSendReminder }: { pati
             ))}
           </div>
           <div className="flex items-center gap-4 px-4 py-3 border-t border-border flex-wrap">
-            <span className="flex items-center gap-1.5 text-[10px] text-muted-foreground"><div className="w-2 h-2 rounded-full bg-taken-bg0" />{t(language, "common.taken")}</span>
-            <span className="flex items-center gap-1.5 text-[10px] text-muted-foreground"><div className="w-2 h-2 rounded-full bg-missed-bg0" />{t(language, "common.missed")}</span>
-            <span className="flex items-center gap-1.5 text-[10px] text-muted-foreground"><div className="w-2 h-2 rounded-full bg-upcoming" />{t(language, "common.upcoming")}</span>
-            <span className="flex items-center gap-1.5 text-[10px] text-muted-foreground"><span className="text-muted-foreground/40">✕</span>{t(language, "common.notDue")}</span>
+            <span className="flex items-center gap-1.5 text-[calc(10px*var(--dw-text,1))] text-muted-foreground"><div className="w-2 h-2 rounded-full bg-taken-bg0" />{t(language, "common.taken")}</span>
+            <span className="flex items-center gap-1.5 text-[calc(10px*var(--dw-text,1))] text-muted-foreground"><div className="w-2 h-2 rounded-full bg-missed-bg0" />{t(language, "common.missed")}</span>
+            <span className="flex items-center gap-1.5 text-[calc(10px*var(--dw-text,1))] text-muted-foreground"><div className="w-2 h-2 rounded-full bg-upcoming" />{t(language, "common.upcoming")}</span>
+            <span className="flex items-center gap-1.5 text-[calc(10px*var(--dw-text,1))] text-muted-foreground"><span className="text-muted-foreground/40">✕</span>{t(language, "common.notDue")}</span>
           </div>
         </div>
       )}

@@ -1,9 +1,9 @@
-import { useState, useEffect, useMemo } from "react";
+import { useState, useEffect, useMemo, useRef } from "react";
 import { QRCodeSVG } from "qrcode.react";
 import {
-  Shield, ChevronRight, ChevronDown, Eye, Phone, RefreshCw, LogOut, Check, Loader2,
+  ChevronRight, ChevronDown, Eye, Phone, LogOut, Check, Loader2,
   Sunrise, Coffee, Utensils, UtensilsCrossed, Moon, QrCode, Search, X, Bell, Globe, UserRound,
-  Info, Type,
+  Info, Type, HeartPulse,
 } from "lucide-react";
 import { buildCareLinkPayload } from "../../lib/careLinks";
 import { useAccessibility } from "../../accessibility.tsx";
@@ -11,13 +11,13 @@ import type { FontSize, ContrastMode, ColourVisionMode, NotificationPrefs } from
 import type { Patient } from "../../types";
 import { MED_SHAPES, COMMON_CONDITIONS, COMMON_ALLERGIES, COMMON_DRUG_ALLERGIES } from "../../data/medications";
 import { fetchProfile, saveProfile, calculateAge } from "../../lib/profile";
-import { TagList, fieldCls, GenderPicker, withCatalogLabels } from "../setup/GuidedSetupWizard";
+import { TagList, GenderPicker, withCatalogLabels } from "../setup/GuidedSetupWizard";
 import { MedAvatar } from "../../components/shared";
 import { MeiSuggestButton } from "../../components/MeiSuggestButton";
 import { TimeField } from "../../components/TimesPicker";
 import { CallMockup } from "../../components/CallMockup";
 import { useLanguage } from "../../lib/languageContext";
-import { LANGUAGE_OPTIONS, t } from "../../lib/language";
+import { LANGUAGE_OPTIONS, t, type AppLanguage } from "../../lib/language";
 
 export function Toggle({ on, onToggle, "data-walk": dataWalk }: { on: boolean; onToggle: () => void; "data-walk"?: string }) {
   return (
@@ -29,25 +29,31 @@ export function Toggle({ on, onToggle, "data-walk": dataWalk }: { on: boolean; o
 
 const FONT_SIZES: FontSize[] = ["small", "normal", "large", "xlarge", "xxlarge"];
 
-// Which sub-screen is open. The hub shows the common controls inline and each
-// section's "More settings" opens the full page — so the everyday toggles stay
-// one tap away while the long forms stop making the hub a scroll marathon.
-type Section = "profile" | "accessibility" | "reminders" | "voice" | "emergency" | "caregiver" | "about";
+// Every setting now lives ON the page — no "More settings", no sub-screens, so
+// nothing is one tap out of reach. These name the sections purely so search can
+// scroll to the one that owns a match. "Edit profile" is the single exception:
+// it's a long form with its own Save, so it stays a separate screen.
+type Anchor = "profile" | "accessibility" | "reminders" | "voice" | "emergency" | "caregiver" | "about";
 
-// A labelled row of mutually exclusive choices. Used for contrast and colour
-// vision, where a switch can't express three or four states and a dropdown
-// hides the options behind a tap.
+// A row of mutually exclusive choices, all visible at once — a switch can't
+// express three states. Equal columns on ONE row, each label on ONE line:
+// options sized by their own text read as a ragged list rather than one
+// control, and a wrapped label turned a chip into a block. Anything too long
+// for its column truncates rather than wrapping or spilling.
+const CHOICE_COLS: Record<number, string> = { 2: "grid-cols-2", 3: "grid-cols-3", 4: "grid-cols-4" };
+
 function ChoiceRow<T extends string>({ value, options, onChange, "data-walk": dataWalk }: {
   value: T; options: { id: T; label: string }[]; onChange: (v: T) => void; "data-walk"?: string;
 }) {
   return (
-    <div data-walk={dataWalk} className="flex flex-wrap gap-2">
+    <div data-walk={dataWalk} className={`grid gap-1.5 ${CHOICE_COLS[options.length] ?? "grid-cols-3"}`}>
       {options.map(o => (
         <button
           key={o.id}
           onClick={() => onChange(o.id)}
           aria-pressed={value === o.id}
-          className={`px-3.5 py-2.5 rounded-xl text-[14px] font-bold border-2 transition-colors ${
+          title={o.label}
+          className={`h-10 px-1 rounded-lg text-[calc(12px*var(--dw-text,1))] font-semibold border truncate transition-colors ${
             value === o.id ? "bg-primary text-primary-foreground border-primary" : "bg-card text-foreground border-border"
           }`}
         >
@@ -58,41 +64,76 @@ function ChoiceRow<T extends string>({ value, options, onChange, "data-walk": da
   );
 }
 
+// The profile at rest: one labelled line per answer, value on the right. A page
+// of empty-looking input boxes read as work to do; this reads as a record.
+function InfoRow({ label, value }: { label: string; value?: string }) {
+  return (
+    <div className="flex items-start justify-between gap-4 py-2.5">
+      <p className="text-[calc(14px*var(--dw-text,1))] text-muted-foreground shrink-0">{label}</p>
+      <p className="flex-1 min-w-0 text-[calc(15px*var(--dw-text,1))] font-bold text-foreground text-right break-words">{value?.trim() ? value : "—"}</p>
+    </div>
+  );
+}
+
+// The same row, editing: label in the same place, a filled field where the
+// value was. Grey-filled rather than outlined — it reads as "this is a box you
+// can type in" without turning the page into a wall of borders. Each field is
+// sized to its own answer instead of stretching the full width: a two-digit
+// weight in a 200px box looks like a mistake waiting to happen.
+const editFieldCls = "h-10 rounded-lg bg-input-background border border-border px-2.5 text-[calc(15px*var(--dw-text,1))] font-bold text-foreground text-right outline-none focus:border-primary transition-colors";
+
+function EditRow({ label, hint, children }: { label: string; hint?: React.ReactNode; children: React.ReactNode }) {
+  return (
+    <div className="flex items-center justify-between gap-3 py-2.5">
+      <div className="shrink-0 flex items-center gap-1.5">
+        <p className="text-[calc(14px*var(--dw-text,1))] text-muted-foreground">{label}</p>
+        {hint}
+      </div>
+      <div className="flex-1 min-w-0 max-w-[68%] flex justify-end">{children}</div>
+    </div>
+  );
+}
+
+function InfoSection({ icon: Icon, title, children }: { icon: any; title: string; children: React.ReactNode }) {
+  return (
+    <div className="dw-surface p-4">
+      <div className="flex items-center gap-2.5 pb-1.5">
+        <div className="w-9 h-9 rounded-xl bg-secondary flex items-center justify-center shrink-0">
+          <Icon size={18} className="text-primary" />
+        </div>
+        <h3 className="flex-1 min-w-0 text-[calc(16px*var(--dw-text,1))] font-bold text-foreground">{title}</h3>
+      </div>
+      <div className="divide-y divide-border/60">{children}</div>
+    </div>
+  );
+}
+
 function SettingRow({ label, desc, children }: { label: string; desc?: string; children: React.ReactNode }) {
   return (
     <div className="px-4 py-4 flex items-center justify-between gap-3">
       <div className="flex-1 min-w-0">
-        <p className="text-[15px] font-semibold text-foreground leading-snug">{label}</p>
-        {desc && <p className="text-[14px] text-muted-foreground leading-snug mt-0.5">{desc}</p>}
+        <p className="text-[calc(15px*var(--dw-text,1))] font-semibold text-foreground leading-snug">{label}</p>
+        {desc && <p className="text-[calc(14px*var(--dw-text,1))] text-muted-foreground leading-snug mt-0.5">{desc}</p>}
       </div>
       {children}
     </div>
   );
 }
 
-function SectionCard({ icon: Icon, title, walk, children, onMore }: {
-  icon: any; title: string; walk?: string; children?: React.ReactNode; onMore?: () => void;
+// A titled card holding a section's controls in full. The title is a heading,
+// not a button — there is nowhere further to go.
+function SectionCard({ icon: Icon, title, anchor, children }: {
+  icon: any; title: string; anchor: Anchor; children?: React.ReactNode;
 }) {
-  const { language } = useLanguage();
   return (
-    <div className="dw-surface dw-press overflow-hidden">
-      <button
-        onClick={onMore}
-        data-walk={walk}
-        className="w-full flex items-center gap-3 px-4 py-3.5 text-left active:bg-secondary/50 transition-colors"
-      >
+    <div data-settings={anchor} className="dw-surface overflow-hidden scroll-mt-3">
+      <div className="flex items-center gap-3 px-4 py-3.5">
         <div className="w-10 h-10 rounded-xl bg-secondary flex items-center justify-center shrink-0">
           <Icon size={20} className="text-primary" />
         </div>
-        <span className="flex-1 min-w-0 text-[17px] font-bold text-foreground leading-tight">{title}</span>
-        <ChevronRight size={20} className="text-muted-foreground shrink-0" />
-      </button>
+        <h2 className="flex-1 min-w-0 text-[calc(17px*var(--dw-text,1))] font-bold text-foreground leading-tight">{title}</h2>
+      </div>
       {children && <div className="border-t border-border divide-y divide-border">{children}</div>}
-      {children && onMore && (
-        <button onClick={onMore} className="w-full px-4 py-3.5 border-t border-border text-[14px] font-bold text-primary flex items-center justify-center gap-1.5 active:bg-secondary/60 transition-colors">
-          {t(language, "settings.moreSettings")}<ChevronRight size={18} />
-        </button>
-      )}
     </div>
   );
 }
@@ -107,19 +148,25 @@ function SubScreen({ children }: { children: React.ReactNode }) {
   );
 }
 
-export function ElderlySettingsScreen({ patient, elderId, onUpdatePatient, onBack, onSignOut, onHeaderOverride }: {
-  patient: Patient; elderId?: string; onUpdatePatient: (p: Patient) => void; onBack: () => void; onSignOut: () => void;
+export function ElderlySettingsScreen({ patient, elderId, onUpdatePatient, onSignOut, onHeaderOverride }: {
+  patient: Patient; elderId?: string; onUpdatePatient: (p: Patient) => void; onSignOut: () => void;
   // A sub-screen REPLACES the app header rather than stacking its own beneath it.
   onHeaderOverride?: (h: { title: string; onBack: () => void; action?: React.ReactNode } | null) => void;
 }) {
   const {
     fontSize, setFontSize, contrast, setContrast, colourVision, setColourVision,
     colourBlind, voiceOutput, setVoiceOutput, notifications, setNotification,
+    timeFormat, setTimeFormat,
   } = useAccessibility();
   const { language, setLanguage } = useLanguage();
-  const [section, setSection] = useState<Section | null>(null);
+  // The two screens that are NOT about this person's care: their own profile
+  // form, and the app itself. Everything else stays on the page.
+  const [subScreen, setSubScreen] = useState<null | "profile" | "about">(null);
   const [query, setQuery] = useState("");
   const [showShapes, setShowShapes] = useState(false);
+  // Which mode the colour-vision switch turns back ON to, so flicking it off
+  // and on again returns to the one that was chosen, not the first in the list.
+  const lastColourMode = useRef<ColourVisionMode>(colourVision === "off" ? "deuteranopia" : colourVision);
   const [showCallPrimary, setShowCallPrimary] = useState(false);
   const [showQr, setShowQr] = useState(false);
   const primary = patient.contacts.find(c => c.isPrimary);
@@ -140,6 +187,9 @@ export function ElderlySettingsScreen({ patient, elderId, onUpdatePatient, onBac
   const [sleepDraft, setSleepDraft] = useState("22:30");
   const [profileSaving, setProfileSaving] = useState(false);
   const [profileSaved, setProfileSaved] = useState(false);
+  // The profile screen opens read-only, showing what's on file; "Edit profile"
+  // there is what makes the fields editable.
+  const [profileEditing, setProfileEditing] = useState(false);
 
   useEffect(() => {
     if (!elderId) return;
@@ -160,6 +210,10 @@ export function ElderlySettingsScreen({ patient, elderId, onUpdatePatient, onBac
       setSleepDraft(d.sleepTime ?? "22:30");
     });
   }, [elderId]);
+
+  useEffect(() => {
+    if (colourVision !== "off") lastColourMode.current = colourVision;
+  }, [colourVision]);
 
   const saveProfileDraft = async () => {
     if (!elderId) return;
@@ -199,8 +253,8 @@ export function ElderlySettingsScreen({ patient, elderId, onUpdatePatient, onBac
     { id: "high", label: t(language, "settings.contrastHigh") },
     { id: "max", label: t(language, "settings.contrastMax") },
   ];
-  const colourVisionOptions: { id: ColourVisionMode; label: string }[] = [
-    { id: "off", label: t(language, "settings.cvOff") },
+  // "Off" is the switch now, so the choices are only the modes themselves.
+  const colourVisionModes: { id: ColourVisionMode; label: string }[] = [
     { id: "deuteranopia", label: t(language, "settings.cvDeuter") },
     { id: "protanopia", label: t(language, "settings.cvProtan") },
     { id: "tritanopia", label: t(language, "settings.cvTritan") },
@@ -213,8 +267,8 @@ export function ElderlySettingsScreen({ patient, elderId, onUpdatePatient, onBac
   ];
 
   // Every individually-findable setting, so search can jump straight to the
-  // sub-screen that owns it instead of only matching section titles.
-  const searchIndex = useMemo<{ label: string; section: Section }[]>(() => [
+  // section that owns it instead of only matching section titles.
+  const searchIndex = useMemo<{ label: string; section: Anchor }[]>(() => [
     { label: t(language, "settings.dob"), section: "profile" },
     { label: t(language, "settings.gender"), section: "profile" },
     { label: t(language, "settings.weightKg"), section: "profile" },
@@ -226,8 +280,9 @@ export function ElderlySettingsScreen({ patient, elderId, onUpdatePatient, onBac
     { label: t(language, "settings.textSize"), section: "accessibility" },
     { label: t(language, "settings.contrast"), section: "accessibility" },
     { label: t(language, "settings.colourVision"), section: "accessibility" },
+    { label: t(language, "settings.time24h"), section: "accessibility" },
     { label: t(language, "settings.medicationDescriptions"), section: "accessibility" },
-    ...notifOptions.map(o => ({ label: o.label, section: "reminders" as Section })),
+    ...notifOptions.map(o => ({ label: o.label, section: "reminders" as Anchor })),
     { label: t(language, "settings.language"), section: "voice" },
     { label: t(language, "settings.readAloud"), section: "voice" },
     { label: t(language, "settings.emergencyContact"), section: "emergency" },
@@ -240,7 +295,7 @@ export function ElderlySettingsScreen({ patient, elderId, onUpdatePatient, onBac
     ? searchIndex.filter(i => i.label.toLowerCase().includes(query.trim().toLowerCase()))
     : [];
 
-  const SECTION_TITLES: Record<Section, string> = {
+  const SECTION_TITLES: Record<Anchor, string> = {
     profile: t(language, "settings.yourProfile"),
     accessibility: t(language, "settings.accessibility"),
     reminders: t(language, "settings.reminders"),
@@ -253,10 +308,10 @@ export function ElderlySettingsScreen({ patient, elderId, onUpdatePatient, onBac
   // --- controls, defined once and reused by both the hub and the sub-screens ---
   const textSizeControl = (
     <div className="px-4 py-4" data-tour="elder-fontsize">
-      <p className="text-[15px] font-semibold text-foreground mb-0.5">{t(language, "settings.textSize")}</p>
-      <p className="text-[14px] text-muted-foreground mb-3">{t(language, "settings.textSizeDesc")}</p>
+      <p className="text-[calc(15px*var(--dw-text,1))] font-semibold text-foreground mb-0.5">{t(language, "settings.textSize")}</p>
+      <p className="text-[calc(14px*var(--dw-text,1))] text-muted-foreground mb-3">{t(language, "settings.textSizeDesc")}</p>
       <div className="flex items-center gap-3">
-        <span className="text-[14px] font-bold text-muted-foreground shrink-0">A</span>
+        <span className="text-[calc(14px*var(--dw-text,1))] font-bold text-muted-foreground shrink-0">A</span>
         <input
           type="range"
           min={0}
@@ -267,27 +322,43 @@ export function ElderlySettingsScreen({ patient, elderId, onUpdatePatient, onBac
           aria-label={t(language, "settings.textSize")}
           className="flex-1 accent-primary h-3"
         />
-        <span className="text-[26px] font-bold text-muted-foreground shrink-0 leading-none">A</span>
+        <span className="text-[calc(26px*var(--dw-text,1))] font-bold text-muted-foreground shrink-0 leading-none">A</span>
       </div>
     </div>
   );
 
   const contrastControl = (
     <div className="px-4 py-4">
-      <p className="text-[15px] font-semibold text-foreground mb-0.5">{t(language, "settings.contrast")}</p>
-      <p className="text-[14px] text-muted-foreground mb-3">{t(language, "settings.contrastDesc")}</p>
+      <p className="text-[calc(15px*var(--dw-text,1))] font-semibold text-foreground mb-0.5">{t(language, "settings.contrast")}</p>
+      <p className="text-[calc(14px*var(--dw-text,1))] text-muted-foreground mb-3">{t(language, "settings.contrastDesc")}</p>
       <ChoiceRow value={contrast} options={contrastOptions} onChange={setContrast} data-walk="elder-contrast" />
     </div>
   );
 
   const colourVisionControl = (
     <div className="px-4 py-4">
-      <p className="text-[15px] font-semibold text-foreground mb-0.5">{t(language, "settings.colourVision")}</p>
-      <p className="text-[14px] text-muted-foreground mb-3">{t(language, "settings.colourVisionDesc")}</p>
-      <ChoiceRow value={colourVision} options={colourVisionOptions} onChange={setColourVision} data-walk="elder-colourvision" />
+      {/* Switched, not chosen: most people never turn this on, and a row of
+          modes sitting there permanently made a four-way choice out of a
+          yes/no. The modes only appear once it's on. */}
+      <div className="flex items-center justify-between gap-3">
+        <div className="flex-1 min-w-0">
+          <p className="text-[calc(15px*var(--dw-text,1))] font-semibold text-foreground">{t(language, "settings.colourVision")}</p>
+          <p className="text-[calc(14px*var(--dw-text,1))] text-muted-foreground leading-snug mt-0.5">{t(language, "settings.colourVisionDesc")}</p>
+        </div>
+        <Toggle
+          on={colourBlind}
+          onToggle={() => setColourVision(colourBlind ? "off" : lastColourMode.current)}
+          data-walk="elder-colourvision-toggle"
+        />
+      </div>
+      {colourBlind && (
+        <div className="mt-3">
+          <ChoiceRow value={colourVision} options={colourVisionModes} onChange={setColourVision} data-walk="elder-colourvision" />
+        </div>
+      )}
       {colourBlind && (
         <div className="bg-secondary/50 rounded-xl p-3 mt-3">
-          <button onClick={() => setShowShapes(v => !v)} className="w-full flex items-center justify-between text-[14px] font-bold text-foreground">
+          <button onClick={() => setShowShapes(v => !v)} className="w-full flex items-center justify-between text-[calc(14px*var(--dw-text,1))] font-bold text-foreground">
             <span className="flex items-center gap-2"><Eye size={17} className="text-primary" />{t(language, "settings.medicationDescriptions")}</span>
             <ChevronDown size={17} className={`text-muted-foreground transition-transform ${showShapes ? "rotate-180" : ""}`} />
           </button>
@@ -300,15 +371,15 @@ export function ElderlySettingsScreen({ patient, elderId, onUpdatePatient, onBac
                   <div key={m.id} className="flex items-start gap-3">
                     <MedAvatar name={m.name} size={44} className="rounded-lg shrink-0 grayscale" />
                     <div className="flex-1 min-w-0">
-                      <p className="text-[14px] font-bold text-foreground break-words">{m.name}</p>
-                      <p className="text-[14px] text-muted-foreground">{shape.shape}</p>
-                      <p className="text-[14px] text-muted-foreground">{shape.marking}</p>
+                      <p className="text-[calc(14px*var(--dw-text,1))] font-bold text-foreground break-words">{m.name}</p>
+                      <p className="text-[calc(14px*var(--dw-text,1))] text-muted-foreground">{shape.shape}</p>
+                      <p className="text-[calc(14px*var(--dw-text,1))] text-muted-foreground">{shape.marking}</p>
                     </div>
                   </div>
                 );
               })}
               {patient.medications.every(m => !MED_SHAPES[m.name]) && (
-                <p className="text-[14px] text-muted-foreground">{t(language, "prescription.empty")}</p>
+                <p className="text-[calc(14px*var(--dw-text,1))] text-muted-foreground">{t(language, "prescription.empty")}</p>
               )}
             </div>
           )}
@@ -319,23 +390,39 @@ export function ElderlySettingsScreen({ patient, elderId, onUpdatePatient, onBac
 
   const languageControl = (
     <div className="px-4 py-4">
-      <p className="text-[15px] font-semibold text-foreground mb-0.5">{t(language, "settings.language")}</p>
-      <p className="text-[14px] text-muted-foreground mb-3">{t(language, "settings.languageDesc")}</p>
-      <div data-walk="elder-language-select" className="grid grid-cols-2 gap-2">
-        {LANGUAGE_OPTIONS.map(o => (
-          <button
-            key={o.id}
-            onClick={() => setLanguage(o.id)}
-            aria-pressed={language === o.id}
-            className={`py-3 px-2 rounded-xl text-[14px] font-bold border-2 transition-colors ${
-              language === o.id ? "bg-primary text-primary-foreground border-primary" : "bg-card text-foreground border-border"
-            }`}
-          >
-            {o.label}
-          </button>
-        ))}
+      <p className="text-[calc(15px*var(--dw-text,1))] font-semibold text-foreground mb-0.5">{t(language, "settings.language")}</p>
+      <p className="text-[calc(14px*var(--dw-text,1))] text-muted-foreground mb-3">{t(language, "settings.languageDesc")}</p>
+      {/* A native <select>: it opens the OS's own picker, which is bigger and
+          more familiar than anything drawn in-page — and six languages as a
+          button grid was a block of colour competing with the settings around
+          it. The wrapper keeps the data-walk the language walkthrough points at. */}
+      <div data-walk="elder-language-select" className="relative">
+        <select
+          value={language}
+          onChange={e => setLanguage(e.target.value as AppLanguage)}
+          aria-label={t(language, "settings.language")}
+          className="w-full h-13 appearance-none bg-input-background border border-border rounded-xl pl-4 pr-11 text-[calc(15px*var(--dw-text,1))] font-bold text-foreground outline-none focus:border-primary transition-colors"
+        >
+          {LANGUAGE_OPTIONS.map(o => (
+            <option key={o.id} value={o.id}>{o.label}</option>
+          ))}
+        </select>
+        <ChevronDown size={20} className="absolute right-3.5 top-1/2 -translate-y-1/2 text-muted-foreground pointer-events-none" />
       </div>
     </div>
+  );
+
+  // Clock format sits under Accessibility rather than with the language
+  // settings: 24h is here for people who can't read an AM/PM at a glance, not
+  // as a regional preference.
+  const timeFormatControl = (
+    <SettingRow label={t(language, "settings.time24h")} desc={t(language, "settings.time24hDesc")}>
+      <Toggle
+        on={timeFormat === "24h"}
+        onToggle={() => setTimeFormat(timeFormat === "24h" ? "12h" : "24h")}
+        data-walk="elder-24h-toggle"
+      />
+    </SettingRow>
   );
 
   const readAloudControl = (
@@ -347,9 +434,9 @@ export function ElderlySettingsScreen({ patient, elderId, onUpdatePatient, onBac
   const emergencyCard = primary ? (
     <div className="px-4 py-4 flex items-center justify-between gap-3">
       <div className="min-w-0">
-        <p className="text-[17px] font-bold text-foreground break-words leading-tight">{primary.name}</p>
-        <p className="text-[14px] text-muted-foreground">{primary.role}</p>
-        <p className="text-[14px] text-muted-foreground">{primary.phone}</p>
+        <p className="text-[calc(17px*var(--dw-text,1))] font-bold text-foreground break-words leading-tight">{primary.name}</p>
+        <p className="text-[calc(14px*var(--dw-text,1))] text-muted-foreground">{primary.role}</p>
+        <p className="text-[calc(14px*var(--dw-text,1))] text-muted-foreground">{primary.phone}</p>
       </div>
       <button
         onClick={() => setShowCallPrimary(true)}
@@ -367,13 +454,13 @@ export function ElderlySettingsScreen({ patient, elderId, onUpdatePatient, onBac
       <div className="flex items-center gap-2.5">
         <QrCode size={20} className="text-primary shrink-0" />
         <div className="flex-1 min-w-0">
-          <p className="text-[15px] font-bold text-foreground leading-tight">{t(language, "settings.caregiverCode")}</p>
-          <p className="text-[14px] text-muted-foreground leading-snug">{t(language, "link.qrDesc")}</p>
+          <p className="text-[calc(15px*var(--dw-text,1))] font-bold text-foreground leading-tight">{t(language, "settings.caregiverCode")}</p>
+          <p className="text-[calc(14px*var(--dw-text,1))] text-muted-foreground leading-snug">{t(language, "link.qrDesc")}</p>
         </div>
       </div>
       <button
         onClick={() => setShowQr(v => !v)}
-        className="mt-3 w-full h-12 rounded-xl border border-border text-[14px] font-bold text-foreground active:bg-muted transition-colors"
+        className="mt-3 w-full h-12 rounded-xl border border-border text-[calc(14px*var(--dw-text,1))] font-bold text-foreground active:bg-muted transition-colors"
       >
         {showQr ? t(language, "settings.hideCode") : t(language, "settings.showCode")}
       </button>
@@ -397,191 +484,176 @@ export function ElderlySettingsScreen({ patient, elderId, onUpdatePatient, onBac
     </div>
   ) : null;
 
+  // The profile's Edit button lives in the header's top-right corner — the one
+  // place on this screen that isn't part of the record being read.
   useEffect(() => {
-    onHeaderOverride?.(section ? { title: SECTION_TITLES[section], onBack: () => setSection(null) } : null);
+    onHeaderOverride?.(subScreen ? {
+      title: SECTION_TITLES[subScreen],
+      onBack: () => setSubScreen(null),
+      action: subScreen === "profile" && !profileEditing ? (
+        <button
+          data-walk="elder-profile-edit"
+          onClick={() => setProfileEditing(true)}
+          className="shrink-0 flex items-center gap-1.5 rounded-full bg-primary text-primary-foreground px-3.5 h-10 active:opacity-80 transition-opacity"
+        >
+          <UserRound size={16} className="shrink-0" />
+          <span className="text-[calc(14px*var(--dw-text,1))] font-bold whitespace-nowrap">{t(language, "settings.editProfile")}</span>
+        </button>
+      ) : undefined,
+    } : null);
     return () => onHeaderOverride?.(null);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [section, language]);
+  }, [subScreen, profileEditing, language]);
 
-  // --- sub-screens -----------------------------------------------------------
-  if (section) {
-    if (section === "profile") {
+  // The profile always opens as what it is — the answers already on file. Only
+  // "Edit profile" there unlocks the fields, so a tap meant as "let me check my
+  // details" can't change any of them.
+  const openProfile = () => {
+    setProfileEditing(false);
+    setSubScreen("profile");
+  };
+
+  // A search hit scrolls to the section that owns it — unless that section is
+  // one of the two real screens. The sections aren't mounted while results are
+  // up (they replace the list), so clear the query first and scroll next paint.
+  const goToSetting = (anchor: Anchor) => {
+    setQuery("");
+    if (anchor === "profile") { openProfile(); return; }
+    if (anchor === "about") { setSubScreen(anchor); return; }
+    setTimeout(() => document.querySelector(`[data-settings="${anchor}"]`)?.scrollIntoView({ block: "start", behavior: "smooth" }), 60);
+  };
+
+  // --- about Dosewise: the app itself, kept off the page of personal settings -
+  if (subScreen === "about") {
+    return (
+      <SubScreen>
+        <div className="dw-surface p-4">
+          <p className="text-[calc(15px*var(--dw-text,1))] text-foreground leading-relaxed">{t(language, "settings.aboutBody")}</p>
+        </div>
+      </SubScreen>
+    );
+  }
+
+  // --- your profile: what's on file, editable only once they ask ------------
+  if (subScreen === "profile" && !profileEditing) {
+    const listOr = (items: string[]) => items.join(", ");
+    return (
+      <SubScreen>
+        <InfoSection icon={UserRound} title={t(language, "settings.personalInfo")}>
+          <InfoRow label={t(language, "settings.dob")} value={dobDraft} />
+          <InfoRow label={t(language, "settings.gender")} value={genderDraft} />
+          {/* The unit is already in the label, as in "Weight (kg)" — repeating
+              it in the value just makes the line longer. */}
+          <InfoRow label={t(language, "settings.weightKg")} value={weightDraft} />
+          <InfoRow label={t(language, "settings.heightCm")} value={heightDraft} />
+        </InfoSection>
+
+        <InfoSection icon={HeartPulse} title={t(language, "settings.medicalInfo")}>
+          <InfoRow label={t(language, "settings.medicalConditions")} value={listOr(conditionsDraft)} />
+          <InfoRow label={t(language, "settings.generalAllergies")} value={listOr(allergiesDraft)} />
+          <InfoRow label={t(language, "settings.medicationAllergies")} value={listOr(drugAllergiesDraft)} />
+        </InfoSection>
+
+        <InfoSection icon={Utensils} title={t(language, "settings.mealsSleep")}>
+          <InfoRow label={t(language, "wizard.wakeUpTime")} value={wakeDraft} />
+          <InfoRow label={t(language, "wizard.breakfast")} value={breakfastDraft} />
+          <InfoRow label={t(language, "wizard.lunch")} value={lunchDraft} />
+          <InfoRow label={t(language, "wizard.dinner")} value={dinnerDraft} />
+          <InfoRow label={t(language, "wizard.bedtime")} value={sleepDraft} />
+        </InfoSection>
+      </SubScreen>
+    );
+  }
+
+  if (subScreen === "profile") {
       return (
         <SubScreen>
-          <div className="dw-surface p-4 space-y-4">
-            <div className="flex gap-3">
-              <div className="flex-1">
-                <div className="flex items-center justify-between mb-1.5">
-                  <label className="text-[14px] font-bold text-foreground">{t(language, "settings.dob")}</label>
-                  {!dobDraft.trim() && (
-                    <MeiSuggestButton
-                      fieldLabel={t(language, "settings.dob")}
-                      formatHint="Reply in YYYY-MM-DD format only."
-                      validate={v => /^\d{4}-\d{2}-\d{2}$/.test(v)}
-                      onAccept={setDobDraft}
-                    />
-                  )}
-                </div>
-                <input type="date" value={dobDraft} onChange={e => setDobDraft(e.target.value)} max={new Date().toISOString().slice(0, 10)} className={fieldCls} />
-              </div>
-              <div className="flex-1">
-                <div className="flex items-center justify-between mb-1.5">
-                  <label className="text-[14px] font-bold text-foreground">{t(language, "settings.gender")}</label>
-                  {!genderDraft.trim() && (
-                    <MeiSuggestButton
-                      fieldLabel={t(language, "settings.gender")}
-                      onAccept={v => setGenderDraft(/^f/i.test(v) ? "Female" : /^m/i.test(v) ? "Male" : v)}
-                    />
-                  )}
-                </div>
-                <GenderPicker value={genderDraft} onChange={setGenderDraft} size="sm" />
-              </div>
+          {/* Editing keeps the SAME record layout — same sections, same rows,
+              same order. Only the values change: each becomes a filled field,
+              which is what says "you can type here now". Nothing moves, so
+              it's obvious you're looking at the same page you just read. */}
+          <InfoSection icon={UserRound} title={t(language, "settings.personalInfo")}>
+            <EditRow
+              label={t(language, "settings.dob")}
+              hint={!dobDraft.trim() && (
+                <MeiSuggestButton
+                  fieldLabel={t(language, "settings.dob")}
+                  formatHint="Reply in YYYY-MM-DD format only."
+                  validate={v => /^\d{4}-\d{2}-\d{2}$/.test(v)}
+                  onAccept={setDobDraft}
+                />
+              )}
+            >
+              <input type="date" value={dobDraft} onChange={e => setDobDraft(e.target.value)} max={new Date().toISOString().slice(0, 10)} className={`${editFieldCls} w-[160px]`} />
+            </EditRow>
+            <EditRow
+              label={t(language, "settings.gender")}
+              hint={!genderDraft.trim() && (
+                <MeiSuggestButton
+                  fieldLabel={t(language, "settings.gender")}
+                  onAccept={v => setGenderDraft(/^f/i.test(v) ? "Female" : /^m/i.test(v) ? "Male" : v)}
+                />
+              )}
+            >
+              <GenderPicker value={genderDraft} onChange={setGenderDraft} size="inline" />
+            </EditRow>
+            <EditRow
+              label={t(language, "settings.weightKg")}
+              hint={!weightDraft.trim() && <MeiSuggestButton fieldLabel={t(language, "settings.weightKg")} onAccept={v => setWeightDraft(v.match(/\d+(\.\d+)?/)?.[0] ?? v)} />}
+            >
+              <input type="number" inputMode="decimal" data-walk="elder-profile-weight" value={weightDraft} onChange={e => setWeightDraft(e.target.value)} placeholder="60" className={`${editFieldCls} w-[88px]`} />
+            </EditRow>
+            <EditRow
+              label={t(language, "settings.heightCm")}
+              hint={!heightDraft.trim() && <MeiSuggestButton fieldLabel={t(language, "settings.heightCm")} onAccept={v => setHeightDraft(v.match(/\d+(\.\d+)?/)?.[0] ?? v)} />}
+            >
+              <input type="number" inputMode="decimal" value={heightDraft} onChange={e => setHeightDraft(e.target.value)} placeholder="160" className={`${editFieldCls} w-[88px]`} />
+            </EditRow>
+          </InfoSection>
+
+          <InfoSection icon={HeartPulse} title={t(language, "settings.medicalInfo")}>
+            {/* These three carry their own labels and chips, so they stay
+                full-width blocks rather than a label/value row. */}
+            <div className="py-3 space-y-4">
+              <TagList data-walk="elder-conditions" label={t(language, "settings.medicalConditions")} placeholder={t(language, "wizard.conditionsPlaceholder")} items={conditionsDraft} suggestions={withCatalogLabels(COMMON_CONDITIONS, language)} onAdd={v => setConditionsDraft(p => [...p, v])} onRemove={i => setConditionsDraft(p => p.filter((_, j) => j !== i))} />
+              <TagList label={t(language, "settings.generalAllergies")} placeholder={t(language, "wizard.allergiesPlaceholder")} items={allergiesDraft} suggestions={withCatalogLabels(COMMON_ALLERGIES, language)} onAdd={v => setAllergiesDraft(p => [...p, v])} onRemove={i => setAllergiesDraft(p => p.filter((_, j) => j !== i))} />
+              <TagList label={t(language, "settings.medicationAllergies")} placeholder={t(language, "wizard.drugAllergiesPlaceholder")} items={drugAllergiesDraft} suggestions={withCatalogLabels(COMMON_DRUG_ALLERGIES, language)} onAdd={v => setDrugAllergiesDraft(p => [...p, v])} onRemove={i => setDrugAllergiesDraft(p => p.filter((_, j) => j !== i))} />
             </div>
+          </InfoSection>
 
-            <div className="flex gap-3">
-              <div className="flex-1">
-                <div className="flex items-center justify-between mb-1.5">
-                  <label className="text-[14px] font-bold text-foreground">{t(language, "settings.weightKg")}</label>
-                  {!weightDraft.trim() && <MeiSuggestButton fieldLabel={t(language, "settings.weightKg")} onAccept={v => setWeightDraft(v.match(/\d+(\.\d+)?/)?.[0] ?? v)} />}
-                </div>
-                <input type="number" data-walk="elder-profile-weight" value={weightDraft} onChange={e => setWeightDraft(e.target.value)} placeholder="e.g. 60" className={fieldCls} />
-              </div>
-              <div className="flex-1">
-                <div className="flex items-center justify-between mb-1.5">
-                  <label className="text-[14px] font-bold text-foreground">{t(language, "settings.heightCm")}</label>
-                  {!heightDraft.trim() && <MeiSuggestButton fieldLabel={t(language, "settings.heightCm")} onAccept={v => setHeightDraft(v.match(/\d+(\.\d+)?/)?.[0] ?? v)} />}
-                </div>
-                <input type="number" value={heightDraft} onChange={e => setHeightDraft(e.target.value)} placeholder="e.g. 160" className={fieldCls} />
-              </div>
-            </div>
-          </div>
-
-          <div className="dw-surface p-4 space-y-4">
-            <TagList data-walk="elder-conditions" label={t(language, "settings.medicalConditions")} placeholder={t(language, "wizard.conditionsPlaceholder")} items={conditionsDraft} suggestions={withCatalogLabels(COMMON_CONDITIONS, language)} onAdd={v => setConditionsDraft(p => [...p, v])} onRemove={i => setConditionsDraft(p => p.filter((_, j) => j !== i))} />
-            <TagList label={t(language, "settings.generalAllergies")} placeholder={t(language, "wizard.allergiesPlaceholder")} items={allergiesDraft} suggestions={withCatalogLabels(COMMON_ALLERGIES, language)} onAdd={v => setAllergiesDraft(p => [...p, v])} onRemove={i => setAllergiesDraft(p => p.filter((_, j) => j !== i))} />
-            <TagList label={t(language, "settings.medicationAllergies")} placeholder={t(language, "wizard.drugAllergiesPlaceholder")} items={drugAllergiesDraft} suggestions={withCatalogLabels(COMMON_DRUG_ALLERGIES, language)} onAdd={v => setDrugAllergiesDraft(p => [...p, v])} onRemove={i => setDrugAllergiesDraft(p => p.filter((_, j) => j !== i))} />
-          </div>
-
-          <div className="dw-surface p-4">
-            <p className="text-[15px] font-bold text-foreground mb-3">{t(language, "settings.mealsSleep")}</p>
-            <div className="space-y-3">
+          <InfoSection icon={Utensils} title={t(language, "settings.mealsSleep")}>
+            <div className="py-3 space-y-3">
               <TimeField label={t(language, "wizard.wakeUpTime")} icon={<Sunrise size={17} className="text-primary" />} value={wakeDraft} onChange={setWakeDraft} />
               <TimeField label={t(language, "wizard.breakfast")} icon={<Coffee size={17} className="text-primary" />} value={breakfastDraft} onChange={setBreakfastDraft} />
               <TimeField label={t(language, "wizard.lunch")} icon={<Utensils size={17} className="text-primary" />} value={lunchDraft} onChange={setLunchDraft} />
               <TimeField label={t(language, "wizard.dinner")} icon={<UtensilsCrossed size={17} className="text-primary" />} value={dinnerDraft} onChange={setDinnerDraft} />
               <TimeField label={t(language, "wizard.bedtime")} icon={<Moon size={17} className="text-primary" />} value={sleepDraft} onChange={setSleepDraft} />
             </div>
-          </div>
+          </InfoSection>
 
+          {/* Stays in edit mode after saving: the "Saved!" state and the
+              walkthrough's reveal both point AT the field that just changed,
+              and dropping back to the read view deletes it out from under them
+              (reveal-caption.spec.ts catches exactly this). */}
           <button
             data-walk="elder-profile-save"
             onClick={saveProfileDraft}
             disabled={profileSaving || !elderId}
-            className="w-full h-13 py-3.5 rounded-2xl bg-primary text-primary-foreground text-[16px] font-bold flex items-center justify-center gap-2 disabled:opacity-40 active:scale-[0.98] transition-transform"
+            className="w-full h-13 py-3.5 rounded-2xl bg-primary text-primary-foreground text-[calc(16px*var(--dw-text,1))] font-bold flex items-center justify-center gap-2 disabled:opacity-40 active:scale-[0.98] transition-transform"
           >
             {profileSaving ? <Loader2 size={19} className="animate-spin" /> : profileSaved ? <Check size={19} /> : null}
             {profileSaving ? t(language, "settings.saving") : profileSaved ? t(language, "settings.saved") : t(language, "settings.saveChanges")}
           </button>
         </SubScreen>
       );
-    }
-    if (section === "accessibility") {
-      return (
-        <SubScreen>
-          <div className="dw-surface divide-y divide-border">
-            {textSizeControl}
-            {contrastControl}
-            {colourVisionControl}
-          </div>
-        </SubScreen>
-      );
-    }
-    if (section === "reminders") {
-      return (
-        <SubScreen>
-          <div className="dw-surface divide-y divide-border">
-            {notifOptions.map(o => (
-              <SettingRow key={o.key} label={o.label}>
-                <Toggle
-                  on={notifications[o.key]}
-                  onToggle={() => setNotification(o.key, !notifications[o.key])}
-                  data-walk={o.key === "doseReminders" ? "elder-reminder-meds" : undefined}
-                />
-              </SettingRow>
-            ))}
-          </div>
-          <p className="text-[14px] text-muted-foreground px-1 leading-relaxed">{t(language, "settings.medicationRemindersDesc")}</p>
-        </SubScreen>
-      );
-    }
-    if (section === "voice") {
-      return (
-        <SubScreen>
-          <div className="dw-surface divide-y divide-border" data-tour="elder-language">
-            {readAloudControl}
-            {languageControl}
-          </div>
-        </SubScreen>
-      );
-    }
-    if (section === "emergency") {
-      return (
-        <SubScreen>
-          <div className="dw-surface">
-            {emergencyCard ?? <p className="px-4 py-6 text-[14px] text-muted-foreground text-center">{t(language, "notifications.empty")}</p>}
-          </div>
-          {showCallPrimary && primary && <CallMockup name={primary.name} role={primary.role} onEnd={() => setShowCallPrimary(false)} />}
-        </SubScreen>
-      );
-    }
-    if (section === "caregiver") {
-      return <SubScreen>{qrCard}</SubScreen>;
-    }
-    return (
-      <SubScreen>
-        <div className="dw-surface p-4">
-          <p className="text-[15px] text-foreground leading-relaxed">{t(language, "settings.aboutBody")}</p>
-        </div>
-        <button onClick={onBack} className="w-full h-13 py-3.5 rounded-2xl border border-border text-foreground text-[15px] font-bold flex items-center justify-center gap-2 active:bg-muted transition-colors">
-          <RefreshCw size={18} />{t(language, "settings.switchToCaregiver")}
-        </button>
-        <button onClick={onSignOut} className="w-full h-13 py-3.5 rounded-2xl border-2 border-destructive/40 text-destructive text-[15px] font-bold flex items-center justify-center gap-2 active:bg-destructive/10 transition-colors">
-          <LogOut size={18} />{t(language, "settings.signOut")}
-        </button>
-      </SubScreen>
-    );
   }
 
   // --- hub -------------------------------------------------------------------
   return (
     <div className="flex-1 overflow-y-auto scrollbar-none">
       <div className="px-4 pt-3 pb-28 space-y-3">
-        {/* Profile card, with the edit button on the card itself rather than as
-            a separate row further down the page. */}
-        <div className="dw-surface p-4" data-tour="elder-profile-section">
-          <div className="flex items-center gap-3.5">
-            <img src={patient.photo} alt="" className="w-[60px] h-[60px] rounded-full object-cover bg-muted border-2 border-primary/20 shrink-0" />
-            <div className="min-w-0">
-              <p className="dw-display font-semibold text-foreground text-[22px] leading-tight break-words">{patient.nickname}</p>
-              <p className="text-[14px] text-muted-foreground break-words">{patient.name} · {patient.age}</p>
-            </div>
-          </div>
-          {patient.conditions.length > 0 && (
-            <div className="flex flex-wrap gap-1.5 mt-3">
-              {patient.conditions.map(c => <span key={c} className="text-[14px] font-semibold bg-secondary text-secondary-foreground rounded-full px-3 py-1">{c}</span>)}
-            </div>
-          )}
-          <button
-            data-walk="elder-profile-toggle"
-            onClick={() => setSection("profile")}
-            className="mt-3.5 w-full h-13 py-3.5 rounded-xl bg-primary text-primary-foreground text-[15px] font-bold flex items-center justify-center gap-2 active:opacity-80 transition-opacity"
-          >
-            <UserRound size={19} />{t(language, "settings.editProfile")}
-          </button>
-        </div>
-
-        {qrCard}
-
+        {/* Search first, above everything: with every setting now on this one
+            page, typing is the shortest route to any of them. */}
         <div className="relative">
           <Search size={20} className="absolute left-3.5 top-1/2 -translate-y-1/2 text-muted-foreground pointer-events-none" />
           <input
@@ -589,7 +661,7 @@ export function ElderlySettingsScreen({ patient, elderId, onUpdatePatient, onBac
             onChange={e => setQuery(e.target.value)}
             placeholder={t(language, "settings.searchPlaceholder")}
             data-walk="elder-settings-search"
-            className="w-full h-13 bg-input-background border border-border rounded-2xl pl-11 pr-11 text-[15px] text-foreground outline-none focus:border-primary transition-colors placeholder:text-muted-foreground"
+            className="w-full h-13 bg-input-background border border-border rounded-2xl pl-11 pr-11 text-[calc(15px*var(--dw-text,1))] text-foreground outline-none focus:border-primary transition-colors placeholder:text-muted-foreground"
           />
           {query && (
             <button onClick={() => setQuery("")} aria-label={t(language, "common.cancel")} className="absolute right-3 top-1/2 -translate-y-1/2 w-8 h-8 rounded-full bg-muted flex items-center justify-center">
@@ -603,50 +675,102 @@ export function ElderlySettingsScreen({ patient, elderId, onUpdatePatient, onBac
             {matches.map(m => (
               <button
                 key={`${m.section}-${m.label}`}
-                onClick={() => { setSection(m.section); setQuery(""); }}
+                onClick={() => goToSetting(m.section)}
                 className="w-full flex items-center gap-3 px-4 py-3.5 text-left active:bg-secondary/50 transition-colors"
               >
                 <div className="flex-1 min-w-0">
-                  <p className="text-[15px] font-semibold text-foreground leading-snug">{m.label}</p>
-                  <p className="text-[14px] text-muted-foreground">{SECTION_TITLES[m.section]}</p>
+                  <p className="text-[calc(15px*var(--dw-text,1))] font-semibold text-foreground leading-snug">{m.label}</p>
+                  <p className="text-[calc(14px*var(--dw-text,1))] text-muted-foreground">{SECTION_TITLES[m.section]}</p>
                 </div>
                 <ChevronRight size={20} className="text-muted-foreground shrink-0" />
               </button>
             ))}
             {matches.length === 0 && (
-              <p className="px-4 py-6 text-[14px] text-muted-foreground text-center">{t(language, "settings.noResults", { q: query.trim() })}</p>
+              <p className="px-4 py-6 text-[calc(14px*var(--dw-text,1))] text-muted-foreground text-center">{t(language, "settings.noResults", { q: query.trim() })}</p>
             )}
           </div>
         ) : (
           <>
-            {/* Each card leads with the one or two controls people actually
-                reach for, then "More settings" opens the full page. */}
-            <SectionCard icon={Type} title={SECTION_TITLES.accessibility} walk="elder-settings-accessibility" onMore={() => setSection("accessibility")}>
-              {textSizeControl}
-            </SectionCard>
-
-            <SectionCard icon={Bell} title={SECTION_TITLES.reminders} walk="elder-settings-notifications" onMore={() => setSection("reminders")}>
-              <SettingRow label={t(language, "settings.notifDose")}>
-                <Toggle on={notifications.doseReminders} onToggle={() => setNotification("doseReminders", !notifications.doseReminders)} data-walk="elder-reminder-meds" />
-              </SettingRow>
-            </SectionCard>
-
-            <SectionCard icon={Globe} title={SECTION_TITLES.voice} walk="elder-settings-voice" onMore={() => setSection("voice")}>
-              {readAloudControl}
-            </SectionCard>
-
-            <SectionCard icon={Phone} title={SECTION_TITLES.emergency} walk="elder-settings-emergency" onMore={() => setSection("emergency")}>
-              {emergencyCard ?? undefined}
-            </SectionCard>
-
-            <SectionCard icon={Shield} title={SECTION_TITLES.caregiver} onMore={() => setSection("caregiver")} />
-            <SectionCard icon={Info} title={SECTION_TITLES.about} onMore={() => setSection("about")} />
-
-            <button onClick={onBack} className="w-full h-13 py-3.5 rounded-2xl border border-border text-foreground text-[15px] font-bold flex items-center justify-center gap-2 active:bg-muted transition-colors">
-              <RefreshCw size={18} />{t(language, "settings.switchToCaregiver")}
+            {/* Profile card, with the edit button on the card itself rather than
+                as a separate row further down the page. */}
+            {/* The whole card opens the profile — an arrow says so, which is one
+                less thing to read than a button repeating it. */}
+            <button
+              data-tour="elder-profile-section"
+              data-settings="profile"
+              data-walk="elder-profile-toggle"
+              onClick={() => openProfile()}
+              className="dw-surface dw-press w-full p-4 text-left scroll-mt-3 active:bg-secondary/50 transition-colors"
+            >
+              <div className="flex items-center gap-3.5">
+                <img src={patient.photo} alt="" className="w-[60px] h-[60px] rounded-full object-cover bg-muted border-2 border-primary/20 shrink-0" />
+                <div className="flex-1 min-w-0">
+                  <p className="dw-display font-semibold text-foreground text-[calc(22px*var(--dw-text,1))] leading-tight break-words">{patient.nickname}</p>
+                  <p className="text-[calc(14px*var(--dw-text,1))] text-muted-foreground break-words">{patient.name} · {patient.age}</p>
+                </div>
+                <ChevronRight size={22} className="text-muted-foreground shrink-0" />
+              </div>
+              {patient.conditions.length > 0 && (
+                <div className="flex flex-wrap gap-1.5 mt-3">
+                  {patient.conditions.map(c => <span key={c} className="text-[calc(14px*var(--dw-text,1))] font-semibold bg-secondary text-secondary-foreground rounded-full px-3 py-1">{c}</span>)}
+                </div>
+              )}
             </button>
 
-            <button onClick={onSignOut} className="w-full h-13 py-3.5 rounded-2xl border-2 border-destructive/40 text-destructive text-[15px] font-bold flex items-center justify-center gap-2 active:bg-destructive/10 transition-colors">
+            <div data-settings="caregiver" className="scroll-mt-3">{qrCard}</div>
+
+            {/* Every section in full, in place. Nothing is behind another tap. */}
+            <SectionCard icon={Type} title={SECTION_TITLES.accessibility} anchor="accessibility">
+              {textSizeControl}
+              {contrastControl}
+              {colourVisionControl}
+              {timeFormatControl}
+            </SectionCard>
+
+            <SectionCard icon={Bell} title={SECTION_TITLES.reminders} anchor="reminders">
+              {notifOptions.map(o => (
+                <SettingRow key={o.key} label={o.label}>
+                  <Toggle
+                    on={notifications[o.key]}
+                    onToggle={() => setNotification(o.key, !notifications[o.key])}
+                    data-walk={o.key === "doseReminders" ? "elder-reminder-meds" : undefined}
+                  />
+                </SettingRow>
+              ))}
+              <p className="px-4 py-3.5 text-[calc(14px*var(--dw-text,1))] text-muted-foreground leading-relaxed">{t(language, "settings.medicationRemindersDesc")}</p>
+            </SectionCard>
+
+            <div data-tour="elder-language">
+              <SectionCard icon={Globe} title={SECTION_TITLES.voice} anchor="voice">
+                {readAloudControl}
+                {languageControl}
+              </SectionCard>
+            </div>
+
+            <SectionCard icon={Phone} title={SECTION_TITLES.emergency} anchor="emergency">
+              {emergencyCard ?? <p className="px-4 py-5 text-[calc(14px*var(--dw-text,1))] text-muted-foreground text-center">{t(language, "notifications.empty")}</p>}
+            </SectionCard>
+
+            {/* What the app is, rather than anything about this person's care —
+                still its own screen. Signing out is NOT filed under it: it's the
+                one action people come to Settings looking for. */}
+            <button
+              onClick={() => setSubScreen("about")}
+              data-walk="elder-settings-about"
+              className="dw-surface dw-press w-full flex items-center gap-3 px-4 py-3.5 text-left active:bg-secondary/50 transition-colors"
+            >
+              <div className="w-10 h-10 rounded-xl bg-secondary flex items-center justify-center shrink-0">
+                <Info size={20} className="text-primary" />
+              </div>
+              <span className="flex-1 min-w-0 text-[calc(17px*var(--dw-text,1))] font-bold text-foreground leading-tight">{SECTION_TITLES.about}</span>
+              <ChevronRight size={20} className="text-muted-foreground shrink-0" />
+            </button>
+
+            <button
+              onClick={onSignOut}
+              data-walk="elder-sign-out"
+              className="w-full h-13 py-3.5 rounded-2xl border-2 border-destructive/40 text-destructive text-[calc(15px*var(--dw-text,1))] font-bold flex items-center justify-center gap-2 active:bg-destructive/10 transition-colors"
+            >
               <LogOut size={18} />{t(language, "settings.signOut")}
             </button>
           </>

@@ -2,7 +2,7 @@ import { useState } from "react";
 import { Plus, BookOpen, ChevronDown, History, Check, RefreshCw, ShieldAlert } from "lucide-react";
 import { useAccessibility } from "../../accessibility.tsx";
 import type { Medication, Patient } from "../../types";
-import { to24h, supplyDaysLeft, LOW_SUPPLY_DAYS, REFILL_PROMPT_DAYS } from "../../lib/medications";
+import { to24h, formatClock, supplyDaysLeft, LOW_SUPPLY_DAYS, REFILL_PROMPT_DAYS } from "../../lib/medications";
 import { MED_PLAIN, MED_SIMPLE, MED_SHAPES, EYEDROP_STEPS } from "../../data/medications";
 import { MedAvatar } from "../../components/shared";
 import { useLanguage } from "../../lib/languageContext";
@@ -39,7 +39,7 @@ export function ElderlyPrescriptionScreen({ patient, onAddRx, onRequestRefill, j
   onRequestRefill: (medName: string) => void;
   justAddedMed?: string | null;
 }) {
-  const { colourBlind } = useAccessibility();
+  const { colourBlind, timeFormat } = useAccessibility();
   const { language } = useLanguage();
   const [helpOpen, setHelpOpen] = useState<number | null>(null);
   const [pastOpen, setPastOpen] = useState(false);
@@ -58,20 +58,20 @@ export function ElderlyPrescriptionScreen({ patient, onAddRx, onRequestRefill, j
         <div className="bg-muted/50 rounded-2xl px-3.5 py-3 flex items-start gap-2.5">
           <ShieldAlert size={18} className="text-muted-foreground shrink-0 mt-0.5" />
           <div className="min-w-0">
-            <p className="text-[14px] font-bold text-foreground/85 leading-tight mb-0.5">{t(language, "prescription.safetyTitle")}</p>
-            <p className="text-[13px] text-muted-foreground leading-relaxed">{t(language, "prescription.disclaimer")}</p>
+            <p className="text-[calc(14px*var(--dw-text,1))] font-bold text-foreground/85 leading-tight mb-0.5">{t(language, "prescription.safetyTitle")}</p>
+            <p className="text-[calc(13px*var(--dw-text,1))] text-muted-foreground leading-relaxed">{t(language, "prescription.disclaimer")}</p>
           </div>
         </div>
 
         {/* Count and the add action share one row, so the button sits in the
             corner opposite the title rather than eating a full-width band. */}
         <div className="flex items-center justify-between gap-3">
-          <h2 className="text-[17px] font-bold text-foreground min-w-0 truncate">{t(language, "prescription.count", { count: prescriptions.length })}</h2>
+          <h2 className="text-[calc(17px*var(--dw-text,1))] font-bold text-foreground min-w-0 truncate">{t(language, "prescription.count", { count: prescriptions.length })}</h2>
           <button
             onClick={onAddRx}
             data-tour="elder-add-prescription"
             aria-label={t(language, "prescription.add")}
-            className="h-9 px-3.5 bg-primary text-primary-foreground rounded-full text-[15px] font-bold flex items-center gap-1.5 shrink-0 dw-press"
+            className="h-9 px-3.5 bg-primary text-primary-foreground rounded-full text-[calc(15px*var(--dw-text,1))] font-bold flex items-center gap-1.5 shrink-0 dw-press"
           >
             <Plus size={17} strokeWidth={3} className="shrink-0" />{t(language, "prescription.addShort")}
           </button>
@@ -81,7 +81,7 @@ export function ElderlyPrescriptionScreen({ patient, onAddRx, onRequestRefill, j
         <div data-tour="elder-medlist" className="space-y-3">
         {prescriptions.length === 0 && (
           <div className="bg-muted/40 rounded-2xl p-6 text-center">
-            <p className="text-[14px] text-muted-foreground">{t(language, "prescription.empty")}</p>
+            <p className="text-[calc(14px*var(--dw-text,1))] text-muted-foreground">{t(language, "prescription.empty")}</p>
           </div>
         )}
         {prescriptions.map(m => {
@@ -103,13 +103,27 @@ export function ElderlyPrescriptionScreen({ patient, onAddRx, onRequestRefill, j
           const justAdded   = !!justAddedMed && m.name === justAddedMed;
 
           return (
-            <div key={m.id} data-testid={m.medicationId ? `medication-${m.medicationId}` : undefined} className={`bg-card rounded-2xl border overflow-hidden shadow-sm ${justAdded ? "border-2 border-taken ring-2 ring-taken/40" : "border-border"}`}>
+            // Running low is carried by the CARD, in the same colours a missed
+            // dose uses on Home — the supply bar alone was a detail several
+            // lines down a card that otherwise looked like every other. Flat
+            // fill, no drifting gradient: a list of cards all breathing at once
+            // would be noise, not emphasis. Just-added still wins: it's a
+            // one-off confirmation that fades on the next visit.
+            <div
+              key={m.id}
+              data-testid={m.medicationId ? `medication-${m.medicationId}` : undefined}
+              className={`rounded-2xl border overflow-hidden shadow-sm ${
+                justAdded ? "bg-card border-2 border-taken ring-2 ring-taken/40"
+                : lowRefill ? "bg-missed-bg border-missed-border"
+                : "bg-card border-border"
+              }`}
+            >
               <div className="p-3.5">
                 {/* Badges get their own strip so a long medicine name keeps the
                     full column width (same reason as the Home card). */}
                 {justAdded && (
                   <div className="flex items-center gap-1.5 flex-wrap mb-2">
-                    <span className="flex items-center gap-1 bg-taken-bg text-taken-fg border border-taken-border text-[12px] font-bold px-2 py-0.5 rounded-full">
+                    <span className="flex items-center gap-1 bg-taken-bg text-taken-fg border border-taken-border text-[calc(12px*var(--dw-text,1))] font-bold px-2 py-0.5 rounded-full">
                       <Check size={11} strokeWidth={3} />{t(language, "prescription.justAdded")}
                     </span>
                   </div>
@@ -117,24 +131,24 @@ export function ElderlyPrescriptionScreen({ patient, onAddRx, onRequestRefill, j
                 <div className="flex items-start gap-3">
                   <MedAvatar name={m.name} size={48} className="rounded-xl shrink-0" />
                   <div className="flex-1 min-w-0">
-                    <p className="font-bold text-[17px] text-foreground leading-tight break-words">{m.name}</p>
+                    <p className="font-bold text-[calc(17px*var(--dw-text,1))] text-foreground leading-tight break-words">{m.name}</p>
                     {/* Instructions first (most actionable), then the reason.
                         Both align flush under the name now that the leading
                         colour dot is gone. */}
-                    <p className="text-[14px] font-semibold text-foreground leading-snug mt-1">{direction}</p>
-                    <p className="text-[13px] text-muted-foreground leading-snug mt-0.5">
+                    <p className="text-[calc(14px*var(--dw-text,1))] font-semibold text-foreground leading-snug mt-1">{direction}</p>
+                    <p className="text-[calc(13px*var(--dw-text,1))] text-muted-foreground leading-snug mt-0.5">
                       {plain?.why ?? t(language, "prescription.forPurpose", { purpose: m.purpose.toLowerCase() })}
                     </p>
                     {colourBlind && shape && (
-                      <p className="text-[13px] text-muted-foreground mt-1">{shape.shape} · {shape.marking}</p>
+                      <p className="text-[calc(13px*var(--dw-text,1))] text-muted-foreground mt-1">{shape.shape} · {shape.marking}</p>
                     )}
                   </div>
                 </div>
 
                 <div className="mt-3 flex flex-wrap items-center gap-2">
                   {m.times.map(time => (
-                    <span key={time} className="text-[14px] font-bold text-secondary-foreground bg-secondary border border-primary/20 rounded-lg px-2.5 py-1 whitespace-nowrap">
-                      {time}
+                    <span key={time} className="text-[calc(14px*var(--dw-text,1))] font-bold text-secondary-foreground bg-secondary border border-primary/20 rounded-lg px-2.5 py-1 whitespace-nowrap">
+                      {formatClock(time, timeFormat)}
                     </span>
                   ))}
                 </div>
@@ -142,8 +156,8 @@ export function ElderlyPrescriptionScreen({ patient, onAddRx, onRequestRefill, j
                 {daysLeft != null && (
                   <div className="mt-3.5">
                     <div className="flex items-center justify-between mb-1.5">
-                      <p className="text-[13px] text-muted-foreground">{t(language, "prescription.supply")}</p>
-                      <p className={`text-[13px] font-bold ${lowRefill ? "text-missed-fg" : "text-foreground"}`}>{t(language, "prescription.daysLeft", { days: daysLeft })}</p>
+                      <p className="text-[calc(13px*var(--dw-text,1))] text-muted-foreground">{t(language, "prescription.supply")}</p>
+                      <p className={`text-[calc(13px*var(--dw-text,1))] font-bold ${lowRefill ? "text-missed-fg" : "text-foreground"}`}>{t(language, "prescription.daysLeft", { days: daysLeft })}</p>
                     </div>
                     <div className="w-full h-2 bg-muted rounded-full overflow-hidden">
                       <div
@@ -159,7 +173,7 @@ export function ElderlyPrescriptionScreen({ patient, onAddRx, onRequestRefill, j
                 {isEyeDrop && (
                   <button
                     onClick={() => setHelpOpen(isHelpOpen ? null : m.id)}
-                    className={`mt-3 w-full flex items-center gap-2.5 px-3.5 h-11 rounded-xl text-[14px] font-bold border transition-colors ${
+                    className={`mt-3 w-full flex items-center gap-2.5 px-3.5 h-11 rounded-xl text-[calc(14px*var(--dw-text,1))] font-bold border transition-colors ${
                       isHelpOpen ? "bg-primary text-primary-foreground border-primary" : "bg-secondary text-secondary-foreground border-primary/20"
                     }`}
                   >
@@ -173,7 +187,7 @@ export function ElderlyPrescriptionScreen({ patient, onAddRx, onRequestRefill, j
                   <button
                     onClick={() => onRequestRefill(m.name)}
                     data-walk="med-request-refill-btn"
-                    className="mt-2.5 w-full flex items-center justify-center gap-2 h-11 rounded-xl border border-border text-[14px] font-bold text-foreground active:bg-muted transition-colors"
+                    className="mt-2.5 w-full flex items-center justify-center gap-2 h-11 rounded-xl border border-border text-[calc(14px*var(--dw-text,1))] font-bold text-foreground active:bg-muted transition-colors"
                   >
                     <RefreshCw size={17} className="shrink-0" />{t(language, "prescription.requestRefill")}
                   </button>
@@ -183,13 +197,13 @@ export function ElderlyPrescriptionScreen({ patient, onAddRx, onRequestRefill, j
               {/* Eye drop detailed instructions */}
               {isEyeDrop && isHelpOpen && (
                 <div className="px-4 pb-4 pt-3 border-t border-border/40 space-y-2.5 bg-secondary/30">
-                  <p className="text-[14px] font-bold text-primary uppercase tracking-wider mb-1">{t(language, "prescription.stepByStepGuide")}</p>
+                  <p className="text-[calc(14px*var(--dw-text,1))] font-bold text-primary uppercase tracking-wider mb-1">{t(language, "prescription.stepByStepGuide")}</p>
                   {EYEDROP_STEPS.map((step, i) => (
                     <div key={i} className="flex items-start gap-3">
                       <div className="w-6 h-6 rounded-full bg-primary flex items-center justify-center shrink-0">
-                        <span className="text-[14px] font-bold text-primary-foreground">{i + 1}</span>
+                        <span className="text-[calc(14px*var(--dw-text,1))] font-bold text-primary-foreground">{i + 1}</span>
                       </div>
-                      <p className="text-[14px] text-foreground leading-snug pt-0.5">
+                      <p className="text-[calc(14px*var(--dw-text,1))] text-foreground leading-snug pt-0.5">
                         <span className="mr-1.5">{step.icon}</span>{step.text}
                       </p>
                     </div>
@@ -205,19 +219,19 @@ export function ElderlyPrescriptionScreen({ patient, onAddRx, onRequestRefill, j
           <div className="dw-surface overflow-hidden">
             <button
               onClick={() => setPastOpen(v => !v)}
-              className="w-full flex items-center gap-2.5 px-4 py-4 text-[15px] font-bold text-foreground"
+              className="w-full flex items-center gap-2.5 px-4 py-4 text-[calc(15px*var(--dw-text,1))] font-bold text-foreground"
             >
               <History size={19} className="text-muted-foreground shrink-0" />
               {t(language, "prescription.past")}
-              <span className="text-[14px] font-bold text-muted-foreground bg-muted rounded-full px-2.5 py-0.5">{pastMedications.length}</span>
+              <span className="text-[calc(14px*var(--dw-text,1))] font-bold text-muted-foreground bg-muted rounded-full px-2.5 py-0.5">{pastMedications.length}</span>
               <ChevronDown size={18} className={`ml-auto text-muted-foreground transition-transform ${pastOpen ? "rotate-180" : ""}`} />
             </button>
             {pastOpen && (
               <div className="divide-y divide-border border-t border-border">
                 {pastMedications.map(m => (
                   <div key={m.id} className="px-4 py-3.5">
-                    <p className="text-[15px] font-bold text-muted-foreground">{m.name} <span className="text-[14px] font-normal">{m.dose}</span></p>
-                    <p className="text-[14px] text-muted-foreground/80">{m.purpose}</p>
+                    <p className="text-[calc(15px*var(--dw-text,1))] font-bold text-muted-foreground">{m.name} <span className="text-[calc(14px*var(--dw-text,1))] font-normal">{m.dose}</span></p>
+                    <p className="text-[calc(14px*var(--dw-text,1))] text-muted-foreground/80">{m.purpose}</p>
                   </div>
                 ))}
               </div>

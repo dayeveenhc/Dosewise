@@ -28,9 +28,9 @@ export function MessagesScreen() {
         </div>
         <div className="flex items-center gap-2">
           {["WM", "SF", "SN"].map((init, i) => (
-            <div key={i} className="w-6 h-6 rounded-full bg-secondary border-2 border-background flex items-center justify-center text-[9px] font-bold text-primary">{init}</div>
+            <div key={i} className="w-6 h-6 rounded-full bg-secondary border-2 border-background flex items-center justify-center text-[calc(9px*var(--dw-text,1))] font-bold text-primary">{init}</div>
           ))}
-          <span className="text-[11px] text-muted-foreground">You, Shu Fen, Siti Nuraini</span>
+          <span className="text-[calc(11px*var(--dw-text,1))] text-muted-foreground">You, Shu Fen, Siti Nuraini</span>
         </div>
       </div>
 
@@ -41,16 +41,16 @@ export function MessagesScreen() {
             <div className={`max-w-[80%]`}>
               {!m.isMe && (
                 <div className="flex items-center gap-1.5 mb-1 ml-1">
-                  <div className="w-5 h-5 rounded-full bg-secondary flex items-center justify-center text-[9px] font-bold text-primary">
+                  <div className="w-5 h-5 rounded-full bg-secondary flex items-center justify-center text-[calc(9px*var(--dw-text,1))] font-bold text-primary">
                     {m.author.split(" ").map(w => w[0]).join("").slice(0, 2)}
                   </div>
-                  <span className="text-[10px] text-muted-foreground font-medium">{m.author} · {m.role}</span>
+                  <span className="text-[calc(10px*var(--dw-text,1))] text-muted-foreground font-medium">{m.author} · {m.role}</span>
                 </div>
               )}
               <div className={`rounded-2xl px-3.5 py-2.5 ${m.isMe ? "bg-primary text-primary-foreground rounded-tr-sm" : "bg-card border border-border rounded-tl-sm"}`}>
                 <p className={`text-sm leading-relaxed ${m.isMe ? "text-white" : "text-foreground"}`}>{m.body}</p>
               </div>
-              <p className={`text-[10px] font-mono text-muted-foreground mt-1 ${m.isMe ? "text-right mr-1" : "ml-1"}`}>{m.time}</p>
+              <p className={`text-[calc(10px*var(--dw-text,1))] font-mono text-muted-foreground mt-1 ${m.isMe ? "text-right mr-1" : "ml-1"}`}>{m.time}</p>
             </div>
           </div>
         ))}
@@ -79,7 +79,7 @@ export function MessagesScreen() {
         </div>
         <div className="flex gap-2 mt-2 flex-wrap">
           {[t(language, "messages.quickMorningMeds"), t(language, "messages.quickCallNoon"), t(language, "messages.quickCallDoctor")].map(s => (
-            <button key={s} onClick={() => setDraft(s)} className="text-[11px] bg-secondary border border-primary/20 text-primary rounded-full px-2.5 py-1 font-medium">
+            <button key={s} onClick={() => setDraft(s)} className="text-[calc(11px*var(--dw-text,1))] bg-secondary border border-primary/20 text-primary rounded-full px-2.5 py-1 font-medium">
               {s}
             </button>
           ))}

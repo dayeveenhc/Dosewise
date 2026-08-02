@@ -97,7 +97,7 @@ export function SettingsScreen({ patient, caregiverAccount, onSwitchMode, onSign
               </div>
               <div className="flex-1 min-w-0">
                 <p className="text-sm font-semibold text-foreground">{c.name}</p>
-                <p className="text-[11px] text-muted-foreground">{c.role}</p>
+                <p className="text-[calc(11px*var(--dw-text,1))] text-muted-foreground">{c.role}</p>
               </div>
               <button onClick={() => setCallTarget(c)} className="w-8 h-8 bg-taken-bg border border-taken-border rounded-full flex items-center justify-center active:scale-95 transition-transform">
                 <Phone size={13} className="text-taken-fg" />
@@ -201,7 +201,7 @@ export function SettingsScreen({ patient, caregiverAccount, onSwitchMode, onSign
         <Card className="divide-y divide-border">
           {careTeam.map(m => (
             <div key={m.name} className="flex items-center gap-3 px-4 py-3">
-              <div className="w-8 h-8 rounded-full bg-secondary flex items-center justify-center text-[11px] font-bold text-primary shrink-0">{m.initials}</div>
+              <div className="w-8 h-8 rounded-full bg-secondary flex items-center justify-center text-[calc(11px*var(--dw-text,1))] font-bold text-primary shrink-0">{m.initials}</div>
               <div className="flex-1 min-w-0">
                 <p className="text-sm font-medium text-foreground">{m.name}</p>
                 <p className="text-xs text-muted-foreground">{m.role}</p>
@@ -272,7 +272,7 @@ export function SettingsScreen({ patient, caregiverAccount, onSwitchMode, onSign
         <LogOut size={14} />{t(language, "settings.signOut")}
       </button>
 
-      <p className="text-center text-[11px] text-muted-foreground pb-4">DOSEWISE v1.0 · {t(language, "settings.footer")}</p>
+      <p className="text-center text-[calc(11px*var(--dw-text,1))] text-muted-foreground pb-4">DOSEWISE v1.0 · {t(language, "settings.footer")}</p>
 
       {callTarget && <CallMockup name={callTarget.name} role={callTarget.role} onEnd={() => setCallTarget(null)} />}
     </div>

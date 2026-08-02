@@ -28,12 +28,12 @@ import { loadWalkthroughSession, saveWalkthroughSession, clearWalkthroughSession
 import { markWalkthroughCompleted, fetchProfile } from "../../lib/profile";
 import { fetchDoctorQuestions, createDoctorQuestion } from "../../lib/doctor";
 import { hasActiveCareLink } from "../../lib/careLinks";
+import { formatClockAt } from "../../lib/medications";
 
-export function ElderlyApp({ patient, elderId, onUpdatePatient, onBack, onSignOut, startTour, careMessages, onDismissCareMessage, onReplyCareMessage }: {
+export function ElderlyApp({ patient, elderId, onUpdatePatient, onSignOut, startTour, careMessages, onDismissCareMessage, onReplyCareMessage }: {
   patient: Patient;
   elderId?: string;
   onUpdatePatient: (p: Patient | ((prev: Patient) => Patient)) => void;
-  onBack: () => void;
   onSignOut: () => void;
   startTour?: boolean;
   careMessages: Message[];
@@ -45,7 +45,7 @@ export function ElderlyApp({ patient, elderId, onUpdatePatient, onBack, onSignOu
   // page) REPLACES this header instead of stacking a second one under it. The
   // owning screen clears it on unmount, so no reset is needed here.
   const [headerOverride, setHeaderOverride] = useState<{ title: string; onBack: () => void; action?: React.ReactNode } | null>(null);
-  const [currentTime, setCurrentTime] = useState(new Date());
+  const [currentTime, setCurrentTime] = useState(() => new Date());
   const [pendingAIMessage, setPendingAIMessage] = useState<string | undefined>();
   // Pre-fills Ask Mei's input box WITHOUT sending — the elder still taps Send
   // themselves (unlike pendingAIMessage above, which auto-sends).
@@ -70,7 +70,7 @@ export function ElderlyApp({ patient, elderId, onUpdatePatient, onBack, onSignOu
   const [revealCaption, setRevealCaption] = useState<{ rect: DOMRect; verb: string; text: string } | null>(null);
   const revealCaptionRaf = useRef<number>();
   const { language } = useLanguage();
-  const { notifications: notifyPrefs } = useAccessibility();
+  const { notifications: notifyPrefs, timeFormat } = useAccessibility();
 
   const flagJustAdded = (name?: string) => {
     if (!name) return;
@@ -474,7 +474,7 @@ export function ElderlyApp({ patient, elderId, onUpdatePatient, onBack, onSignOu
       {/* Status bar */}
       <div className="flex items-center justify-between px-6 pt-3 pb-1 shrink-0">
         <span className="text-xs font-semibold text-foreground font-mono">
-          {currentTime.toLocaleTimeString("en-SG", { hour: "numeric", minute: "2-digit" })}
+          {formatClockAt(currentTime, timeFormat)}
         </span>
         <div className="flex items-center gap-1.5">
           <div className="flex gap-0.5 items-end h-3">{[2,3,4,4].map((ht,i) => <div key={i} className="w-1 bg-foreground rounded-sm" style={{ height: `${ht*3}px` }} />)}</div>
@@ -496,7 +496,7 @@ export function ElderlyApp({ patient, elderId, onUpdatePatient, onBack, onSignOu
             >
               <ChevronLeft size={22} className="text-foreground" />
             </button>
-            <h1 className="flex-1 min-w-0 truncate text-[19px] font-bold text-foreground">{headerOverride.title}</h1>
+            <h1 className="flex-1 min-w-0 truncate text-[calc(19px*var(--dw-text,1))] font-bold text-foreground">{headerOverride.title}</h1>
             {headerOverride.action}
           </div>
         ) : (
@@ -508,7 +508,7 @@ export function ElderlyApp({ patient, elderId, onUpdatePatient, onBack, onSignOu
             >
               <HelpCircle size={22} className="text-primary" />
             </button>
-            <h1 className="font-['Fraunces'] text-[25px] font-semibold tracking-tight text-primary leading-none">Dosewise</h1>
+            <h1 className="font-['Fraunces'] text-[calc(25px*var(--dw-text,1))] font-semibold tracking-tight text-primary leading-none">Dosewise</h1>
             <button
               onClick={() => setTab("settings")}
               aria-label={t(language, "header.profile")}
@@ -522,7 +522,7 @@ export function ElderlyApp({ patient, elderId, onUpdatePatient, onBack, onSignOu
 
       {/* Screen content */}
       <div className="flex-1 min-h-0 overflow-hidden flex flex-col">
-        {tab === "home"          && <ElderlyHomeScreen         patient={patient} onLogDose={handleLogDose} onUnlogDose={handleUnlogDose} onOpenTravel={() => setShowTravel(true)} justAddedMed={justAddedMed} />}
+        {tab === "home"          && <ElderlyHomeScreen         patient={patient} onLogDose={handleLogDose} onUnlogDose={handleUnlogDose} onOpenTravel={() => setShowTravel(true)} justAddedMed={justAddedMed} onAskMei={openAIPrefill} />}
         {tab === "prescriptions" && <ElderlyPrescriptionScreen patient={patient} onAddRx={() => setAddRx("manual")} onRequestRefill={name => openAIPrefill(t(language, "ai.refillRequestMsg", { name }))} justAddedMed={justAddedMed} />}
         {tab === "ai"            && (
           <ElderlyAIScreen
@@ -554,7 +554,7 @@ export function ElderlyApp({ patient, elderId, onUpdatePatient, onBack, onSignOu
             openQuestionsSignal={openQuestionsSignal}
           />
         )}
-        {tab === "settings"      && <ElderlySettingsScreen     patient={patient} elderId={elderId} onUpdatePatient={onUpdatePatient} onBack={onBack} onSignOut={onSignOut} onHeaderOverride={setHeaderOverride} />}
+        {tab === "settings"      && <ElderlySettingsScreen     patient={patient} elderId={elderId} onUpdatePatient={onUpdatePatient} onSignOut={onSignOut} onHeaderOverride={setHeaderOverride} />}
       </div>
 
       {/* Bottom nav — z-40 keeps it (and the Ask Mei FAB peeking above it) painting

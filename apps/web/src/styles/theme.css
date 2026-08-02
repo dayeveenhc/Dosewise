@@ -462,13 +462,23 @@
    React keeps existing bubbles on the same DOM node (keyed by id), so only the
    newly-arrived message animates — no re-running the whole thread on rerender. */
 @keyframes dw-msg-in {
-  from { opacity: 0; transform: translateY(18px) scale(0.985); }
-  to   { opacity: 1; transform: none; }
+  from { opacity: 0; transform: translate3d(0, 14px, 0) scale(0.94); }
+  /* Opacity finishes well before the movement does — text that is still fading
+     while it settles reads as blurry/janky; fully-opaque text gliding the last
+     few pixels reads as smooth. */
+  55%  { opacity: 1; }
+  to   { opacity: 1; transform: translate3d(0, 0, 0) scale(1); }
 }
 /* Long, heavily-decelerating easing (an ease-out-expo curve): the bubble
-   arrives quickly then settles, which reads as smooth rather than abrupt. */
+   arrives quickly then settles, which reads as smooth rather than abrupt.
+   `translate3d` keeps it on the compositor, so the settle doesn't stutter
+   against the smooth scroll running underneath it (no `will-change`: the class
+   is never removed, so it would promote every past bubble for the life of the
+   thread, and a running transform animation is auto-promoted anyway). Scale
+   grows from the bubble's own corner (origin-bottom-left/right set per side in
+   the JSX), so it expands out of its side rather than the middle of the row. */
 .dw-msg-in {
-  animation: dw-msg-in 420ms cubic-bezier(0.16, 1, 0.3, 1) both;
+  animation: dw-msg-in 520ms cubic-bezier(0.16, 1, 0.3, 1) both;
 }
 /* The conversation itself rising in as the help buttons stand down. */
 @keyframes dw-view-in {
@@ -478,9 +488,65 @@
 .dw-view-in {
   animation: dw-view-in 380ms cubic-bezier(0.16, 1, 0.3, 1) both;
 }
+/* A missed dose breathing, not flashing: a slow 2.4s cycle over a few percent
+   of opacity is enough to pull the eye back without ever being the thing that
+   makes an already-anxious screen harder to read. */
+@keyframes dw-pulse {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.72; }
+}
+.dw-pulse {
+  animation: dw-pulse 2.4s ease-in-out infinite;
+}
+
+/* The missed-dose banner above the now line: a fill that drifts rather than a
+   shape that pulses. Nothing changes size or opacity — only where the light
+   band sits — so it draws the eye without the screen appearing to flinch.
+   Colours come from the --missed token, so contrast and colour-vision modes
+   carry through; under reduced motion the gradient simply holds still. */
+@keyframes dw-flow {
+  from { background-position: 0% 50%; }
+  to   { background-position: 200% 50%; }
+}
+/* The two ends of the gradient MUST be the same colour and it must be a
+   straight 90deg. The tile repeats as it travels, so any mismatch between 0%
+   and 100% — or an angled band whose ends don't line up row to row — shows up
+   as a hard edge sweeping right to left. One soft hump per tile, ends equal,
+   and the seam is invisible.
+
+   Each variant is only a background-IMAGE: the card keeps its own
+   background-color underneath, so the drift adds movement to the existing
+   status tint instead of replacing it. Upcoming runs weaker than missed — the
+   next dose should lead, not compete with the one already overdue. */
+.dw-flow-missed,
+.dw-flow-onpine {
+  background-size: 200% 100%;
+  animation: dw-flow 7s linear infinite;
+}
+.dw-flow-missed {
+  background-image: linear-gradient(
+    90deg,
+    color-mix(in srgb, var(--missed) 8%, transparent) 0%,
+    color-mix(in srgb, var(--missed) 26%, transparent) 50%,
+    color-mix(in srgb, var(--missed) 8%, transparent) 100%
+  );
+}
+/* Same drift, but ON the solid pine card: tinting with the status colour would
+   be invisible against a fill that already IS that colour, so the band is a
+   wash of light instead. */
+.dw-flow-onpine {
+  background-image: linear-gradient(
+    90deg,
+    rgba(255, 255, 255, 0) 0%,
+    rgba(255, 255, 255, 0.12) 50%,
+    rgba(255, 255, 255, 0) 100%
+  );
+}
+
 /* Motion is decoration here — anyone who has asked the OS for less of it keeps
    the layout and loses only the movement. */
 @media (prefers-reduced-motion: reduce) {
+  .dw-pulse, .dw-flow-missed, .dw-flow-onpine { animation: none; }
   .dw-msg-in, .dw-view-in { animation: none; }
   .dw-press { transition: none; }
   .dw-press:active { transform: none; }

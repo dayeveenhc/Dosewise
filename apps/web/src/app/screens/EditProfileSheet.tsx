@@ -196,7 +196,7 @@ export function EditProfileSheet({ patient, onClose, onSave }: EditProfileSheetP
                     <Plus size={16} className="text-white" />
                   </button>
                 </div>
-                <p className="text-[11px] text-muted-foreground mt-1.5">{t(language, "editProfile.allergiesShownProminently")}</p>
+                <p className="text-[calc(11px*var(--dw-text,1))] text-muted-foreground mt-1.5">{t(language, "editProfile.allergiesShownProminently")}</p>
               </div>
             </>
           )}
@@ -206,12 +206,12 @@ export function EditProfileSheet({ patient, onClose, onSave }: EditProfileSheetP
               <div className="space-y-2 mb-4">
                 {contacts.map((c, i) => (
                   <div key={i} className="flex items-center gap-3 bg-muted rounded-xl px-3 py-2.5">
-                    <div className={`w-8 h-8 rounded-full flex items-center justify-center shrink-0 text-[11px] font-bold ${c.isPrimary ? "bg-primary text-primary-foreground" : "bg-secondary text-primary"}`}>
+                    <div className={`w-8 h-8 rounded-full flex items-center justify-center shrink-0 text-[calc(11px*var(--dw-text,1))] font-bold ${c.isPrimary ? "bg-primary text-primary-foreground" : "bg-secondary text-primary"}`}>
                       {c.name.split(" ").map(w => w[0]).join("").slice(0, 2)}
                     </div>
                     <div className="flex-1 min-w-0">
                       <p className="text-xs font-semibold text-foreground truncate">{c.name}</p>
-                      <p className="text-[10px] text-muted-foreground truncate">{c.role} · {c.phone}</p>
+                      <p className="text-[calc(10px*var(--dw-text,1))] text-muted-foreground truncate">{c.role} · {c.phone}</p>
                     </div>
                     {!c.isPrimary && (
                       <button onClick={() => setContacts(prev => prev.filter((_, j) => j !== i))} className="text-muted-foreground hover:text-destructive transition-colors shrink-0">

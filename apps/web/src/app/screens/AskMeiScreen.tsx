@@ -15,6 +15,7 @@ import { t, LANGUAGE_OPTIONS, speechLangFor } from "../lib/language";
 import { speak as speakUtterance } from "../lib/speech";
 import { ConfirmDialog } from "../components/ConfirmDialog";
 import { PhotoSourceSheet } from "../components/PhotoSourceSheet";
+import { BottomSheet } from "../components/BottomSheet";
 
 interface ChatMsg { id: number; role: "user" | "agent"; text: string; time: string; isConfirmation?: boolean; isRateLimited?: boolean; image?: string }
 
@@ -45,7 +46,7 @@ function FeatureBtn({ icon: Icon, label, onClick, className = "" }: { icon: any;
   return (
     <button onClick={onClick} className={`h-[88px] flex flex-col items-center justify-center gap-1.5 bg-card border border-border rounded-2xl px-2 text-center active:bg-muted transition-colors ${className}`}>
       <div className="w-10 h-10 rounded-xl bg-primary/10 flex items-center justify-center shrink-0"><Icon size={18} className="text-primary" /></div>
-      <span className="text-[12px] font-bold text-foreground leading-tight">{label}</span>
+      <span className="text-[calc(12px*var(--dw-text,1))] font-bold text-foreground leading-tight">{label}</span>
     </button>
   );
 }
@@ -292,14 +293,14 @@ export function AskMeiScreen({ patient, elderId, onUpdatePatient, onNavigate, on
           <div key={msg.id} className="flex justify-center">
             <div className="flex items-center gap-1.5 bg-warn-bg border border-warn-border text-warn-fg rounded-full px-3.5 py-1.5">
               <AlertTriangle size={13} className="text-warn shrink-0" />
-              <span className="text-[13px] font-semibold">{msg.text}</span>
+              <span className="text-[calc(13px*var(--dw-text,1))] font-semibold">{msg.text}</span>
             </div>
           </div>
         ) : msg.isConfirmation ? (
           <div key={msg.id} className="flex justify-center">
             <div className="flex items-center gap-1.5 bg-taken-bg border border-taken-border text-taken-fg rounded-full px-3.5 py-1.5">
               <Check size={13} className="text-taken shrink-0" />
-              <span className="text-[13px] font-semibold">{msg.text.replace(/^✓\s*/, "")}</span>
+              <span className="text-[calc(13px*var(--dw-text,1))] font-semibold">{msg.text.replace(/^✓\s*/, "")}</span>
             </div>
           </div>
         ) : (
@@ -314,9 +315,9 @@ export function AskMeiScreen({ patient, elderId, onUpdatePatient, onNavigate, on
                 <img src={msg.image} alt={t(language, "ai.attachment")} className="max-w-[70%] rounded-2xl border border-border object-cover" />
               )}
               <div className={`rounded-2xl px-4 py-3 ${msg.role === "user" ? "bg-primary text-primary-foreground rounded-tr-sm" : "bg-card border border-border rounded-tl-sm"}`}>
-                <p className={`text-[15px] leading-relaxed whitespace-pre-line ${msg.role === "user" ? "text-primary-foreground" : "text-foreground"}`}>{renderWithBold(msg.text)}</p>
+                <p className={`text-[calc(15px*var(--dw-text,1))] leading-relaxed whitespace-pre-line ${msg.role === "user" ? "text-primary-foreground" : "text-foreground"}`}>{renderWithBold(msg.text)}</p>
               </div>
-              <p className="text-[10px] text-muted-foreground px-1">{msg.time}</p>
+              <p className="text-[calc(10px*var(--dw-text,1))] text-muted-foreground px-1">{msg.time}</p>
             </div>
           </div>
         ))}
@@ -351,7 +352,7 @@ export function AskMeiScreen({ patient, elderId, onUpdatePatient, onNavigate, on
         {pendingImage && (
           <div className="flex items-center gap-2.5 mb-2 bg-secondary/60 border border-primary/20 rounded-xl p-2">
             <img src={pendingImage.url} alt={t(language, "ai.attachment")} className="w-12 h-12 rounded-lg object-cover shrink-0" />
-            <span className="flex-1 text-[13px] text-foreground font-medium">{t(language, "ai.photoAttachedHint")}</span>
+            <span className="flex-1 text-[calc(13px*var(--dw-text,1))] text-foreground font-medium">{t(language, "ai.photoAttachedHint")}</span>
             <button onClick={() => setPendingImage(null)} aria-label={t(language, "common.cancel")} className="w-7 h-7 rounded-full bg-muted flex items-center justify-center text-muted-foreground shrink-0">
               <X size={14} />
             </button>
@@ -373,7 +374,7 @@ export function AskMeiScreen({ patient, elderId, onUpdatePatient, onNavigate, on
               onChange={e => { const v = e.target.value; setInput(v); if (v.trim() && quickOpen) setQuickOpen(false); }}
               onKeyDown={e => { if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); handleSend(); } }}
               placeholder={t(language, pendingImage ? "ai.photoNotePlaceholder" : "common.askMeiPlaceholder")}
-              className="w-full bg-transparent text-foreground text-[15px] resize-none outline-none max-h-24 leading-relaxed placeholder:text-muted-foreground"
+              className="w-full bg-transparent text-foreground text-[calc(15px*var(--dw-text,1))] resize-none outline-none max-h-24 leading-relaxed placeholder:text-muted-foreground"
               rows={1}
             />
           </div>
@@ -385,7 +386,7 @@ export function AskMeiScreen({ patient, elderId, onUpdatePatient, onNavigate, on
             <Send size={16} />
           </button>
         </div>
-        <p className="text-center text-[10px] text-muted-foreground mt-2">{t(language, "ai.disclaimer")}</p>
+        <p className="text-center text-[calc(10px*var(--dw-text,1))] text-muted-foreground mt-2">{t(language, "ai.disclaimer")}</p>
       </div>
 
       {/* Hidden inputs backing "Update profile" and "Add prescription" — each
@@ -421,8 +422,8 @@ export function AskMeiScreen({ patient, elderId, onUpdatePatient, onNavigate, on
 
       {/* Language & voice sheet */}
       {showLangSheet && (
-        <div className="absolute inset-0 z-50 flex items-end bg-black/40" onClick={() => setShowLangSheet(false)}>
-          <div className="w-full bg-background rounded-t-3xl p-5 pb-7 animate-in slide-in-from-bottom duration-200" onClick={e => e.stopPropagation()}>
+        <BottomSheet onClose={() => setShowLangSheet(false)}>
+          <div>
             <div className="flex items-center justify-between mb-4">
               <h3 className="font-['Fraunces'] text-xl font-semibold text-foreground">{t(language, "ai.languageVoice")}</h3>
               <button onClick={() => setShowLangSheet(false)} className="w-8 h-8 rounded-full bg-muted flex items-center justify-center"><X size={16} className="text-muted-foreground" /></button>
@@ -430,20 +431,20 @@ export function AskMeiScreen({ patient, elderId, onUpdatePatient, onNavigate, on
             <p className="text-sm font-semibold text-foreground mb-2">{t(language, "settings.language")}</p>
             <div className="grid grid-cols-3 gap-2 mb-5">
               {LANGUAGE_OPTIONS.map(l => (
-                <button key={l.id} onClick={() => setLanguage(l.id)} className={`py-3 rounded-xl text-[14px] font-bold border transition-colors ${language === l.id ? "bg-primary text-white border-primary" : "bg-card text-foreground border-border"}`}>
+                <button key={l.id} onClick={() => setLanguage(l.id)} className={`py-3 rounded-xl text-[calc(14px*var(--dw-text,1))] font-bold border transition-colors ${language === l.id ? "bg-primary text-white border-primary" : "bg-card text-foreground border-border"}`}>
                   {l.label}
                 </button>
               ))}
             </div>
             <button onClick={() => setVoiceOutput(!voiceOutput)} className="w-full flex items-center justify-between bg-card border border-border rounded-xl px-4 py-3.5">
-              <div className="flex items-center gap-2"><Volume2 size={18} className="text-primary" /><span className="text-[15px] font-semibold text-foreground">{t(language, "settings.readAloud")}</span></div>
+              <div className="flex items-center gap-2"><Volume2 size={18} className="text-primary" /><span className="text-[calc(15px*var(--dw-text,1))] font-semibold text-foreground">{t(language, "settings.readAloud")}</span></div>
               <div className={`w-12 h-7 rounded-full transition-colors relative ${voiceOutput ? "bg-primary" : "bg-muted"}`}>
                 <div className={`absolute top-0.5 w-6 h-6 rounded-full bg-white shadow transition-all ${voiceOutput ? "left-[22px]" : "left-0.5"}`} />
               </div>
             </button>
             <p className="text-xs text-muted-foreground mt-3">{t(language, "ai.voiceHint")}</p>
           </div>
-        </div>
+        </BottomSheet>
       )}
 
       {/* Quick help popup — overlays the chat instead of pushing it down, and
@@ -451,9 +452,8 @@ export function AskMeiScreen({ patient, elderId, onUpdatePatient, onNavigate, on
           overflow-hidden, so a sheet flush to the bottom gets visibly cut
           against the nav bar below it. */}
       {quickOpen && (
-        <div className="absolute inset-0 z-[140] flex items-end p-3">
-          <div className="absolute inset-0 bg-black/40" onClick={() => setQuickOpen(false)} />
-          <div className="relative w-full bg-card rounded-3xl border border-border px-4 pt-4 pb-4 shadow-2xl max-h-full overflow-y-auto scrollbar-none animate-in slide-in-from-bottom duration-200">
+        <BottomSheet onClose={() => setQuickOpen(false)}>
+          <div>
             <div className="flex items-center gap-2 mb-3">
               <Sparkles size={16} className="text-primary shrink-0" />
               <h3 className="font-['Fraunces'] text-lg font-semibold text-foreground">{t(language, "ai.quickHelp")}</h3>
@@ -488,7 +488,7 @@ export function AskMeiScreen({ patient, elderId, onUpdatePatient, onNavigate, on
               </div>
             )}
           </div>
-        </div>
+        </BottomSheet>
       )}
 
       {showClearConfirm && (

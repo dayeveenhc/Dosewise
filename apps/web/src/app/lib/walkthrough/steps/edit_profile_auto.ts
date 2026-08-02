@@ -19,6 +19,15 @@ export function editProfileAutoSteps(p: WalkthroughParams = {}): WalkthroughStep
       act: { kind: "click", selector: '[data-walk="elder-profile-toggle"]' },
     },
     {
+      // The profile opens read-only now — unlock it before typing, or every
+      // field below is disabled and the fill silently does nothing.
+      id: "autoProfile.edit",
+      screen: ON_SETTINGS,
+      selector: '[data-walk="elder-profile-edit"]',
+      instructionKey: "walk.autoProfile.edit",
+      act: { kind: "click", selector: '[data-walk="elder-profile-edit"]' },
+    },
+    {
       id: "autoProfile.weight",
       screen: ON_SETTINGS,
       selector: '[data-walk="elder-profile-weight"]',

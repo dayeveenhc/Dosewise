@@ -1,6 +1,6 @@
 import { useState, useRef, useEffect } from "react";
 import type { ChangeEvent } from "react";
-import { Volume2, Mic, Send, AlertTriangle, MessageCircle, Check, Trash2, Camera, FileText, Pill, Globe, X, Plane, ChevronRight, CalendarDays, CheckCircle2, RotateCcw, RefreshCw, Bell, Phone, Type, QrCode, UserCheck, Stethoscope, HeartPulse, Search } from "lucide-react";
+import { Volume2, Mic, Send, AlertTriangle, MessageCircle, Check, Trash2, Camera, FileText, Pill, Globe, X, Plane, ChevronRight, CalendarDays, CheckCircle2, RotateCcw, RefreshCw, Bell, Phone, Type, QrCode, UserCheck, Stethoscope, HeartPulse, Search, Sparkles } from "lucide-react";
 import type { Patient } from "../../types";
 import type { EMsg, ElderlyTab } from "./types";
 import { agentTurnStream, extractProfile, fileToBase64 } from "../../lib/hermes";
@@ -17,6 +17,7 @@ import { t, LANGUAGE_OPTIONS, speechLangFor } from "../../lib/language";
 import { speak as speakUtterance } from "../../lib/speech";
 import { ConfirmDialog } from "../../components/ConfirmDialog";
 import { PhotoSourceSheet } from "../../components/PhotoSourceSheet";
+import { BottomSheet } from "../../components/BottomSheet";
 
 const nowLabel = () => new Date().toLocaleTimeString("en-SG", { hour: "2-digit", minute: "2-digit" });
 
@@ -73,7 +74,7 @@ function HelpRow({ icon: Icon, label, onClick, "data-walk": dataWalk }: {
       <div className="w-10 h-10 rounded-xl bg-secondary flex items-center justify-center shrink-0">
         <Icon size={20} className="text-primary" />
       </div>
-      <span className="flex-1 min-w-0 text-[15px] font-semibold text-foreground leading-snug">{label}</span>
+      <span className="flex-1 min-w-0 text-[calc(15px*var(--dw-text,1))] font-semibold text-foreground leading-snug">{label}</span>
       <ChevronRight size={20} className="text-muted-foreground shrink-0" />
     </button>
   );
@@ -114,7 +115,6 @@ export function ElderlyAIScreen({ patient, elderId, onNavigate, onMedsChanged, o
 }) {
   const { language, setLanguage } = useLanguage();
   const { voiceOutput, setVoiceOutput } = useAccessibility();
-  const nick = patient.nickname || patient.name.split(" ")[1];
   // Key the saved chat by the signed-in user, not the (constant, mock) patient.id
   // — otherwise every account shares one chat. Each account restores its own.
   const storageKey = `mei-chat:${elderId ?? "anon"}`;
@@ -154,7 +154,19 @@ export function ElderlyAIScreen({ patient, elderId, onNavigate, onMedsChanged, o
   // point at nothing, so fall back to asking Mei — which always works.
   const anyRunningLow = anyMedicationRunningLow(patient.medications);
 
-  const scrollToBottom = () => setTimeout(() => { if (scrollRef.current) scrollRef.current.scrollTop = scrollRef.current.scrollHeight; }, 60);
+  // Glide to the newest message instead of snapping: a jump-cut under a bubble
+  // that is itself animating in is what made the arrival read as abrupt. The
+  // 60ms wait lets the new bubble lay out first, so we scroll to its real
+  // height. Anyone who asked the OS for less motion still gets the instant jump.
+  // `instant` is for arriving at an already-long thread (opening the chat, or
+  // sending from the help view): gliding through every past message would be a
+  // long ride to somewhere the person hasn't read yet.
+  const scrollToBottom = (instant = false) => setTimeout(() => {
+    const el = scrollRef.current;
+    if (!el) return;
+    const reduced = typeof window !== "undefined" && window.matchMedia?.("(prefers-reduced-motion: reduce)").matches;
+    el.scrollTo({ top: el.scrollHeight, behavior: instant || reduced ? "auto" : "smooth" });
+  }, 60);
 
   // Persist chat history so it survives switching bottom-nav tabs (this screen
   // unmounts/remounts each time) — sessionStorage clears on its own when the
@@ -225,9 +237,12 @@ export function ElderlyAIScreen({ patient, elderId, onNavigate, onMedsChanged, o
   const send = async (text: string, imageBase64?: string, pdfBase64?: string, displayImage?: string) => {
     const trimmed = text.trim();
     if (!trimmed || sending) return;
+    // Leaving a category open would strand its title + back arrow in the app
+    // header while the conversation is what's actually on screen.
     setMode("chat");
+    setCategory(null);
     setMessages(prev => [...prev, { id: Date.now(), role: "user", text: trimmed, time: nowLabel(), image: displayImage }]);
-    scrollToBottom();
+    scrollToBottom(mode === "help"); // sending from the buttons view arrives cold, with no scroll to glide
     setSending(true);
 
     // Live, as-it-happens progress: the moment a routable write's tool call
@@ -317,6 +332,7 @@ export function ElderlyAIScreen({ patient, elderId, onNavigate, onMedsChanged, o
     e.target.value = "";
     if (!file) return;
     setMode("chat");
+    setCategory(null);
     setPendingImage({ base64: await fileToBase64(file), url: URL.createObjectURL(file) });
     inputRef.current?.focus();
   };
@@ -391,6 +407,7 @@ export function ElderlyAIScreen({ patient, elderId, onNavigate, onMedsChanged, o
     const isPdf = file.type === "application/pdf";
     const msg = t(language, "ai.reportMsgMine");
     setMode("chat");
+    setCategory(null);
     setMessages(prev => [...prev, { id: Date.now(), role: "user", text: msg, time: nowLabel(), image: isPdf ? undefined : URL.createObjectURL(file) }]);
     scrollToBottom();
 
@@ -503,24 +520,26 @@ export function ElderlyAIScreen({ patient, elderId, onNavigate, onMedsChanged, o
 
   return (
     <div className="flex flex-col flex-1 min-h-0 overflow-hidden relative">
-      {/* Switching between the buttons and the conversation happens in place —
-          no header change, no new screen. Hidden until there IS a conversation,
-          since before that there's nothing to switch back to. */}
-      {messages.length > 0 && !category && (
+      {/* ONE header for both faces of this screen — same title, same place. Only
+          the switch button flips direction, so moving between the buttons and
+          the conversation never reads as a different screen (and sending a
+          message never spawns tabs). The switch waits for a conversation to
+          exist, since before that there's nothing to switch to. */}
+      {!category && (
         <div className="px-4 pt-3 shrink-0 flex items-center gap-2">
-          <div className="flex-1 flex gap-1.5 bg-muted/70 rounded-2xl p-1.5">
-            {([["help", t(language, "ai.tabHelp")], ["chat", t(language, "ai.tabChat")]] as const).map(([id, label]) => (
-              <button
-                key={id}
-                onClick={() => setMode(id)}
-                aria-pressed={mode === id}
-                data-walk={`elder-ai-tab-${id}`}
-                className={`flex-1 py-2 rounded-xl text-[14px] font-bold transition-colors ${mode === id ? "bg-card text-foreground dw-shadow" : "text-muted-foreground"}`}
-              >
-                {label}
-              </button>
-            ))}
-          </div>
+          <h2 className="flex-1 min-w-0 truncate dw-display text-[calc(20px*var(--dw-text,1))] font-semibold text-foreground">{t(language, "common.askMei")}</h2>
+          {messages.length > 0 && (
+            <button
+              onClick={() => { setMode(mode === "chat" ? "help" : "chat"); scrollToBottom(true); }}
+              data-walk={mode === "chat" ? "elder-ai-frequently-used" : "elder-ai-back-to-chat"}
+              className="shrink-0 flex items-center gap-1.5 rounded-full dw-surface px-3.5 py-2 active:bg-muted transition-colors"
+            >
+              {mode === "chat"
+                ? <Sparkles size={17} className="text-primary shrink-0" />
+                : <MessageCircle size={17} className="text-primary shrink-0" />}
+              <span className="text-[calc(14px*var(--dw-text,1))] font-bold text-foreground whitespace-nowrap">{t(language, mode === "chat" ? "ai.frequentlyUsed" : "ai.backToChat")}</span>
+            </button>
+          )}
           {mode === "chat" && (
             <button onClick={() => setShowClearConfirm(true)} aria-label={t(language, "ai.clearChat")} className="w-11 h-11 rounded-full dw-surface flex items-center justify-center shrink-0 active:bg-muted transition-colors">
               <Trash2 size={18} className="text-muted-foreground" />
@@ -538,21 +557,21 @@ export function ElderlyAIScreen({ patient, elderId, onNavigate, onMedsChanged, o
             <div key={msg.id} className="flex justify-center dw-msg-in">
               <div className="flex items-center gap-1.5 bg-warn-bg border border-warn-border text-warn-fg rounded-full px-3.5 py-1.5">
                 <AlertTriangle size={15} className="text-warn shrink-0" />
-                <span className="text-[14px] font-bold">{msg.text}</span>
+                <span className="text-[calc(14px*var(--dw-text,1))] font-bold">{msg.text}</span>
               </div>
             </div>
           ) : msg.isConfirmation ? (
             <div key={msg.id} className="flex justify-center dw-msg-in">
               <div className="flex items-center gap-1.5 bg-taken-bg border border-taken-border text-taken-fg rounded-full px-3.5 py-1.5">
                 <Check size={15} className="text-taken shrink-0" />
-                <span className="text-[14px] font-bold">{msg.text.replace(/^✓\s*/, "")}</span>
+                <span className="text-[calc(14px*var(--dw-text,1))] font-bold">{msg.text.replace(/^✓\s*/, "")}</span>
               </div>
             </div>
           ) : (
-            <div key={msg.id} className={`dw-msg-in flex ${msg.role === "user" ? "justify-end" : "justify-start"} gap-2`}>
+            <div key={msg.id} className={`dw-msg-in flex gap-2 ${msg.role === "user" ? "justify-end origin-bottom-right" : "justify-start origin-bottom-left"}`}>
               {msg.role === "agent" && (
                 <div className="w-9 h-9 rounded-full bg-primary flex items-center justify-center shrink-0 mt-1">
-                  <span className="text-primary-foreground text-[14px] font-bold">M</span>
+                  <span className="text-primary-foreground text-[calc(14px*var(--dw-text,1))] font-bold">M</span>
                 </div>
               )}
               <div className={`max-w-[82%] flex flex-col gap-1 ${msg.role === "user" ? "items-end" : "items-start"}`}>
@@ -560,10 +579,10 @@ export function ElderlyAIScreen({ patient, elderId, onNavigate, onMedsChanged, o
                   <img src={msg.image} alt={t(language, "ai.attachment")} className="max-w-[70%] rounded-2xl border border-border object-cover" />
                 )}
                 <div className={`rounded-2xl px-4 py-3 ${msg.role === "user" ? "bg-primary text-primary-foreground rounded-tr-sm" : "dw-surface rounded-tl-sm"}`}>
-                  <p className={`text-[15px] leading-relaxed whitespace-pre-line ${msg.role === "user" ? "text-primary-foreground" : "text-foreground"}`}>{renderWithBold(msg.text)}</p>
-                  {msg.isClinic && <p className="text-[13px] mt-2 opacity-70 italic">{t(language, "ai.verifyWithDoctor")}</p>}
+                  <p className={`text-[calc(15px*var(--dw-text,1))] leading-relaxed whitespace-pre-line ${msg.role === "user" ? "text-primary-foreground" : "text-foreground"}`}>{renderWithBold(msg.text)}</p>
+                  {msg.isClinic && <p className="text-[calc(13px*var(--dw-text,1))] mt-2 opacity-70 italic">{t(language, "ai.verifyWithDoctor")}</p>}
                 </div>
-                <p className="text-[12px] text-muted-foreground px-1">{msg.time}</p>
+                <p className="text-[calc(12px*var(--dw-text,1))] text-muted-foreground px-1">{msg.time}</p>
               </div>
             </div>
           ))}
@@ -571,7 +590,7 @@ export function ElderlyAIScreen({ patient, elderId, onNavigate, onMedsChanged, o
             <div className="flex justify-center py-2">
               <div className="flex items-center gap-2 bg-missed-bg border border-missed-border rounded-full px-4 py-2">
                 <div className="w-2.5 h-2.5 bg-destructive rounded-full animate-pulse" />
-                <span className="text-[14px] text-missed-fg font-bold">{t(language, "ai.listening")}</span>
+                <span className="text-[calc(14px*var(--dw-text,1))] text-missed-fg font-bold">{t(language, "ai.listening")}</span>
               </div>
             </div>
           )}
@@ -586,13 +605,6 @@ export function ElderlyAIScreen({ patient, elderId, onNavigate, onMedsChanged, o
         </div>
       ) : (
         <div className="flex-1 overflow-y-auto scrollbar-none px-4 pt-3 pb-4 space-y-3.5" data-tour="elder-quickhelp">
-          {messages.length === 0 && (
-            <div className="px-1">
-              <p className="text-[15px] text-muted-foreground leading-none">{t(language, "header.hello", { name: nick })}</p>
-              <h2 className="dw-display text-[24px] font-semibold text-foreground leading-tight mt-1.5">{t(language, "ai.whatCanIHelp")}</h2>
-            </div>
-          )}
-
           <div className="relative">
             <Search size={19} className="absolute left-3.5 top-1/2 -translate-y-1/2 text-muted-foreground pointer-events-none" />
             <input
@@ -600,7 +612,7 @@ export function ElderlyAIScreen({ patient, elderId, onNavigate, onMedsChanged, o
               onChange={e => setQuery(e.target.value)}
               placeholder={t(language, "ai.searchPlaceholder")}
               data-walk="elder-help-search"
-              className="w-full h-12 bg-input-background border border-border rounded-2xl pl-11 pr-11 text-[15px] text-foreground outline-none focus:border-primary transition-colors placeholder:text-muted-foreground"
+              className="w-full h-12 bg-input-background border border-border rounded-2xl pl-11 pr-11 text-[calc(15px*var(--dw-text,1))] text-foreground outline-none focus:border-primary transition-colors placeholder:text-muted-foreground"
             />
             {query && (
               <button onClick={() => setQuery("")} aria-label={t(language, "common.cancel")} className="absolute right-3 top-1/2 -translate-y-1/2 w-8 h-8 rounded-full bg-muted flex items-center justify-center">
@@ -621,14 +633,14 @@ export function ElderlyAIScreen({ patient, elderId, onNavigate, onMedsChanged, o
                     <r.icon size={20} className="text-primary" />
                   </div>
                   <div className="flex-1 min-w-0">
-                    <p className="text-[15px] font-semibold text-foreground leading-snug">{r.label}</p>
-                    <p className="text-[13px] text-muted-foreground">{r.cat}</p>
+                    <p className="text-[calc(15px*var(--dw-text,1))] font-semibold text-foreground leading-snug">{r.label}</p>
+                    <p className="text-[calc(13px*var(--dw-text,1))] text-muted-foreground">{r.cat}</p>
                   </div>
                   <ChevronRight size={20} className="text-muted-foreground shrink-0" />
                 </button>
               ))}
               {searchResults.length === 0 && (
-                <p className="px-4 py-6 text-[15px] text-muted-foreground text-center">{t(language, "settings.noResults", { q: query.trim() })}</p>
+                <p className="px-4 py-6 text-[calc(15px*var(--dw-text,1))] text-muted-foreground text-center">{t(language, "settings.noResults", { q: query.trim() })}</p>
               )}
             </div>
           ) : (
@@ -646,8 +658,8 @@ export function ElderlyAIScreen({ patient, elderId, onNavigate, onMedsChanged, o
                       <cat.icon size={24} className="text-primary" />
                     </div>
                     <div className="min-w-0">
-                      <p className="text-[15px] font-bold text-foreground leading-tight">{cat.title}</p>
-                      <p className="text-[12px] text-muted-foreground mt-0.5">{t(language, "ai.catCount", { count: cat.items.length })}</p>
+                      <p className="text-[calc(15px*var(--dw-text,1))] font-bold text-foreground leading-tight">{cat.title}</p>
+                      <p className="text-[calc(12px*var(--dw-text,1))] text-muted-foreground mt-0.5">{t(language, "ai.catCount", { count: cat.items.length })}</p>
                     </div>
                   </button>
                 );
@@ -661,7 +673,7 @@ export function ElderlyAIScreen({ patient, elderId, onNavigate, onMedsChanged, o
         <div className="px-4 py-1 shrink-0">
           <div className="flex items-center gap-1.5 text-primary">
             <Volume2 size={15} />
-            <span className="text-[14px] font-bold">{t(language, "ai.speaking")}{language !== "en" ? ` in ${LANGUAGE_OPTIONS.find(o => o.id === language)?.label}` : ""}…</span>
+            <span className="text-[calc(14px*var(--dw-text,1))] font-bold">{t(language, "ai.speaking")}{language !== "en" ? ` in ${LANGUAGE_OPTIONS.find(o => o.id === language)?.label}` : ""}…</span>
           </div>
         </div>
       )}
@@ -673,7 +685,7 @@ export function ElderlyAIScreen({ patient, elderId, onNavigate, onMedsChanged, o
             onWheel={e => { if (Math.abs(e.deltaY) > Math.abs(e.deltaX)) e.currentTarget.scrollLeft += e.deltaY; }}
           >
             {[t(language, "ai.suggestTookMed"), t(language, "ai.suggestWhatDoITake"), t(language, "ai.suggestRefills"), t(language, "ai.suggestHelp")].map(s => (
-              <button key={s} onClick={() => setInput(s)} className="shrink-0 bg-muted text-foreground rounded-full px-3.5 py-2 text-[14px] font-bold whitespace-nowrap active:bg-secondary transition-colors">
+              <button key={s} onClick={() => setInput(s)} className="shrink-0 bg-muted text-foreground rounded-full px-3.5 py-2 text-[calc(14px*var(--dw-text,1))] font-bold whitespace-nowrap active:bg-secondary transition-colors">
                 {s}
               </button>
             ))}
@@ -686,7 +698,7 @@ export function ElderlyAIScreen({ patient, elderId, onNavigate, onMedsChanged, o
         {pendingImage && (
           <div className="flex items-center gap-2.5 mb-2 bg-secondary border border-primary/20 rounded-xl p-2">
             <img src={pendingImage.url} alt={t(language, "ai.attachment")} className="w-12 h-12 rounded-lg object-cover shrink-0" />
-            <span className="flex-1 text-[14px] text-secondary-foreground font-semibold">{t(language, "ai.photoAttachedHint")}</span>
+            <span className="flex-1 text-[calc(14px*var(--dw-text,1))] text-secondary-foreground font-semibold">{t(language, "ai.photoAttachedHint")}</span>
             <button onClick={() => setPendingImage(null)} aria-label={t(language, "common.cancel")} className="w-8 h-8 rounded-full bg-muted flex items-center justify-center text-muted-foreground shrink-0">
               <X size={16} />
             </button>
@@ -711,7 +723,7 @@ export function ElderlyAIScreen({ patient, elderId, onNavigate, onMedsChanged, o
               onChange={e => setInput(e.target.value)}
               onKeyDown={e => { if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); handleSend(); } }}
               placeholder={t(language, pendingImage ? "ai.photoNotePlaceholder" : "ai.askAnything")}
-              className="flex-1 min-w-0 bg-transparent text-foreground text-[15px] resize-none outline-none max-h-40 leading-relaxed py-2 placeholder:text-muted-foreground"
+              className="flex-1 min-w-0 bg-transparent text-foreground text-[calc(15px*var(--dw-text,1))] resize-none outline-none max-h-40 leading-relaxed py-2 placeholder:text-muted-foreground"
               rows={1}
             />
           </div>
@@ -719,18 +731,17 @@ export function ElderlyAIScreen({ patient, elderId, onNavigate, onMedsChanged, o
             <Send size={20} />
           </button>
         </div>
-        <p className="text-center text-[12px] text-muted-foreground mt-1.5">{t(language, "ai.disclaimer")}</p>
+        <p className="text-center text-[calc(12px*var(--dw-text,1))] text-muted-foreground mt-1.5">{t(language, "ai.disclaimer")}</p>
       </div>
 
       {/* Ask a doctor: collect the real question here rather than letting the
           walkthrough invent one, then hand it to the autonomous walkthrough as
           params so the elder watches it being filed under Reminders. */}
       {doctorQDraft !== null && (
-        <div className="absolute inset-0 z-[140] flex items-end p-3" onClick={() => setDoctorQDraft(null)}>
-          <div className="absolute inset-0 bg-black/40" />
-          <div className="relative w-full bg-card rounded-3xl border border-border p-5 shadow-2xl animate-in slide-in-from-bottom duration-200" onClick={e => e.stopPropagation()}>
+        <BottomSheet onClose={() => setDoctorQDraft(null)}>
+          <div>
             <div className="flex items-start justify-between gap-2 mb-3">
-              <h3 className="font-['Fraunces'] text-[18px] font-semibold text-foreground leading-tight">{t(language, "ai.doctorQPrompt")}</h3>
+              <h3 className="font-['Fraunces'] text-[calc(18px*var(--dw-text,1))] font-semibold text-foreground leading-tight">{t(language, "ai.doctorQPrompt")}</h3>
               <button onClick={() => setDoctorQDraft(null)} aria-label={t(language, "common.cancel")} className="w-10 h-10 rounded-full bg-muted flex items-center justify-center shrink-0"><X size={20} className="text-muted-foreground" /></button>
             </div>
             <textarea
@@ -738,7 +749,7 @@ export function ElderlyAIScreen({ patient, elderId, onNavigate, onMedsChanged, o
               value={doctorQDraft}
               onChange={e => setDoctorQDraft(e.target.value)}
               placeholder={t(language, "ai.questionForDoctorPlaceholder")}
-              className="w-full bg-input-background rounded-xl px-4 py-3 text-[15px] text-foreground outline-none resize-none leading-relaxed placeholder:text-muted-foreground min-h-[96px] border border-border focus:border-primary transition-colors"
+              className="w-full bg-input-background rounded-xl px-4 py-3 text-[calc(15px*var(--dw-text,1))] text-foreground outline-none resize-none leading-relaxed placeholder:text-muted-foreground min-h-[96px] border border-border focus:border-primary transition-colors"
             />
             <button
               onClick={() => {
@@ -748,32 +759,31 @@ export function ElderlyAIScreen({ patient, elderId, onNavigate, onMedsChanged, o
                 startWalk("add_doctor_question_auto", { question: q });
               }}
               disabled={!doctorQDraft.trim()}
-              className="mt-3 w-full py-4 rounded-2xl bg-primary text-primary-foreground text-[16px] font-bold disabled:opacity-40 active:scale-[0.98] transition-transform"
+              className="mt-3 w-full py-4 rounded-2xl bg-primary text-primary-foreground text-[calc(16px*var(--dw-text,1))] font-bold disabled:opacity-40 active:scale-[0.98] transition-transform"
             >
               {t(language, "ai.doctorQShow")}
             </button>
           </div>
-        </div>
+        </BottomSheet>
       )}
 
       {showMedPicker && (
-        <div className="absolute inset-0 z-[140] flex items-end p-3" onClick={() => setShowMedPicker(false)}>
-          <div className="absolute inset-0 bg-black/40" />
-          <div className="relative w-full bg-card rounded-3xl border border-border p-5 shadow-2xl max-h-full overflow-y-auto scrollbar-none animate-in slide-in-from-bottom duration-200" onClick={e => e.stopPropagation()}>
+        <BottomSheet onClose={() => setShowMedPicker(false)}>
+          <div>
             <div className="flex items-center justify-between gap-2 mb-3">
-              <h3 className="font-['Fraunces'] text-[18px] font-semibold text-foreground">{t(language, "ai.whichMedication")}</h3>
+              <h3 className="font-['Fraunces'] text-[calc(18px*var(--dw-text,1))] font-semibold text-foreground">{t(language, "ai.whichMedication")}</h3>
               <button onClick={() => setShowMedPicker(false)} aria-label={t(language, "common.cancel")} className="w-10 h-10 rounded-full bg-muted flex items-center justify-center shrink-0"><X size={20} className="text-muted-foreground" /></button>
             </div>
             <div className="flex flex-col gap-2">
               {uniqueMeds.map(n => (
-                <button key={n} onClick={() => { setShowMedPicker(false); send(`What is ${n} for?`); }} className="w-full text-left text-[15px] font-semibold bg-secondary border border-primary/20 text-secondary-foreground rounded-xl px-4 py-3.5 active:opacity-80 transition-opacity">
+                <button key={n} onClick={() => { setShowMedPicker(false); send(`What is ${n} for?`); }} className="w-full text-left text-[calc(15px*var(--dw-text,1))] font-semibold bg-secondary border border-primary/20 text-secondary-foreground rounded-xl px-4 py-3.5 active:opacity-80 transition-opacity">
                   {n}
                 </button>
               ))}
-              {uniqueMeds.length === 0 && <p className="text-[14px] text-muted-foreground">{t(language, "prescription.empty")}</p>}
+              {uniqueMeds.length === 0 && <p className="text-[calc(14px*var(--dw-text,1))] text-muted-foreground">{t(language, "prescription.empty")}</p>}
             </div>
           </div>
-        </div>
+        </BottomSheet>
       )}
 
       {/* Hidden inputs backing "Update profile" and "Add prescription" — each
@@ -800,29 +810,29 @@ export function ElderlyAIScreen({ patient, elderId, onNavigate, onMedsChanged, o
       {/* Language & voice sheet — still reachable from the chat's own quick
           switch, kept because it changes how Mei speaks mid-conversation. */}
       {showLangSheet && (
-        <div className="absolute inset-0 z-[150] flex items-end p-3 bg-black/40" onClick={() => setShowLangSheet(false)}>
-          <div className="w-full bg-background rounded-3xl border border-border shadow-2xl p-5 max-h-full overflow-y-auto scrollbar-none animate-in slide-in-from-bottom duration-200" onClick={e => e.stopPropagation()}>
+        <BottomSheet onClose={() => setShowLangSheet(false)}>
+          <div>
             <div className="flex items-center justify-between mb-4">
-              <h3 className="font-['Fraunces'] text-[19px] font-semibold text-foreground">{t(language, "ai.languageVoice")}</h3>
+              <h3 className="font-['Fraunces'] text-[calc(19px*var(--dw-text,1))] font-semibold text-foreground">{t(language, "ai.languageVoice")}</h3>
               <button onClick={() => setShowLangSheet(false)} aria-label={t(language, "common.cancel")} className="w-10 h-10 rounded-full bg-muted flex items-center justify-center"><X size={20} className="text-muted-foreground" /></button>
             </div>
-            <p className="text-[14px] font-bold text-foreground mb-2">{t(language, "settings.language")}</p>
+            <p className="text-[calc(14px*var(--dw-text,1))] font-bold text-foreground mb-2">{t(language, "settings.language")}</p>
             <div className="grid grid-cols-2 gap-2 mb-5">
               {LANGUAGE_OPTIONS.map(l => (
-                <button key={l.id} onClick={() => setLanguage(l.id)} className={`py-3.5 rounded-xl text-[14px] font-bold border transition-colors ${language === l.id ? "bg-primary text-primary-foreground border-primary" : "bg-card text-foreground border-border"}`}>
+                <button key={l.id} onClick={() => setLanguage(l.id)} className={`py-3.5 rounded-xl text-[calc(14px*var(--dw-text,1))] font-bold border transition-colors ${language === l.id ? "bg-primary text-primary-foreground border-primary" : "bg-card text-foreground border-border"}`}>
                   {l.label}
                 </button>
               ))}
             </div>
             <button onClick={() => setVoiceOutput(!voiceOutput)} className="w-full flex items-center justify-between bg-card border border-border rounded-xl px-4 py-4">
-              <div className="flex items-center gap-2"><Volume2 size={20} className="text-primary" /><span className="text-[15px] font-bold text-foreground">{t(language, "settings.readAloud")}</span></div>
+              <div className="flex items-center gap-2"><Volume2 size={20} className="text-primary" /><span className="text-[calc(15px*var(--dw-text,1))] font-bold text-foreground">{t(language, "settings.readAloud")}</span></div>
               <div className={`w-12 h-7 rounded-full transition-colors relative ${voiceOutput ? "bg-primary" : "bg-switch-background"}`}>
                 <div className={`absolute top-0.5 w-6 h-6 rounded-full bg-white shadow transition-all ${voiceOutput ? "left-[22px]" : "left-0.5"}`} />
               </div>
             </button>
-            <p className="text-[14px] text-muted-foreground mt-3">{t(language, "ai.voiceHint")}</p>
+            <p className="text-[calc(14px*var(--dw-text,1))] text-muted-foreground mt-3">{t(language, "ai.voiceHint")}</p>
           </div>
-        </div>
+        </BottomSheet>
       )}
 
       {showClearConfirm && (

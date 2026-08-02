@@ -4,6 +4,7 @@ import type { Patient } from "../types";
 import { fetchProfile, saveProfile } from "../lib/profile";
 import { fieldCls } from "./setup/GuidedSetupWizard";
 import { Toggle } from "./elderly/ElderlySettingsScreen";
+import { BottomSheet } from "../components/BottomSheet";
 import { useLanguage } from "../lib/languageContext";
 import { t } from "../lib/language";
 import { emitWalkthroughEvent } from "../lib/walkthrough/bus";
@@ -77,9 +78,7 @@ export function TravelModeSheet({ patient, elderId, onClose, onSaved }: {
   };
 
   return (
-    <div className="absolute inset-0 z-50 flex items-end p-3">
-      <div className="absolute inset-0 bg-black/40 backdrop-blur-[1px]" onClick={onClose} />
-      <div className="relative w-full bg-card rounded-3xl border border-border shadow-2xl overflow-hidden flex flex-col max-h-full animate-in slide-in-from-bottom duration-200">
+    <BottomSheet onClose={onClose} layout="bare">
         <div className="flex justify-center pt-3 pb-1 shrink-0">
           <div className="w-10 h-1 bg-border rounded-full" />
         </div>
@@ -125,7 +124,7 @@ export function TravelModeSheet({ patient, elderId, onClose, onSaved }: {
                 <select data-walk="travel-timezone-select" value={timezone} onChange={e => setTimezone(e.target.value)} className={fieldCls}>
                   {TIMEZONES.map(tz => <option key={tz}>{tz}</option>)}
                 </select>
-                <p className="text-[11px] text-muted-foreground mt-1.5">{t(language, "travel.timezoneNote")}</p>
+                <p className="text-[calc(11px*var(--dw-text,1))] text-muted-foreground mt-1.5">{t(language, "travel.timezoneNote")}</p>
               </div>
 
               {days > 0 && (
@@ -166,7 +165,6 @@ export function TravelModeSheet({ patient, elderId, onClose, onSaved }: {
             {saving ? t(language, "settings.saving") : saved ? t(language, "settings.saved") : enabled ? t(language, "travel.saveTravelPlan") : hadSavedPlan ? t(language, "travel.turnOff") : t(language, "link.close")}
           </button>
         </div>
-      </div>
-    </div>
+    </BottomSheet>
   );
 }

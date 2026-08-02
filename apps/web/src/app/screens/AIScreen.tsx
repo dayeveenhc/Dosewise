@@ -116,20 +116,20 @@ export function AIScreen({ patient }: { patient: Patient }) {
         <div className="grid grid-cols-3 gap-3 text-center">
           <div className="bg-taken-bg border border-taken-border rounded-xl p-3">
             <p className="font-['Fraunces'] text-2xl font-semibold text-taken-fg">{patient.adherenceWeek}%</p>
-            <p className="text-[10px] text-taken-fg font-medium mt-0.5">{t(language, "summary.adherence")}</p>
+            <p className="text-[calc(10px*var(--dw-text,1))] text-taken-fg font-medium mt-0.5">{t(language, "summary.adherence")}</p>
           </div>
           <div className="bg-missed-bg border border-missed-border rounded-xl p-3">
             <p className="font-['Fraunces'] text-2xl font-semibold text-missed-fg">3</p>
-            <p className="text-[10px] text-missed-fg font-medium mt-0.5">{t(language, "summary.missedDoses")}</p>
+            <p className="text-[calc(10px*var(--dw-text,1))] text-missed-fg font-medium mt-0.5">{t(language, "summary.missedDoses")}</p>
           </div>
           <div className="bg-upcoming-bg border border-upcoming-border rounded-xl p-3">
             <p className="font-['Fraunces'] text-2xl font-semibold text-upcoming-fg">29</p>
-            <p className="text-[10px] text-upcoming-fg font-medium mt-0.5">{t(language, "summary.dosesTaken")}</p>
+            <p className="text-[calc(10px*var(--dw-text,1))] text-upcoming-fg font-medium mt-0.5">{t(language, "summary.dosesTaken")}</p>
           </div>
         </div>
 
         <div className="mt-4">
-          <p className="text-[10px] text-muted-foreground uppercase tracking-widest font-medium mb-2">{t(language, "summary.dailyBreakdown")}</p>
+          <p className="text-[calc(10px*var(--dw-text,1))] text-muted-foreground uppercase tracking-widest font-medium mb-2">{t(language, "summary.dailyBreakdown")}</p>
           <SparklineChart data={WEEKLY_DATA} height={90} fillOpacity={0.2} />
         </div>
       </Card>
@@ -138,7 +138,7 @@ export function AIScreen({ patient }: { patient: Patient }) {
       <div>
         <div className="flex items-center gap-2 mb-3">
           <Zap size={14} className="text-primary" />
-          <p className="text-[10px] text-muted-foreground uppercase tracking-widest font-medium">{t(language, "summary.aiInsights")}</p>
+          <p className="text-[calc(10px*var(--dw-text,1))] text-muted-foreground uppercase tracking-widest font-medium">{t(language, "summary.aiInsights")}</p>
         </div>
         <Card className="divide-y divide-border">
           <div className="px-4 py-3">
@@ -176,18 +176,18 @@ export function AIScreen({ patient }: { patient: Patient }) {
         <SectionHeader title={t(language, "summary.discussWithDoctor")} />
         <Card className="p-4 space-y-3">
           <div className="flex gap-3">
-            <div className="w-5 h-5 rounded-full bg-primary text-primary-foreground flex items-center justify-center shrink-0 text-[10px] font-bold mt-0.5">1</div>
+            <div className="w-5 h-5 rounded-full bg-primary text-primary-foreground flex items-center justify-center shrink-0 text-[calc(10px*var(--dw-text,1))] font-bold mt-0.5">1</div>
             <p className="text-sm text-foreground leading-snug">Consider moving Celecoxib 200mg to a time linked to an existing routine (e.g. after lunch TV programme) to improve midday adherence.</p>
           </div>
           <div className="flex gap-3">
-            <div className="w-5 h-5 rounded-full bg-primary text-primary-foreground flex items-center justify-center shrink-0 text-[10px] font-bold mt-0.5">2</div>
+            <div className="w-5 h-5 rounded-full bg-primary text-primary-foreground flex items-center justify-center shrink-0 text-[calc(10px*var(--dw-text,1))] font-bold mt-0.5">2</div>
             <p className="text-sm text-foreground leading-snug">Discuss Mdm Tan's reported joint pain and whether the missed Celecoxib doses may be contributing to increased discomfort — a feedback loop worth monitoring.</p>
           </div>
           <div className="flex gap-3">
-            <div className="w-5 h-5 rounded-full bg-primary text-primary-foreground flex items-center justify-center shrink-0 text-[10px] font-bold mt-0.5">3</div>
+            <div className="w-5 h-5 rounded-full bg-primary text-primary-foreground flex items-center justify-center shrink-0 text-[calc(10px*var(--dw-text,1))] font-bold mt-0.5">3</div>
             <p className="text-sm text-foreground leading-snug">Metformin refill is needed within 4 days. Request a prescription at the next Polyclinic visit or via OneDoc / Health Buddy app.</p>
           </div>
-          <p className="text-[10px] text-muted-foreground pt-1 border-t border-border">{t(language, "summary.disclaimer", { doctor: "Dr Priya Nair" })}</p>
+          <p className="text-[calc(10px*var(--dw-text,1))] text-muted-foreground pt-1 border-t border-border">{t(language, "summary.disclaimer", { doctor: "Dr Priya Nair" })}</p>
         </Card>
       </div>
     </div>

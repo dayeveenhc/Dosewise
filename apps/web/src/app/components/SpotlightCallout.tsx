@@ -63,10 +63,10 @@ export function SpotlightCallout({
         <div className={`w-8 h-8 rounded-full flex items-center justify-center shrink-0 ${error ? "bg-destructive/10" : "bg-primary/10"}`}>
           {error ? <AlertTriangle size={16} className="text-destructive" /> : <Brain size={16} className="text-primary" />}
         </div>
-        <p className="text-[11px] font-semibold uppercase tracking-[0.12em] text-muted-foreground flex-1 min-w-0 truncate">
+        <p className="text-[calc(11px*var(--dw-text,1))] font-semibold uppercase tracking-[0.12em] text-muted-foreground flex-1 min-w-0 truncate">
           {t(language, labelKey)}
         </p>
-        <p className="text-[11px] font-medium text-muted-foreground shrink-0 tabular-nums">
+        <p className="text-[calc(11px*var(--dw-text,1))] font-medium text-muted-foreground shrink-0 tabular-nums">
           {t(language, counterKey, { current: stepIndex + 1, total: stepCount })}
         </p>
       </div>
@@ -77,7 +77,7 @@ export function SpotlightCallout({
       </div>
 
       {title && (
-        <h3 className="font-['Fraunces'] text-[15px] font-semibold text-foreground mt-3 leading-snug">{title}</h3>
+        <h3 className="font-['Fraunces'] text-[calc(15px*var(--dw-text,1))] font-semibold text-foreground mt-3 leading-snug">{title}</h3>
       )}
       <p className={`text-sm leading-relaxed ${title ? "mt-1" : "mt-3"} ${error ? "text-destructive font-medium" : "text-muted-foreground"}`}>
         {body}

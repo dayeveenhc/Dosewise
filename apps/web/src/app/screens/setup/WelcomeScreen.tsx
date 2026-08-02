@@ -12,7 +12,7 @@ export function WelcomeScreen({ onSignIn, onGetStarted }: { onSignIn: () => void
 
       {/* Hero area */}
       <div className="flex flex-col items-center pt-12 pb-6 px-6 flex-1 justify-center">
-        <p className="text-[10px] text-muted-foreground uppercase tracking-[0.25em] font-medium mb-1">DOSEWISE</p>
+        <p className="text-[calc(10px*var(--dw-text,1))] text-muted-foreground uppercase tracking-[0.25em] font-medium mb-1">DOSEWISE</p>
         <div className="relative w-20 h-20 mb-6 mt-2">
           <div className="absolute inset-0 rounded-full bg-primary/10 flex items-center justify-center">
             <div className="w-14 h-14 rounded-full bg-primary/20 flex items-center justify-center">
@@ -38,13 +38,13 @@ export function WelcomeScreen({ onSignIn, onGetStarted }: { onSignIn: () => void
       <div className="flex flex-col gap-3 px-5 pb-10">
         <button
           onClick={onGetStarted}
-          className="w-full bg-primary text-primary-foreground rounded-2xl py-4 flex items-center justify-center gap-2 text-[16px] font-semibold active:scale-[0.98] transition-transform shadow-sm"
+          className="w-full bg-primary text-primary-foreground rounded-2xl py-4 flex items-center justify-center gap-2 text-[calc(16px*var(--dw-text,1))] font-semibold active:scale-[0.98] transition-transform shadow-sm"
         >
           <Sparkles size={18} />{t(language, "common.getStarted")}
         </button>
         <button
           onClick={onSignIn}
-          className="w-full bg-card border border-border rounded-2xl py-4 flex items-center justify-center gap-2 text-[16px] font-semibold text-foreground active:scale-[0.98] transition-transform"
+          className="w-full bg-card border border-border rounded-2xl py-4 flex items-center justify-center gap-2 text-[calc(16px*var(--dw-text,1))] font-semibold text-foreground active:scale-[0.98] transition-transform"
         >
           <LogIn size={18} className="text-muted-foreground" />{t(language, "common.alreadyHaveAccount")}
         </button>

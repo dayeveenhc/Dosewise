@@ -68,7 +68,7 @@ export function StatusPill({ status, small = false }: { status: MedStatus; small
   };
   const { label, icon, cls } = map[status];
   return (
-    <span className={`inline-flex items-center gap-1 rounded-full font-medium ${small ? "px-2 py-0.5 text-[10px]" : "px-2.5 py-1 text-xs"} ${cls}`}>
+    <span className={`inline-flex items-center gap-1 rounded-full font-medium ${small ? "px-2 py-0.5 text-[calc(10px*var(--dw-text,1))]" : "px-2.5 py-1 text-xs"} ${cls}`}>
       {icon} {label}
     </span>
   );
@@ -93,7 +93,7 @@ export function QuickAction({ icon, label, colour, onClick }: { icon: React.Reac
       <div className={`w-12 h-12 rounded-2xl flex items-center justify-center ${colour}`}>
         {icon}
       </div>
-      <span className="text-[10px] font-medium text-muted-foreground text-center leading-tight">{label}</span>
+      <span className="text-[calc(10px*var(--dw-text,1))] font-medium text-muted-foreground text-center leading-tight">{label}</span>
     </button>
   );
 }
@@ -122,7 +122,7 @@ export function PatientSwitcher({ patients, selected, onSelect, onAdd, onScan }:
         <img src={patient.photo} alt={patient.name} className="w-8 h-8 rounded-full object-cover bg-muted" />
         <div className="flex-1 text-left">
           <div className="text-xs font-semibold text-foreground leading-tight">{patient.nickname} · {patient.relation}</div>
-          <div className="text-[10px] text-muted-foreground">{t(language, "patientSwitcher.checked", { time: patient.lastChecked })}</div>
+          <div className="text-[calc(10px*var(--dw-text,1))] text-muted-foreground">{t(language, "patientSwitcher.checked", { time: patient.lastChecked })}</div>
         </div>
         <ChevronDown size={14} className={`text-muted-foreground transition-transform ${open ? "rotate-180" : ""}`} />
       </button>
@@ -138,7 +138,7 @@ export function PatientSwitcher({ patients, selected, onSelect, onAdd, onScan }:
               <img src={p.photo} alt={p.name} className="w-8 h-8 rounded-full object-cover bg-muted" />
               <div>
                 <div className="text-xs font-semibold text-foreground">{p.name}</div>
-                <div className="text-[10px] text-muted-foreground">{t(language, "common.relationAge", { relation: p.relation, age: p.age })}</div>
+                <div className="text-[calc(10px*var(--dw-text,1))] text-muted-foreground">{t(language, "common.relationAge", { relation: p.relation, age: p.age })}</div>
               </div>
               {i === selected && <CheckCircle2 size={14} className="ml-auto text-primary" />}
             </button>

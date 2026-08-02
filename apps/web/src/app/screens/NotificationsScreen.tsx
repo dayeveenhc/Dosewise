@@ -58,7 +58,7 @@ export function NotificationsScreen({ notifications, patient, onMarkAllRead, onD
               <div className="flex-1 min-w-0 pr-4">
                 <p className="text-sm font-semibold text-foreground">{n.title}</p>
                 <p className="text-xs text-muted-foreground mt-0.5 leading-snug">{n.body}</p>
-                <p className="text-[10px] font-mono text-muted-foreground mt-1.5">{n.time}</p>
+                <p className="text-[calc(10px*var(--dw-text,1))] font-mono text-muted-foreground mt-1.5">{n.time}</p>
               </div>
             </div>
             <div className="flex gap-2 mt-3">

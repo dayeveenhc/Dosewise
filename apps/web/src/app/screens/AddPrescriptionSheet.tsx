@@ -1,4 +1,4 @@
-import { useState, useRef } from "react";
+import { useState, useRef, useEffect } from "react";
 import type { ReactNode, ChangeEvent } from "react";
 import { X, Check, Plus, Pill, Camera, PenLine, Image as ImageIcon, Sparkles } from "lucide-react";
 import type { Medication } from "../types";
@@ -8,6 +8,8 @@ import type { RoutineTimes } from "../components/TimesPicker";
 import { agentTurn, fileToBase64 } from "../lib/hermes";
 import { withCatalogLabels } from "./setup/GuidedSetupWizard";
 import { PhotoSourceSheet } from "../components/PhotoSourceSheet";
+import { ConfirmDialog } from "../components/ConfirmDialog";
+import { checkDoseSafety } from "../lib/doseSafety";
 import { useLanguage } from "../lib/languageContext";
 import { t } from "../lib/language";
 
@@ -88,11 +90,21 @@ export function AddPrescriptionSheet({ onClose, onAdd, onAdded, initialTab = "ma
   const [selectedTimes, setSelectedTimes] = useState<string[]>([defaultDoseTime(routine)]);
   const [refillDays, setRefillDays] = useState("");
   const [colour, setColour] = useState(MED_COLOURS[0].hex);
+  const [showDoseConfirm, setShowDoseConfirm] = useState(false);
+  // Cleared whenever the dose or its schedule changes, so an "I'm sure" given
+  // for "10 tablets" can't carry over to a different number typed after it.
+  const [doseConfirmed, setDoseConfirmed] = useState(false);
+  useEffect(() => setDoseConfirmed(false), [dose, selectedTimes.length]);
 
   const isValid = name.trim() && dose.trim() && purpose.trim() && selectedTimes.length > 0;
 
+  // An implausible count is caught between "Add" and the save, and asked about
+  // once — never silently corrected, since only the label knows the truth.
+  const doseConcern = checkDoseSafety(dose, selectedTimes.length);
+
   const handleAdd = async () => {
     if (!isValid || submitState === "saving") return;
+    if (doseConcern && !doseConfirmed) { setShowDoseConfirm(true); return; }
     const chosenTimes = selectedTimes;
     setSubmitState("saving");
     setSubmitError(null);
@@ -232,7 +244,7 @@ export function AddPrescriptionSheet({ onClose, onAdd, onAdded, initialTab = "ma
                 <div className="space-y-3">
                   <div className="border border-border bg-card rounded-2xl p-4 flex flex-col gap-3">
                     {scannedPhoto && <img src={scannedPhoto} alt="scan" className="w-20 h-20 rounded-xl object-cover" />}
-                    <p className="text-[15px] text-foreground leading-relaxed whitespace-pre-line">{proposal}</p>
+                    <p className="text-[calc(15px*var(--dw-text,1))] text-foreground leading-relaxed whitespace-pre-line">{proposal}</p>
                   </div>
                   {committed ? (
                     <button onClick={onClose} className="w-full bg-primary text-primary-foreground rounded-2xl py-3.5 text-sm font-semibold flex items-center justify-center gap-2">
@@ -267,7 +279,7 @@ export function AddPrescriptionSheet({ onClose, onAdd, onAdded, initialTab = "ma
                     <div className="w-14 h-14 rounded-full bg-primary/10 flex items-center justify-center">
                       <Camera size={26} className="text-primary" />
                     </div>
-                    <p className="text-[15px] font-semibold text-foreground">{t(language, "prescription.takePhotoOrUpload")}</p>
+                    <p className="text-[calc(15px*var(--dw-text,1))] font-semibold text-foreground">{t(language, "prescription.takePhotoOrUpload")}</p>
                     <p className="text-xs text-muted-foreground leading-relaxed">{t(language, "prescription.snapOrUploadDesc")}</p>
                   </button>
                   <button
@@ -276,7 +288,7 @@ export function AddPrescriptionSheet({ onClose, onAdd, onAdded, initialTab = "ma
                   >
                     <ImageIcon size={15} />{t(language, "prescription.trySamplePhoto")}
                   </button>
-                  <p className="text-center text-[11px] text-muted-foreground">{t(language, "prescription.preferToType")}{" "}
+                  <p className="text-center text-[calc(11px*var(--dw-text,1))] text-muted-foreground">{t(language, "prescription.preferToType")}{" "}
                     <button onClick={() => setTab("manual")} className="text-primary font-semibold underline">{t(language, "prescription.enterManuallyTab")}</button>
                   </p>
                 </>
@@ -298,7 +310,7 @@ export function AddPrescriptionSheet({ onClose, onAdd, onAdded, initialTab = "ma
                   render={m => (
                     <div className="flex items-center justify-between gap-2">
                       <span className="text-sm font-medium text-foreground">{m.name}</span>
-                      <span className="text-[11px] text-muted-foreground">{t(language, m.purposeKey)} · {m.dose}</span>
+                      <span className="text-[calc(11px*var(--dw-text,1))] text-muted-foreground">{t(language, m.purposeKey)} · {m.dose}</span>
                     </div>
                   )}
                 />
@@ -331,7 +343,7 @@ export function AddPrescriptionSheet({ onClose, onAdd, onAdded, initialTab = "ma
               <div>
                 <label className="block text-xs font-semibold text-foreground mb-1.5">{t(language, "prescription.currentSupply")}</label>
                 <input type="number" value={refillDays} onChange={e => setRefillDays(e.target.value)} placeholder={t(language, "prescription.supplyPlaceholder")} min={1} className={inputCls} />
-                <p className="text-[11px] text-muted-foreground mt-1">{t(language, "prescription.alertedWhenLow")}</p>
+                <p className="text-[calc(11px*var(--dw-text,1))] text-muted-foreground mt-1">{t(language, "prescription.alertedWhenLow")}</p>
               </div>
 
               {/* Colour */}
@@ -360,7 +372,7 @@ export function AddPrescriptionSheet({ onClose, onAdd, onAdded, initialTab = "ma
                   </div>
                   <div>
                     <p className="text-sm font-semibold text-foreground">{name} <span className="text-xs font-normal text-muted-foreground">{dose}</span></p>
-                    <p className="text-[11px] text-muted-foreground">{purpose} · {selectedTimes.join(" • ") || "8:00 AM"}</p>
+                    <p className="text-[calc(11px*var(--dw-text,1))] text-muted-foreground">{purpose} · {selectedTimes.join(" • ") || "8:00 AM"}</p>
                   </div>
                 </div>
               )}
@@ -394,6 +406,19 @@ export function AddPrescriptionSheet({ onClose, onAdd, onAdded, initialTab = "ma
           </div>
         )}
       </div>
+      {showDoseConfirm && doseConcern && (
+        <ConfirmDialog
+          title={t(language, "prescription.doseCheckTitle")}
+          body={t(language, doseConcern.kind === "perDose" ? "prescription.doseCheckPerDose" : "prescription.doseCheckPerDay", {
+            dose: dose.trim(),
+            perDay: String(Number(doseConcern.perDay.toFixed(2))),
+            times: String(selectedTimes.length),
+          })}
+          confirmLabel={t(language, "prescription.doseCheckConfirm")}
+          onConfirm={() => { setShowDoseConfirm(false); setDoseConfirmed(true); }}
+          onCancel={() => setShowDoseConfirm(false)}
+        />
+      )}
       {showPhotoSource && (
         <PhotoSourceSheet
           onTakePhoto={() => { setShowPhotoSource(false); cameraRef.current?.click(); }}

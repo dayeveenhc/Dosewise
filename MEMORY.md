@@ -92,9 +92,17 @@ before this polish pass. `main` still holds the pre-revamp state.
 **Ask Mei is one screen with a PERMANENT composer (3rd revision).** `mode:
 "help" | "chat"` decides what fills the space above it; the chat is no longer a
 sheet. Sending swaps the BODY only — the app header never changes, so it never feels
-like a different screen. A Help/Chat segmented switcher (`data-walk=
-"elder-ai-tab-help|chat"`) appears once there is a conversation and moves both
-ways; clear-chat sits beside it. The text box never leaves — so typing is always the way out of a dead end. Camera and mic
+like a different screen. **No tab strip, ONE shared header** (4th revision,
+user's call): sending a message must not spawn tabs. Both modes render the same
+header row — "Ask Mei" title, then a single switch button that flips direction
+("Frequently used" `data-walk="elder-ai-frequently-used"` in chat → the buttons;
+"Back to chat" `data-walk="elder-ai-back-to-chat"` in help → the conversation),
+plus clear-chat in chat mode. The switch only appears once a conversation
+exists. The old **"Hello, {name}! / What can I help you with?" greeting block is
+gone** — the shared header replaced it (`ai.whatCanIHelp` now unused). Anything that
+flips to chat mode must also `setCategory(null)`, or the category's title + back
+arrow stay stranded in the app header (the photo flows hit exactly this).
+The text box never leaves — so typing is always the way out of a dead end. Camera and mic
 live INSIDE the field (three outside buttons left the box barely wider than the
 buttons); Send stays outside and disabled until there's something to send —
 `photo-staging.spec.ts` asserts exactly that, so don't make Send conditional.
@@ -104,6 +112,109 @@ being above. Entrance motion is `.dw-msg-in` / `.dw-view-in` in theme.css — CS
 animations fire once per mount and React keys bubbles by id, so only the new
 message animates. Both are disabled under `prefers-reduced-motion`.
 
+**What actually made the bubble arrival feel abrupt was the SCROLL, not the
+keyframes** (found while smoothing the entrance): `scrollTop = scrollHeight` is a
+jump-cut underneath a bubble that is itself animating, and the two fought.
+`scrollToBottom()` now uses `scrollTo({ behavior: "smooth" })`, with an
+`instant` argument for arriving at an already-long thread (opening the chat,
+sending from the help view) — gliding through the whole history is a long ride
+to somewhere unread. The keyframes were also retuned: 520ms, opacity done by
+55% (text still fading while it settles reads as blurry), `translate3d` +
+`will-change` to stay on the compositor, and `origin-bottom-left/right` per side
+in the JSX so the bubble grows out of its own corner. Verified in-browser
+(`scratchpad/bubbleshot.spec.ts` asserts the computed animation AND that a
+re-targeted smooth scroll still lands within 2px of the bottom).
+
+**Home's missed count hangs off the NOW line** (`elder-missed-summary`): an
+up-arrow pill directly above the red divider, since everything above that line
+has already come and gone. Tapping it centres the EARLIEST missed dose. Missed
+cards carry `.dw-pulse` — 2.4s, opacity 1→0.72, off under
+`prefers-reduced-motion`; anything faster or stronger on an already-anxious
+screen reads as an alarm.
+
+**A dose is actionable only within ±60 min of the clock** (`DUE_WINDOW_MIN` in
+ElderlyHomeScreen): the SOLID PINE card and the "I took it" button both key off
+that window ALONE. First attempt also required `m.id === nextMedId`, and
+`nextMedId` is `dayMeds.find(status === "upcoming")` — the medication list's own
+order, only incidentally chronological — so a dose genuinely due in ten minutes
+stayed plain white while some other row held the "next" title. If a card's
+treatment ever looks wrong, check it isn't being gated on list position again.
+**"I took it" is NOT limited to that window** — a missed dose stays loggable all
+day, since being late is exactly when someone needs to record it. Only the pine
+card is time-boxed. The window, not the queue — a 10pm tablet was
+being highlighted at breakfast, and an all-day "I took it" invites logging a
+dose hours early. **This couples to the `log_dose` walkthrough**, which
+spotlights `[data-walk="elder-take-dose"]`: outside a dose window that element
+doesn't exist, so the step has nothing to point at. Known, unresolved — flagged
+to the user.
+
+**The now line always renders on today**, and sits at its real minute WITHIN
+the hour row — cards for doses already past go above it, the rest below, and a
+dose at exactly this minute goes BELOW (the line draws just above its card).
+Outside the 6am–11pm window the current hour is clamped to the first/last row,
+so the line pins to the top or bottom instead of vanishing. Matching rule in
+`statusForDay`: `minutes >= nowMinutes` is still "upcoming", not "missed" — with
+`>` a dose at exactly now rendered as missed while sitting under a line saying
+it hadn't happened yet.
+
+**The "Now" pill was broken in two ways**, both fixed: it scrolled to the top of
+the now HOUR (`nowRowRef`) rather than to the line, which on a busy hour left
+"now" off screen; and `showJump` compared scroll offsets with a 120px slop, so
+the button appeared while the line was already visible — you tapped it and
+nothing moved. Both now measure the LINE with `getBoundingClientRect` against
+the scroller (`offsetTop` is relative to the nearest positioned ancestor, which
+is NOT the scroll container), and the button only appears when the line is
+genuinely off screen.
+
+**One sheet shell for every slide-up: `components/BottomSheet.tsx`** — dim,
+floating inset card, tap-outside to close. Six sheets each had their own version
+(flush vs floating, blurred vs not, z-50 vs z-140 vs z-150), which read as
+several different apps. Content stays the caller's; the shell owns nothing else.
+A sheet with its own scrolling body + pinned footer (Travel Mode) passes
+`className="!p-0 !overflow-hidden flex flex-col"`. `ConfirmDialog` and
+`MeiSuggestButton` stay CENTRED dialogs on purpose — they interrupt rather than
+offer.
+
+**The taken card IS the undo control** (whole card is the button, no Undo strip)
+and shows only when it was taken — its scheduled time was noise once the dose
+was done. **The missed banner's × became "What to do?"**: per-medicine guidance
+from that medicine's OWN next scheduled dose (`missedAdvice`) — take it now, or
+skip if the next is within `NEXT_DOSE_SOON_MIN` (120). Deliberately the standard
+leaflet rule of thumb plus "never double up" and "ask your doctor or
+pharmacist", never a drug-specific instruction the app can't stand behind.
+
+**Time picker steps ONE minute** (`MINUTE_STEP = 1`): 5-minute jumps made times
+like 7:23 unreachable. Its `stepMin` MUST use the functional `setDraft(d => …)`
+form — a drag fires it several times per tick, and reading `draft` from the
+closure made every call after the first a no-op, so any drag was worth exactly
+one minute.
+
+**There is no in-app clock override.** A prototype clock (a panel beside the
+phone bezel that simulated any time of day) was built and then REMOVED at the
+user's request — don't reintroduce one without asking. To exercise time-of-day
+behaviour, freeze the browser clock instead: `page.clock.setFixedTime(...)` plus
+a `page.reload()`, since the app reads `new Date()` on mount and on a 30s tick
+(`scratchpad/homeshot.spec.ts::setTime` does exactly this). A suite run past
+midnight otherwise puts every relative offset outside the 6am–11pm window.
+
+**Dose sanity check on Add prescription** (`lib/doseSafety.ts`, unit-tested):
+between Add and the save, >4 countable units per dose or >8 a day raises a
+confirm ("that is a lot at once"), never a block — only the label knows the
+truth. It deliberately ignores anything without a COUNTABLE unit: "500 mg" and
+"10 ml" are strengths, and warning on those trains people to tap through the
+warning that matters. The confirmation resets whenever the dose or its schedule
+changes, so an "I'm sure" can't carry over to a different number.
+
+**24-hour clock is an ACCESSIBILITY setting**, not a locale one
+(`accessibility.tsx::timeFormat`, `elder-24h-toggle`) — it's there for people who
+can't read an AM/PM at a glance. `lib/medications.ts::formatClock(value, format)`
+is the single renderer; stored times are unchanged (`Medication.times` stay 12h
+strings). In 24h the picker drops the AM/PM column entirely and the hour runs
+0–23, so `stepHour` has to carry the half-day itself instead of flipping a `pm`
+flag. The time steppers also gained a **wheel**: drag or scroll the number
+(up = later), on top of the ∧/∨ buttons, which still reach every value on their
+own — that's the part shaky hands rely on.
+
 **Ask Mei is category tiles, not a flat list (2nd revision).** Seventeen rows on
 one screen read as a wall; the same items now sit behind four tiles (My
 medicines / My details / How the app looks / My care team) with a short list
@@ -112,6 +223,64 @@ tile directly** — `travel_mode_auto` and `travel_mode_setup` had to be
 repointed at `[data-walk="elder-cat-medicines"]` first, and
 `add_doctor_question_auto` gained a step to click the new doctor tab. If you
 move an item between categories, check `steps/` for a selector pointing at it.
+
+**Settings is ONE page — no "More settings", no sub-screens** (user's call).
+Search sits at the very top, and a hit now SCROLLS to its section
+(`[data-settings="<anchor>"]` + `scroll-mt-3`) instead of opening a sub-page;
+the query has to be cleared before the scroll, since the sections aren't
+mounted while results are up. **Two** screens survive, on the same rule —
+neither is a setting about this person's care: **Your profile** (long form, own
+Save) and **About Dosewise** (`data-walk="elder-settings-about"`), which is
+where the app-level actions live now — about text, Switch to Caregiver Mode,
+Sign out — so the page of personal settings doesn't end in them. **Language and
+colour vision are native `<select>`s** — the OS picker beats a block of coloured
+buttons (six languages; four colour-vision modes, one of them two lines) — each
+inside the `data-walk` wrapper (`elder-language-select`, `elder-colourvision`)
+its walkthrough points at. **Colour vision was then reverted to buttons behind a
+SWITCH** (`elder-colourvision-toggle`): off is the switch, so the three modes
+only render when it's on, and a `lastColourMode` ref makes off→on return to the
+mode that was chosen rather than the first. `ChoiceRow` is now equal columns,
+one row, `truncate` (never wrap) — shared with contrast, which is why contrast's
+buttons became equal-width too. **`settings.cvProtan` was shortened to
+"Red–green 2"** in all 6 languages: "Red–green (other type)" cannot fit a
+one-line chip at any readable size. Contrast stays a chip row — three short
+options, and it's what the `text_size` walkthrough spotlights.
+
+**The profile card is the link (arrow, no Edit button) and the profile screen
+opens READ-ONLY**, as a RECORD: three `InfoSection`s (Personal information /
+Medical information / Meals & sleep) of label-left, value-right `InfoRow`s —
+the structure the user supplied as a reference. Editing keeps the SAME sections
+and rows in the same order (`EditRow`) and only swaps each value for a grey
+filled field, so the page doesn't reshuffle when it unlocks. Edit lives in the
+app header's top-right corner via `headerOverride.action`
+(`data-walk="elder-profile-edit"`) — which means the header effect must have
+`profileEditing` in its deps or the button never disappears. A first attempt
+used one `<fieldset disabled>` over the form instead; it works, but the browser
+greys the values and it still reads as a form. **This broke both
+autonomous profile walkthroughs** — `edit_profile_auto` and `add_condition_auto`
+filled fields that are now disabled, which fails silently (a `fill` act on a
+disabled input types nothing, so Verify catches it only at the end). Both gained
+an `autoProfile.edit`/`autoCond.edit` step that clicks Edit first. **Saving must
+NOT drop back to the read view** — the walkthrough's reveal and the "Saved!"
+state both point at the field that just changed, and the read view deletes that
+field out from under them (`reveal-caption.spec.ts` failed on exactly this).
+**Playwright gotchas from this pass** (both cost real time): `:has-text()` is
+CASE-INSENSITIVE, so `button:has-text("Change")` also matches "Save **change**s"
+— it clicked Save instead of opening a time row; and seeding `medications.schedule.times`
+must use **24h** `"08:00"`, not `"8:00 AM"` — `to12h` re-parses the seeded string
+and yields "8:NaN AM". For anything time-of-day dependent, freeze the browser
+clock with `page.clock.setFixedTime` rather than seeding relative offsets; a suite
+run past midnight puts every "3 hours ago" on the previous day and outside the
+timeline's 6am–11pm window. **Flake note:**
+at `--workers=4` one autonomous walkthrough spec (usually `add-condition-auto`)
+fails on timing; `--repeat-each=3` in isolation and the full suite at
+`--workers=2` are green. Use ≤2 workers when judging a real failure. **Flattening broke four narrated walkthroughs**:
+`language_voice`/`reminder_settings`/`emergency_contact`/`text_size` each had a
+"tap the section to open it" step waiting on a click that can no longer happen
+(a `waitFor: click` on a missing element = stuck walkthrough, not a skipped
+step). Those steps are deleted and `onEnter: ON_SETTINGS` moved to the step
+after; the spotlight scrolls to its own target. `scratchpad/walkshot.spec.ts`
+drives all four and asserts the control ends up in view.
 
 **Sub-views REPLACE the app header** rather than stacking a second one under it:
 `ElderlyApp` owns a `headerOverride` ({title, onBack, action?}) that

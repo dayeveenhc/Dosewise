@@ -24,7 +24,7 @@ export function DashboardScreen({ patient, onNavigate, onSendReminder }: { patie
       {/* Adherence overview */}
       <Card className="p-3.5" data-tour="cg-dashboard">
         <div className="flex items-start justify-between gap-3">
-          <p className="text-[10px] text-muted-foreground uppercase tracking-widest font-medium mb-0.5">{t(language, "home.today")} {t(language, "nav.medications")}</p>
+          <p className="text-[calc(10px*var(--dw-text,1))] text-muted-foreground uppercase tracking-widest font-medium mb-0.5">{t(language, "home.today")} {t(language, "nav.medications")}</p>
           <button
             onClick={() => onNavigate("timeline")}
             className="shrink-0 flex items-center gap-1 text-xs font-semibold text-primary bg-secondary rounded-full px-3 py-1.5 active:opacity-80 transition-opacity whitespace-nowrap -mt-1"
@@ -44,20 +44,20 @@ export function DashboardScreen({ patient, onNavigate, onSendReminder }: { patie
         {colourBlind && (
           <div className="flex flex-col gap-0.5 mt-1">
             {[...new Set(patient.medications.map(m => m.name))].filter(n => MED_SHAPES[n]).map(n => (
-              <p key={n} className="text-[10px] text-muted-foreground/70">{n}: {MED_SHAPES[n].shape}</p>
+              <p key={n} className="text-[calc(10px*var(--dw-text,1))] text-muted-foreground/70">{n}: {MED_SHAPES[n].shape}</p>
             ))}
           </div>
         )}
         <div className="flex gap-2 mt-2">
-          <span className="inline-flex items-center gap-1 text-[10px] font-medium text-taken-fg bg-taken-bg border border-taken-border rounded-full px-2 py-0.5 whitespace-nowrap">
+          <span className="inline-flex items-center gap-1 text-[calc(10px*var(--dw-text,1))] font-medium text-taken-fg bg-taken-bg border border-taken-border rounded-full px-2 py-0.5 whitespace-nowrap">
             <CheckCircle2 size={10} /> {taken} {t(language, "common.taken")}
           </span>
           {missed > 0 && (
-            <span className="inline-flex items-center gap-1 text-[10px] font-medium text-missed-fg bg-missed-bg border border-missed-border rounded-full px-2 py-0.5 whitespace-nowrap">
+            <span className="inline-flex items-center gap-1 text-[calc(10px*var(--dw-text,1))] font-medium text-missed-fg bg-missed-bg border border-missed-border rounded-full px-2 py-0.5 whitespace-nowrap">
               <AlertTriangle size={10} /> {missed} {t(language, "common.missed")}
             </span>
           )}
-          <span className="inline-flex items-center gap-1 text-[10px] font-medium text-upcoming-fg bg-upcoming-bg border border-upcoming-border rounded-full px-2 py-0.5 whitespace-nowrap">
+          <span className="inline-flex items-center gap-1 text-[calc(10px*var(--dw-text,1))] font-medium text-upcoming-fg bg-upcoming-bg border border-upcoming-border rounded-full px-2 py-0.5 whitespace-nowrap">
             <Circle size={10} /> {upcoming} {t(language, "common.upcoming")}
           </span>
         </div>
@@ -93,7 +93,7 @@ export function DashboardScreen({ patient, onNavigate, onSendReminder }: { patie
                   <p className="text-sm font-semibold text-warn-fg">{m.name}</p>
                   <p className="text-xs text-warn-fg">{t(language, "dashboard.daysRemainingOrderSoon", { days: m.refillDaysLeft })}</p>
                 </div>
-                <span className="text-[10px] font-bold text-warn-fg bg-warn-bg border border-warn-border rounded-full px-2 py-0.5">{m.refillDaysLeft}d</span>
+                <span className="text-[calc(10px*var(--dw-text,1))] font-bold text-warn-fg bg-warn-bg border border-warn-border rounded-full px-2 py-0.5">{m.refillDaysLeft}d</span>
               </div>
             ))}
           </div>
@@ -102,7 +102,7 @@ export function DashboardScreen({ patient, onNavigate, onSendReminder }: { patie
 
       {/* Quick actions */}
       <Card className="p-3.5">
-        <p className="text-[10px] text-muted-foreground uppercase tracking-widest font-medium mb-2">{t(language, "dashboard.quickActions")}</p>
+        <p className="text-[calc(10px*var(--dw-text,1))] text-muted-foreground uppercase tracking-widest font-medium mb-2">{t(language, "dashboard.quickActions")}</p>
         <div className="flex gap-2">
           <QuickAction
             icon={<Clock size={20} className="text-taken-fg" />}

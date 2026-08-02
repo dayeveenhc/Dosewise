@@ -24,6 +24,15 @@ export function addConditionAutoSteps(p: WalkthroughParams = {}): WalkthroughSte
       act: { kind: "click", selector: '[data-walk="elder-profile-toggle"]' },
     },
     {
+      // The profile opens read-only now — unlock it before typing, or the
+      // conditions field is disabled and the fill silently does nothing.
+      id: "autoCond.edit",
+      screen: ON_SETTINGS,
+      selector: '[data-walk="elder-profile-edit"]',
+      instructionKey: "walk.autoCond.edit",
+      act: { kind: "click", selector: '[data-walk="elder-profile-edit"]' },
+    },
+    {
       id: "autoCond.type",
       screen: ON_SETTINGS,
       selector: CONDITIONS_INPUT,
