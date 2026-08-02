@@ -120,7 +120,21 @@ async function sendAndAwaitReply(page: Page, message: string) {
   const before = await agentBubbles.count();
   await page.locator("textarea").first().fill(message);
   await page.locator(SEND_BTN).click();
-  await expect(agentBubbles, `reply to "${message}"`).toHaveCount(before + 1, { timeout: 25_000 });
+  // Either a reply bubble lands, OR the turn queued the walkthrough — which
+  // flips this screen to its help view (2026-08-02 rebuild) and unmounts every
+  // bubble, so waiting for one more would time out on the SUCCESS path.
+  await expect
+    .poll(async () => {
+      // The overlay mounting IS the success signal for the turn that queues a
+      // walkthrough: the rebuilt caregiver screen flips to its help view then,
+      // unmounting every bubble, so waiting for one more would time out on the
+      // path we actually want.
+      if (await page.getByRole("button", { name: "Exit walkthrough" }).count() > 0) return "walkthrough";
+      return (await agentBubbles.count()) > before ? "replied" : "waiting";
+    // 25s was too tight for a real turn over the tunnel; the rest of this
+    // suite already allows 120s for a live reply.
+    }, { timeout: 90_000, message: `reply to "${message}"` })
+    .not.toBe("waiting");
 }
 
 const HINT = "I want to add another patient I'm caring for.";
@@ -190,9 +204,18 @@ test("s24 caregiver-link-new: caregiver Ask-Mei 'add another patient' -> caregiv
   // browser this time. After each reply, hop to Dashboard (Finding (b)'s
   // real-user workaround) and check for the Exit button as the "did it
   // start" signal — harmless no-op if it hasn't started yet.
+  // Did THIS tour start — not merely some tour. The caregiver Ask Mei rebuild
+  // (2026-08-02) put several walkthroughs one tap from this screen, so a turn
+  // can legitimately queue a different one (observed: caregiver_view_toggle_tour
+  // off "yes, show me"). Accepting any overlay made the retry loop stop early
+  // and then assert link_caregiver's step-1 copy against another tour's callout.
+  // A wrong tour is exited so the loop can genuinely retry.
   const onDashboardWithExit = async () => {
     await page.locator('[data-tour="nav-dashboard"]').click();
-    return (await page.getByRole("button", { name: "Exit walkthrough" }).count()) > 0;
+    if ((await page.getByRole("button", { name: "Exit walkthrough" }).count()) === 0) return false;
+    if ((await page.getByText(STEP1_TEXT, { exact: false }).count()) > 0) return true;
+    await page.getByRole("button", { name: "Exit walkthrough" }).click();
+    return false;
   };
   const backToAi = async () => {
     await page.locator('[data-tour="nav-ai"]').click();

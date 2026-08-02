@@ -209,14 +209,18 @@ test("s28 patient-schedule-review: caregiver asks about 'my patient's schedule' 
   // authoritative routing + no-write assertions above already came from the
   // direct :8901 fetch. Mirrors s18's "light UI proof" pattern.
   await page.locator('[data-tour="nav-ai"]').click();
-  const composer = page.getByPlaceholder("Ask Mei about this patient...");
+  // The caregiver Ask Mei rebuild (2026-08-02) adopted the elder screen's
+  // shared composer, so the old per-screen placeholder is gone.
+  const composer = page.getByPlaceholder("Ask me anything");
   await expect(composer, "caregiver chat composer present").toBeVisible({ timeout: 10_000 });
   await composer.fill(SCHEDULE_PHRASE);
   await composer.press("Enter"); // AskMeiScreen's onKeyDown sends on Enter (no data-walk send-button testid exists for the caregiver composer, unlike ElderlyAIScreen's)
   await expect(page.getByText(SCHEDULE_PHRASE), "caregiver message echoed in chat").toBeVisible();
-  // greeting + user echo + Mei's reply = 3 bubbles (same p.whitespace-pre-line
-  // class AskMeiScreen renders every message with).
-  await expect(page.locator("p.whitespace-pre-line"), "Mei replied in the caregiver chat").toHaveCount(3, { timeout: 120_000 });
+  // user echo + Mei's reply = 2 bubbles (same p.whitespace-pre-line class
+  // AskMeiScreen renders every message with). The caregiver rebuild
+  // (2026-08-02) dropped the canned greeting — the thread now opens empty, so
+  // this is 2 rather than the old greeting-inclusive 3.
+  await expect(page.locator("p.whitespace-pre-line"), "Mei replied in the caregiver chat").toHaveCount(2, { timeout: 120_000 });
 
   // ── 5 SCREENSHOT ──────────────────────────────────────────────────────────
   await page.screenshot({ path: `${SHOTS}/chat-schedule-answer.png`, fullPage: true });
