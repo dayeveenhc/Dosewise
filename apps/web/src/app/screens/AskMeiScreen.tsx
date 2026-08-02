@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import type { ChangeEvent } from "react";
-import { Send, TrendingUp, Plane, Check, Sparkles, ChevronUp, Camera, FileText, Pill, Globe, Mic, Volume2, X, Trash2, AlertTriangle } from "lucide-react";
+import { Send, TrendingUp, Plane, Check, Sparkles, ChevronUp, Camera, FileText, Pill, Globe, Mic, Volume2, X, Trash2, AlertTriangle, Search, ChevronRight, MessageCircle } from "lucide-react";
 import type { Patient, Screen } from "../types";
 import { agentTurnStream, fileToBase64 } from "../lib/hermes";
 import type { AgentTurnEvent, AgentAction } from "../lib/hermes";
@@ -44,12 +44,18 @@ function renderWithBold(text: string) {
   );
 }
 
-// A single feature tile in the "Quick help" launcher.
-function FeatureBtn({ icon: Icon, label, onClick, className = "", "data-walk": dataWalk }: { icon: any; label: string; onClick: () => void; className?: string; "data-walk"?: string }) {
+function HelpRow({ icon: Icon, label, onClick, "data-walk": dataWalk }: { icon: any; label: string; onClick: () => void; "data-walk"?: string }) {
   return (
-    <button onClick={onClick} data-walk={dataWalk} className={`h-[88px] flex flex-col items-center justify-center gap-1.5 bg-card border border-border rounded-2xl px-2 text-center active:bg-muted transition-colors ${className}`}>
-      <div className="w-10 h-10 rounded-xl bg-primary/10 flex items-center justify-center shrink-0"><Icon size={18} className="text-primary" /></div>
-      <span className="text-[calc(12px*var(--dw-text,1))] font-bold text-foreground leading-tight">{label}</span>
+    <button
+      onClick={onClick}
+      data-walk={dataWalk}
+      className="w-full flex items-center gap-3 px-4 py-3.5 text-left active:bg-secondary/50 transition-colors"
+    >
+      <div className="w-10 h-10 rounded-xl bg-secondary flex items-center justify-center shrink-0">
+        <Icon size={20} className="text-primary" />
+      </div>
+      <span className="flex-1 min-w-0 text-[calc(15px*var(--dw-text,1))] font-semibold text-foreground leading-snug">{label}</span>
+      <ChevronRight size={20} className="text-muted-foreground shrink-0" />
     </button>
   );
 }
@@ -71,10 +77,12 @@ export function AskMeiScreen({ patient, elderId, onUpdatePatient, onNavigate, on
   const [sending, setSending] = useState(false);
   const [showSummary, setShowSummary] = useState(false);
   const [showTravel, setShowTravel] = useState(false);
-  const [quickOpen, setQuickOpen] = useState(false);
   const [showClearConfirm, setShowClearConfirm] = useState(false);
   const [showMedPicker, setShowMedPicker] = useState(false);
   const [showLangSheet, setShowLangSheet] = useState(false);
+  const [mode, setMode] = useState<"help" | "chat">("help");
+  const [category, setCategory] = useState<string | null>(null);
+  const [query, setQuery] = useState("");
   const [isListening, setIsListening] = useState(false);
   const [isSpeaking, setIsSpeaking] = useState(false);
   const scrollRef = useRef<HTMLDivElement>(null);
@@ -99,8 +107,11 @@ export function AskMeiScreen({ patient, elderId, onUpdatePatient, onNavigate, on
     });
   }, [elderId]);
 
-  const scrollToBottom = () => setTimeout(() => {
-    if (scrollRef.current) scrollRef.current.scrollTop = scrollRef.current.scrollHeight;
+  const scrollToBottom = (instant = false) => setTimeout(() => {
+    const el = scrollRef.current;
+    if (!el) return;
+    const reduced = typeof window !== "undefined" && window.matchMedia?.("(prefers-reduced-motion: reduce)")?.matches;
+    el.scrollTo({ top: el.scrollHeight, behavior: instant || reduced ? "auto" : "smooth" });
   }, 60);
 
   // Grow the input with its content instead of staying pinned to one row —
@@ -151,9 +162,10 @@ export function AskMeiScreen({ patient, elderId, onUpdatePatient, onNavigate, on
   const send = async (text: string, imageBase64?: string, pdfBase64?: string, displayImage?: string) => {
     const trimmed = text.trim();
     if (!trimmed || sending) return;
+    setMode("chat");
+    setCategory(null);
     setMessages(prev => [...prev, { id: Date.now(), role: "user", text: trimmed, time: nowLabel(), image: displayImage }]);
-    setQuickOpen(false);
-    scrollToBottom();
+    scrollToBottom(mode === "help");
     setSending(true);
 
     // Live, as-it-happens progress: the moment a routable write's tool call
@@ -240,6 +252,8 @@ export function AskMeiScreen({ patient, elderId, onUpdatePatient, onNavigate, on
   };
 
   const clearChat = () => {
+    setMode("help");
+    setCategory(null);
     setMessages([{ id: Date.now(), role: "agent", text: t(language, "ai.greeting", { name: patient.name }), time: nowLabel() }]);
     setShowClearConfirm(false);
   };
@@ -250,7 +264,8 @@ export function AskMeiScreen({ patient, elderId, onUpdatePatient, onNavigate, on
     const file = e.target.files?.[0];
     e.target.value = "";
     if (!file) return;
-    setQuickOpen(false);
+    setMode("chat");
+    setCategory(null);
     setPendingImage({ base64: await fileToBase64(file), url: URL.createObjectURL(file) });
     inputRef.current?.focus();
   };
@@ -262,36 +277,52 @@ export function AskMeiScreen({ patient, elderId, onUpdatePatient, onNavigate, on
     const file = e.target.files?.[0];
     e.target.value = "";
     if (!file) return;
-    setQuickOpen(false);
+    setMode("chat");
+    setCategory(null);
     const b64 = await fileToBase64(file);
     const msg = t(language, "ai.reportMsg");
     if (file.type === "application/pdf") send(msg, undefined, b64);
     else send(msg, b64, undefined, URL.createObjectURL(file));
   };
 
+  const quickActions = [
+    { icon: TrendingUp, label: t(language, "common.weeklySummary"), onClick: () => setShowSummary(true), dataWalk: "cg-weeklysummary-tile" },
+    { icon: Plane, label: t(language, "common.travelMode"), onClick: () => setShowTravel(true), dataWalk: "cg-travel-tile" },
+    { icon: Camera, label: t(language, "common.addPrescription"), onClick: () => setPickerFor("rx"), dataWalk: "cg-addrx-tile" },
+    { icon: FileText, label: t(language, "ai.updateProfile"), onClick: () => setPickerFor("report"), dataWalk: "cg-report-tile" },
+    { icon: Pill, label: t(language, "ai.askAboutMed"), onClick: () => setShowMedPicker(v => !v), dataWalk: "cg-med-tile" },
+    { icon: Globe, label: t(language, "ai.languageVoice"), onClick: () => setShowLangSheet(true), dataWalk: "cg-lang-tile" },
+  ] as const;
+
+  const searchResults = query.trim()
+    ? quickActions.filter(item => item.label.toLowerCase().includes(query.trim().toLowerCase()))
+    : [];
+
   return (
     <div className="flex flex-col flex-1 min-h-0 overflow-hidden relative">
-      {/* Quick help opens as a popup rather than expanding inline, so the
-          conversation never gets pushed off-screen (matches the elder chat). */}
-      <div className="px-4 pt-2.5 pb-1 shrink-0 flex items-center gap-2" data-tour="cg-askmei">
-        <button
-          onClick={() => setQuickOpen(true)}
-          className="flex items-center gap-2 rounded-xl bg-primary text-primary-foreground px-3.5 py-2.5 shadow-sm active:scale-[0.97] transition-transform"
-        >
-          <Sparkles size={15} className="shrink-0" />
-          <span className="text-sm font-bold">{t(language, "ai.quickHelp")}</span>
-          <ChevronUp size={15} className="shrink-0 opacity-80" />
-        </button>
-        <button
-          onClick={() => setShowClearConfirm(true)}
-          className="ml-auto flex items-center gap-1.5 rounded-xl border border-border bg-card text-muted-foreground px-3 py-2.5 shadow-sm active:bg-muted active:scale-[0.97] transition-all"
-        >
-          <Trash2 size={14} className="shrink-0" />
-          <span className="text-sm font-semibold">{t(language, "ai.clearChat")}</span>
-        </button>
-      </div>
+      {!category && (
+        <div className="px-4 pt-3 shrink-0 flex items-center gap-2" data-tour="cg-askmei">
+          <h2 className="flex-1 min-w-0 truncate dw-display text-[calc(20px*var(--dw-text,1))] font-semibold text-foreground">{t(language, "common.askMei")}</h2>
+          {messages.length > 0 && (
+            <button
+              onClick={() => { setMode(mode === "chat" ? "help" : "chat"); scrollToBottom(true); }}
+              data-walk={mode === "chat" ? "elder-ai-frequently-used" : "elder-ai-back-to-chat"}
+              className="shrink-0 flex items-center gap-1.5 rounded-full dw-surface px-3.5 py-2 active:bg-muted transition-colors"
+            >
+              {mode === "chat"
+                ? <Sparkles size={17} className="text-primary shrink-0" />
+                : <MessageCircle size={17} className="text-primary shrink-0" />}
+              <span className="text-[calc(14px*var(--dw-text,1))] font-bold text-foreground whitespace-nowrap">{t(language, mode === "chat" ? "ai.frequentlyUsed" : "ai.backToChat")}</span>
+            </button>
+          )}
+          {mode === "chat" && (
+            <button onClick={() => setShowClearConfirm(true)} aria-label={t(language, "ai.clearChat")} className="w-11 h-11 rounded-full dw-surface flex items-center justify-center shrink-0 active:bg-muted transition-colors">
+              <Trash2 size={18} className="text-muted-foreground" />
+            </button>
+          )}
+        </div>
+      )}
 
-      {/* Speaking indicator */}
       {isSpeaking && (
         <div className="px-4 pb-1 shrink-0">
           <div className="flex items-center gap-1.5 text-primary">
@@ -301,65 +332,102 @@ export function AskMeiScreen({ patient, elderId, onUpdatePatient, onNavigate, on
         </div>
       )}
 
-      <div ref={scrollRef} className="flex-1 overflow-y-auto scrollbar-none px-4 py-3 space-y-3 border-t border-border">
-        {messages.map(msg => msg.isRateLimited ? (
-          <div key={msg.id} className="flex justify-center">
-            <div className="flex items-center gap-1.5 bg-warn-bg border border-warn-border text-warn-fg rounded-full px-3.5 py-1.5">
-              <AlertTriangle size={13} className="text-warn shrink-0" />
-              <span className="text-[calc(13px*var(--dw-text,1))] font-semibold">{msg.text}</span>
-            </div>
-          </div>
-        ) : msg.isConfirmation ? (
-          <div key={msg.id} className="flex justify-center">
-            <div className="flex items-center gap-1.5 bg-taken-bg border border-taken-border text-taken-fg rounded-full px-3.5 py-1.5">
-              <Check size={13} className="text-taken shrink-0" />
-              <span className="text-[calc(13px*var(--dw-text,1))] font-semibold">{msg.text.replace(/^✓\s*/, "")}</span>
-            </div>
-          </div>
-        ) : (
-          <div key={msg.id} className={`flex ${msg.role === "user" ? "justify-end" : "justify-start"} gap-2`}>
-            {msg.role === "agent" && (
-              <div className="w-8 h-8 rounded-full bg-primary flex items-center justify-center shrink-0 mt-1">
-                <span className="text-white text-xs font-bold">M</span>
+      {mode === "chat" ? (
+        <div ref={scrollRef} className="flex-1 overflow-y-auto scrollbar-none px-4 py-3 space-y-3 dw-view-in">
+          {messages.map(msg => msg.isRateLimited ? (
+            <div key={msg.id} className="flex justify-center dw-msg-in">
+              <div className="flex items-center gap-1.5 bg-warn-bg border border-warn-border text-warn-fg rounded-full px-3.5 py-1.5">
+                <AlertTriangle size={15} className="text-warn shrink-0" />
+                <span className="text-[calc(14px*var(--dw-text,1))] font-bold">{msg.text}</span>
               </div>
-            )}
-            <div className={`max-w-[82%] flex flex-col gap-1 ${msg.role === "user" ? "items-end" : "items-start"}`}>
-              {msg.image && (
-                <img src={msg.image} alt={t(language, "ai.attachment")} className="max-w-[70%] rounded-2xl border border-border object-cover" />
+            </div>
+          ) : msg.isConfirmation ? (
+            <div key={msg.id} className="flex justify-center dw-msg-in">
+              <div className="flex items-center gap-1.5 bg-taken-bg border border-taken-border text-taken-fg rounded-full px-3.5 py-1.5">
+                <Check size={15} className="text-taken shrink-0" />
+                <span className="text-[calc(14px*var(--dw-text,1))] font-bold">{msg.text.replace(/^✓\s*/, "")}</span>
+              </div>
+            </div>
+          ) : (
+            <div key={msg.id} className={`dw-msg-in flex gap-2 ${msg.role === "user" ? "justify-end origin-bottom-right" : "justify-start origin-bottom-left"}`}>
+              {msg.role === "agent" && (
+                <div className="w-9 h-9 rounded-full bg-primary flex items-center justify-center shrink-0 mt-1">
+                  <span className="text-primary-foreground text-[calc(14px*var(--dw-text,1))] font-bold">M</span>
+                </div>
               )}
-              <div className={`rounded-2xl px-4 py-3 ${msg.role === "user" ? "bg-primary text-primary-foreground rounded-tr-sm" : "bg-card border border-border rounded-tl-sm"}`}>
-                <p className={`text-[calc(15px*var(--dw-text,1))] leading-relaxed whitespace-pre-line ${msg.role === "user" ? "text-primary-foreground" : "text-foreground"}`}>{renderWithBold(msg.text)}</p>
+              <div className={`max-w-[82%] flex flex-col gap-1 ${msg.role === "user" ? "items-end" : "items-start"}`}>
+                {msg.image && (
+                  <img src={msg.image} alt={t(language, "ai.attachment")} className="max-w-[70%] rounded-2xl border border-border object-cover" />
+                )}
+                <div className={`rounded-2xl px-4 py-3 ${msg.role === "user" ? "bg-primary text-primary-foreground rounded-tr-sm" : "dw-surface rounded-tl-sm"}`}>
+                  <p className={`text-[calc(15px*var(--dw-text,1))] leading-relaxed whitespace-pre-line ${msg.role === "user" ? "text-primary-foreground" : "text-foreground"}`}>{renderWithBold(msg.text)}</p>
+                </div>
+                <p className="text-[calc(12px*var(--dw-text,1))] text-muted-foreground px-1">{msg.time}</p>
               </div>
-              <p className="text-[calc(10px*var(--dw-text,1))] text-muted-foreground px-1">{msg.time}</p>
             </div>
-          </div>
-        ))}
-        {isListening && (
-          <div className="flex justify-center py-2">
-            <div className="flex items-center gap-2 bg-red-50 border border-red-200 rounded-full px-4 py-2">
-              <div className="w-2.5 h-2.5 bg-red-500 rounded-full animate-pulse" />
-              <span className="text-sm text-red-700 font-semibold">{t(language, "ai.listening")}</span>
-            </div>
-          </div>
-        )}
-      </div>
-
-      <div className="px-4 pb-2 shrink-0">
-        <div
-          className="flex gap-2 overflow-x-auto scrollbar-none pb-1"
-          onWheel={e => { if (Math.abs(e.deltaY) > Math.abs(e.deltaX)) e.currentTarget.scrollLeft += e.deltaY; }}
-        >
-          {[t(language, "ai.suggestAdherence"), t(language, "ai.suggestMissed"), t(language, "ai.suggestRefills")].map(s => (
-            <button
-              key={s}
-              onClick={() => setInput(s)}
-              className="shrink-0 bg-muted text-muted-foreground rounded-full px-3 py-1.5 text-xs font-semibold whitespace-nowrap active:bg-primary/10 active:text-primary transition-colors"
-            >
-              {s}
-            </button>
           ))}
+          {isListening && (
+            <div className="flex justify-center py-2">
+              <div className="flex items-center gap-2 bg-missed-bg border border-missed-border rounded-full px-4 py-2">
+                <div className="w-2.5 h-2.5 bg-destructive rounded-full animate-pulse" />
+                <span className="text-[calc(14px*var(--dw-text,1))] text-missed-fg font-bold">{t(language, "ai.listening")}</span>
+              </div>
+            </div>
+          )}
         </div>
-      </div>
+      ) : category ? (
+        <div className="flex-1 overflow-y-auto scrollbar-none px-4 pt-3 pb-4 space-y-3">
+          <div className="dw-surface divide-y divide-border overflow-hidden">
+            {quickActions.map(item => (
+              <HelpRow key={item.label} icon={item.icon} label={item.label} onClick={() => { setCategory(null); item.onClick(); }} data-walk={item.dataWalk} />
+            ))}
+          </div>
+        </div>
+      ) : (
+        <div className="flex-1 overflow-y-auto scrollbar-none px-4 pt-3 pb-4 space-y-3.5">
+          <div className="relative">
+            <Search size={19} className="absolute left-3.5 top-1/2 -translate-y-1/2 text-muted-foreground pointer-events-none" />
+            <input
+              value={query}
+              onChange={e => setQuery(e.target.value)}
+              placeholder={t(language, "ai.searchPlaceholder")}
+              className="w-full h-12 bg-input-background border border-border rounded-2xl pl-11 pr-11 text-[calc(15px*var(--dw-text,1))] text-foreground outline-none focus:border-primary transition-colors placeholder:text-muted-foreground"
+            />
+            {query && (
+              <button onClick={() => setQuery("")} aria-label={t(language, "common.cancel")} className="absolute right-3 top-1/2 -translate-y-1/2 w-8 h-8 rounded-full bg-muted flex items-center justify-center">
+                <X size={16} className="text-muted-foreground" />
+              </button>
+            )}
+          </div>
+
+          {query.trim() ? (
+            <div className="dw-surface divide-y divide-border overflow-hidden">
+              {searchResults.map(r => (
+                <button
+                  key={r.label}
+                  onClick={() => { setQuery(""); r.onClick(); }}
+                  className="w-full flex items-center gap-3 px-4 py-3.5 text-left active:bg-secondary/50 transition-colors"
+                >
+                  <div className="w-10 h-10 rounded-xl bg-secondary flex items-center justify-center shrink-0">
+                    <r.icon size={20} className="text-primary" />
+                  </div>
+                  <span className="flex-1 min-w-0 text-[calc(15px*var(--dw-text,1))] font-semibold text-foreground leading-snug">{r.label}</span>
+                  <ChevronRight size={20} className="text-muted-foreground shrink-0" />
+                </button>
+              ))}
+            </div>
+          ) : (
+            <div className="grid grid-cols-2 gap-2">
+              {quickActions.map(item => (
+                <button key={item.label} onClick={item.onClick} data-walk={item.dataWalk} className="h-[88px] flex flex-col items-center justify-center gap-1.5 dw-surface px-2 text-center active:bg-muted transition-colors">
+                  <div className="w-10 h-10 rounded-xl bg-primary/10 flex items-center justify-center shrink-0"><item.icon size={18} className="text-primary" /></div>
+                  <span className="text-[calc(12px*var(--dw-text,1))] font-bold text-foreground leading-tight">{item.label}</span>
+                </button>
+              ))}
+            </div>
+          )}
+        </div>
+      )}
 
       <div className="px-4 pb-4 pt-1 border-t border-border shrink-0">
         {pendingImage && (
@@ -384,7 +452,7 @@ export function AskMeiScreen({ patient, elderId, onUpdatePatient, onNavigate, on
             <textarea
               ref={inputRef}
               value={input}
-              onChange={e => { const v = e.target.value; setInput(v); if (v.trim() && quickOpen) setQuickOpen(false); }}
+              onChange={e => setInput(e.target.value)}
               onKeyDown={e => { if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); handleSend(); } }}
               placeholder={t(language, pendingImage ? "ai.photoNotePlaceholder" : "common.askMeiPlaceholder")}
               className="w-full bg-transparent text-foreground text-[calc(15px*var(--dw-text,1))] resize-none outline-none max-h-24 leading-relaxed placeholder:text-muted-foreground"
@@ -402,9 +470,6 @@ export function AskMeiScreen({ patient, elderId, onUpdatePatient, onNavigate, on
         <p className="text-center text-[calc(10px*var(--dw-text,1))] text-muted-foreground mt-2">{t(language, "ai.disclaimer")}</p>
       </div>
 
-      {/* Hidden inputs backing "Update profile" and "Add prescription" — each
-          flow gets a camera-capture input and a plain library/Files input, so
-          PhotoSourceSheet's two options are always both reachable. */}
       <input ref={reportCameraRef} type="file" accept="image/*" capture="environment" className="sr-only" onChange={onReportFile} />
       <input ref={reportLibraryRef} type="file" accept="image/*,application/pdf" className="sr-only" onChange={onReportFile} />
       <input ref={rxCameraRef} type="file" accept="image/*" capture="environment" className="sr-only" onChange={onRxPhotoFile} />
@@ -433,7 +498,6 @@ export function AskMeiScreen({ patient, elderId, onUpdatePatient, onNavigate, on
         />
       )}
 
-      {/* Language & voice sheet */}
       {showLangSheet && (
         <BottomSheet onClose={() => setShowLangSheet(false)}>
           <div>
@@ -456,50 +520,6 @@ export function AskMeiScreen({ patient, elderId, onUpdatePatient, onNavigate, on
               </div>
             </button>
             <p className="text-xs text-muted-foreground mt-3">{t(language, "ai.voiceHint")}</p>
-          </div>
-        </BottomSheet>
-      )}
-
-      {/* Quick help popup — overlays the chat instead of pushing it down, and
-          floats clear of the panel edges: this screen's container is
-          overflow-hidden, so a sheet flush to the bottom gets visibly cut
-          against the nav bar below it. */}
-      {quickOpen && (
-        <BottomSheet onClose={() => setQuickOpen(false)}>
-          <div>
-            <div className="flex items-center gap-2 mb-3">
-              <Sparkles size={16} className="text-primary shrink-0" />
-              <h3 className="font-['Fraunces'] text-lg font-semibold text-foreground">{t(language, "ai.quickHelp")}</h3>
-              <button
-                onClick={() => setQuickOpen(false)}
-                aria-label={t(language, "common.cancel")}
-                className="ml-auto w-9 h-9 rounded-full bg-muted flex items-center justify-center text-muted-foreground active:bg-border transition-colors"
-              >
-                <X size={16} />
-              </button>
-            </div>
-
-            <div className="grid grid-cols-2 gap-2">
-              <FeatureBtn icon={TrendingUp} label={t(language, "common.weeklySummary")} data-walk="cg-weeklysummary-tile" onClick={() => { setQuickOpen(false); setShowSummary(true); }} />
-              <FeatureBtn icon={Plane}      label={t(language, "common.travelMode")}   onClick={() => { setQuickOpen(false); setShowTravel(true); }} />
-              <FeatureBtn icon={Camera}     label={t(language, "common.addPrescription")} onClick={() => { setQuickOpen(false); setPickerFor("rx"); }} />
-              <FeatureBtn icon={FileText}   label={t(language, "ai.updateProfile")}       onClick={() => { setQuickOpen(false); setPickerFor("report"); }} />
-              <FeatureBtn icon={Pill}       label={t(language, "ai.askAboutMed")}         onClick={() => setShowMedPicker(v => !v)} />
-              <FeatureBtn icon={Globe}      label={t(language, "ai.languageVoice")}       onClick={() => { setQuickOpen(false); setShowLangSheet(true); }} />
-            </div>
-
-            {showMedPicker && (
-              <div className="bg-muted/50 border border-border rounded-2xl p-3 mt-2.5">
-                <p className="text-xs text-muted-foreground font-semibold px-0.5 pb-2">{t(language, "ai.whichMedication")}</p>
-                <div className="flex flex-wrap gap-1.5">
-                  {uniqueMeds.map(n => (
-                    <button key={n} onClick={() => { setShowMedPicker(false); setQuickOpen(false); send(`What is ${n} for?`); }} className="text-sm font-semibold bg-card border border-border text-foreground rounded-full px-3 py-2 active:bg-primary/10 active:text-primary transition-colors">
-                      {n}
-                    </button>
-                  ))}
-                </div>
-              </div>
-            )}
           </div>
         </BottomSheet>
       )}

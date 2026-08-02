@@ -9,6 +9,12 @@ letting this grow forever — it's a memory aid, not an audit log.
 
 ---
 
+## 2026-08-02 — Caregiver Ask Mei now follows the elder help/chat pattern
+
+The caregiver AI screen was still using the older quick-help popup and fixed top action bar. It now mirrors the elder interface: one shared Ask Mei header, a permanent composer, smooth chat/help switching, and a search-driven quick-help surface without the floating popup. This keeps the caregiver flow visually aligned with the elder experience while preserving the existing action flows (weekly summary, travel mode, report/photo inputs, language/voice controls).
+
+---
+
 ## 2026-07-29 — Elderly UI revamp: brand palette as tokens, help-list Ask Mei, Settings hub, 8 new walkthroughs
 
 Full visual + structural pass over the elderly interface (caregiver brought
