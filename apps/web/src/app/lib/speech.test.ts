@@ -177,6 +177,20 @@ describe("speak — quality-aware voice ranking", () => {
     expect(speakAndFlush("hello", "en-SG")?.voice?.name).toBe("Aria (Enhanced)");
   });
 
+  it("prefers Edge's cloud 'Online' voices and Google Cloud's Wavenet/Studio voices over a plain one, within the same gender tier", () => {
+    installSynth([
+      { name: "Aria", lang: "en-US", voiceURI: "com.apple.Aria" },
+      { name: "Aria Online (Natural)", lang: "en-US", voiceURI: "Microsoft Server Speech Text to Speech Voice Online" },
+    ]);
+    expect(speakAndFlush("hello", "en-SG")?.voice?.name).toBe("Aria Online (Natural)");
+
+    installSynth([
+      { name: "Aria", lang: "en-US", voiceURI: "com.apple.Aria" },
+      { name: "Aria (Wavenet)", lang: "en-US", voiceURI: "en-US-Wavenet-F" },
+    ]);
+    expect(speakAndFlush("hello", "en-SG")?.voice?.name).toBe("Aria (Wavenet)");
+  });
+
   it("never picks a known-robotic (compact) voice when a better match exists, even over a same-gender compact voice", () => {
     installSynth([
       { name: "Samantha", lang: "en-US", voiceURI: "com.apple.voice.compact.en-US.Samantha" },

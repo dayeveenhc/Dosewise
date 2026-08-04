@@ -1,6 +1,6 @@
 import { useState, useRef, useEffect } from "react";
 import type { ChangeEvent } from "react";
-import { Volume2, Mic, Send, AlertTriangle, MessageCircle, Check, Trash2, Camera, FileText, Pill, Globe, X, Plane, ChevronRight, CalendarDays, CheckCircle2, RotateCcw, RefreshCw, Bell, Phone, Type, QrCode, UserCheck, Stethoscope, HeartPulse, Search, Sparkles } from "lucide-react";
+import { Volume2, Mic, Send, AlertTriangle, MessageCircle, Check, Trash2, Camera, FileText, Pill, Globe, X, Plane, ChevronRight, CalendarDays, CheckCircle2, RotateCcw, RefreshCw, Bell, Phone, Type, QrCode, UserCheck, Stethoscope, HeartPulse, Search, Sparkles, User, Palette, Heart } from "lucide-react";
 import type { Patient } from "../../types";
 import type { EMsg, ElderlyTab } from "./types";
 import { agentTurnStream, extractProfile, fileToBase64 } from "../../lib/hermes";
@@ -563,7 +563,7 @@ export function ElderlyAIScreen({ patient, elderId, onNavigate, onMedsChanged, o
       ],
     },
     details: {
-      icon: HeartPulse,
+      icon: User,
       title: t(language, "ai.catDetails"),
       items: [
         { icon: HeartPulse,   label: t(language, "ai.rowAddCondition"),          run: () => openChatWith(t(language, "ai.prefillAddCondition")) },
@@ -573,7 +573,7 @@ export function ElderlyAIScreen({ patient, elderId, onNavigate, onMedsChanged, o
       ],
     },
     display: {
-      icon: Type,
+      icon: Palette,
       title: t(language, "ai.catDisplay"),
       items: [
         { icon: Type,   label: t(language, "ai.rowContrast"),             run: () => startWalk("text_size") },
@@ -585,7 +585,7 @@ export function ElderlyAIScreen({ patient, elderId, onNavigate, onMedsChanged, o
       ],
     },
     care: {
-      icon: UserCheck,
+      icon: Heart,
       title: t(language, "ai.catCare"),
       items: [
         // The guided version of the row above — Mei walks to the card herself.
@@ -720,8 +720,8 @@ export function ElderlyAIScreen({ patient, elderId, onNavigate, onMedsChanged, o
           </div>
         </div>
       ) : (
-        <div className="flex-1 overflow-y-auto scrollbar-none px-4 pt-3 pb-4 space-y-3.5" data-tour="elder-quickhelp">
-          <div className="relative">
+        <div className="flex-1 min-h-0 overflow-y-auto scrollbar-none px-4 pt-3 pb-4 flex flex-col gap-3.5" data-tour="elder-quickhelp">
+          <div className="relative shrink-0">
             <Search size={19} className="absolute left-3.5 top-1/2 -translate-y-1/2 text-muted-foreground pointer-events-none" />
             <input
               value={query}
@@ -738,7 +738,7 @@ export function ElderlyAIScreen({ patient, elderId, onNavigate, onMedsChanged, o
           </div>
 
           {query.trim() ? (
-            <div className="dw-surface divide-y divide-border overflow-hidden">
+            <div className="dw-surface divide-y divide-border overflow-hidden shrink-0">
               {searchResults.map(r => (
                 <button
                   key={`${r.cat}-${r.label}`}
@@ -760,7 +760,7 @@ export function ElderlyAIScreen({ patient, elderId, onNavigate, onMedsChanged, o
               )}
             </div>
           ) : (
-            <div className="grid grid-cols-2 gap-3">
+            <div className="grid grid-cols-2 grid-rows-2 gap-3 flex-1 min-h-0">
               {(Object.keys(CATEGORIES) as CatId[]).map(id => {
                 const cat = CATEGORIES[id];
                 return (
@@ -768,14 +768,14 @@ export function ElderlyAIScreen({ patient, elderId, onNavigate, onMedsChanged, o
                     key={id}
                     onClick={() => setCategory(id)}
                     data-walk={`elder-cat-${id}`}
-                    className="dw-surface dw-press p-4 h-[140px] flex flex-col items-center justify-center gap-2.5 text-center"
+                    className="dw-surface dw-press p-4 flex flex-col items-center justify-center gap-3 text-center"
                   >
-                    <div className="w-12 h-12 rounded-2xl bg-secondary flex items-center justify-center">
-                      <cat.icon size={24} className="text-primary" />
+                    <div className="w-16 h-16 rounded-2xl bg-secondary flex items-center justify-center">
+                      <cat.icon size={30} className="text-primary" />
                     </div>
                     <div className="min-w-0">
-                      <p className="text-[calc(15px*var(--dw-text,1))] font-bold text-foreground leading-tight">{cat.title}</p>
-                      <p className="text-[calc(12px*var(--dw-text,1))] text-muted-foreground mt-0.5">{t(language, "ai.catCount", { count: cat.items.length })}</p>
+                      <p className="text-[calc(17px*var(--dw-text,1))] font-bold text-foreground leading-tight">{cat.title}</p>
+                      <p className="text-[calc(13px*var(--dw-text,1))] text-muted-foreground mt-0.5">{t(language, "ai.catCount", { count: cat.items.length })}</p>
                     </div>
                   </button>
                 );

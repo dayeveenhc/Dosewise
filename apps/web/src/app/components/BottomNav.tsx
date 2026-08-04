@@ -9,7 +9,7 @@ import { t } from "../lib/language";
 export function BottomNav({ activeTab, onSelect }: { activeTab: string; onSelect: (s: Screen) => void }) {
   const { language } = useLanguage();
   return (
-    <div className="shrink-0 bg-card/85 backdrop-blur-xl border-t border-border/60 px-3 pt-4 pb-6">
+    <div className="shrink-0 bg-background dw-shadow-up border-t border-border/60 px-3 pt-4 pb-6">
       {/* items-END so every control shares one baseline — see ElderlyApp's nav. */}
       <div className="flex items-end">
         {NAV_ITEMS.map(item => {

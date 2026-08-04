@@ -129,17 +129,33 @@ test("elder home: banner, due-now card, now line, refill list, what-to-do sheet"
   expect(cardsBeforeLine).toBe(4);
 
   // --- the due-now card -----------------------------------------------------
-  // Solid pine, light text, drifting fill — and it is the ONLY one, decided by
-  // the clock rather than by position in the medication list.
-  const nextCard = page.locator(".dw-flow-onpine");
+  // Bold teal OUTLINE + pale fill (post-consultation: no more solid saturated
+  // block — green read as "positive" for a state that still needs action), and
+  // it is the ONLY one, decided by the clock rather than by position in the
+  // medication list.
+  const nextCard = page.locator(".dw-flow-upcoming");
   await expect(nextCard).toHaveCount(1);
   expect(await nextCard.evaluate(el => el.getAnimations().map(a => (a as CSSAnimation).animationName))).toEqual(["dw-flow"]);
   const fill = await nextCard.evaluate(el => {
+    // Unlike the old solid-fill treatment (one inverted colour for the whole
+    // card), only the TIME is tinted — the medication NAME stays plain
+    // text-foreground, mirroring exactly how the missed card already worked.
+    const time = el.querySelector("span");
     const name = el.querySelector("p");
-    return { bg: getComputedStyle(el).backgroundColor, text: name ? getComputedStyle(name).color : "" };
+    return {
+      bg: getComputedStyle(el).backgroundColor,
+      time: time ? getComputedStyle(time).color : "",
+      name: name ? getComputedStyle(name).color : "",
+    };
   });
-  expect(fill.bg).toBe("rgb(53, 114, 102)");
-  expect(fill.text).toBe("rgb(255, 255, 255)");
+  // Back to the ORIGINAL pine palette (Isabel's revert), but keeping the
+  // lighter-card treatment, now dialled even lighter (3%): --upcoming-bg is
+  // a literal color-mix() (3% of pine #357266 over transparent), which
+  // Chromium serialises as a color(srgb …) function rather than folding it
+  // to rgb().
+  expect(fill.bg).toBe("color(srgb 0.207843 0.447059 0.4 / 0.03)");
+  expect(fill.time).toBe("rgb(35, 85, 75)");    // --upcoming-fg (original)
+  expect(fill.name).toBe("rgb(16, 48, 43)");    // --foreground (original ink, plain/not tinted)
   // Every missed dose stays loggable, plus the one that is due: 5 in total.
   await expect(page.getByRole("button", { name: /I Took It/i })).toHaveCount(5);
   await nextCard.evaluate(el => el.scrollIntoView({ block: "center" }));

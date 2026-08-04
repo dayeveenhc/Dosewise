@@ -306,6 +306,40 @@ describe("runActStep", () => {
     expect(h.onAdvance).not.toHaveBeenCalled();
   });
 
+  // Item C (fewer forced Next-taps): a step in the middle of a grouped field
+  // run must NOT stop at the tap-wait gate — it auto-continues on its own once
+  // the settle pause elapses, with no requestNext() call at all.
+  it("holdGate: false auto-continues after the grouped settle, with no tap", async () => {
+    mountInput("target");
+    const h = handlers({ holdGate: false });
+    const step = baseStep({ act: { kind: "fill", selector: '[data-testid="target"]', value: "Metformin" } });
+
+    let outcome: string | undefined;
+    void runActStep(step, h).then(o => { outcome = o; });
+    await vi.advanceTimersByTimeAsync(PACING.FIELD_MIN_MS + PACING.GROUPED_STEP_PAUSE_MS + 20_000);
+
+    expect(outcome).toBe("advanced");
+    expect(h.onAdvance).toHaveBeenCalledOnce();
+    const phases = readPhaseLog().map(e => e.phase);
+    expect(phases).toEqual(["field", "grouped"]);
+  });
+
+  it("holdGate: true (the default) still holds a fill at the real commit gate", async () => {
+    mountInput("target");
+    const h = handlers();
+    const step = baseStep({ act: { kind: "fill", selector: '[data-testid="target"]', value: "Metformin" } });
+
+    let outcome: string | undefined;
+    void runActStep(step, h).then(o => { outcome = o; });
+    await vi.advanceTimersByTimeAsync(PACING.FIELD_MIN_MS + 20_000);
+    expect(outcome).toBeUndefined();
+    expect(h.onAdvance).not.toHaveBeenCalled();
+
+    h.pace.requestNext();
+    await vi.advanceTimersByTimeAsync(1);
+    expect(outcome).toBe("advanced");
+  });
+
   it("a select act matches an option case-insensitively", async () => {
     const select = document.createElement("select");
     select.setAttribute("data-testid", "target");

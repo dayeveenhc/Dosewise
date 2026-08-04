@@ -129,10 +129,16 @@ export function Walkthrough({
       // so getBoundingClientRect() on the parent over-reports by the border
       // width. This element is already position:absolute; inset:0 in that
       // same parent, so its own rect IS the correct (0,0) origin.
-      const origin = rootRef.current?.getBoundingClientRect();
       const targetEl = document.querySelector(step.selector);
-      if (!origin || !targetEl) return false;
+      if (!rootRef.current || !targetEl) return false;
+      // origin is measured AFTER the scroll, not before: scrollIntoView can
+      // move an ancestor shared with the overlay root itself (not just an
+      // inner list), which shifts origin too — reading it beforehand mixes
+      // two different scroll positions into one offset and throws the cutout
+      // off by exactly that scroll delta. See GuidedTour's measure() for the
+      // same fix.
       if (doScroll) targetEl.scrollIntoView({ block: "center" });
+      const origin = rootRef.current.getBoundingClientRect();
       const r = targetEl.getBoundingClientRect();
       setRect({ top: r.top - origin.top, left: r.left - origin.left, width: r.width, height: r.height });
       setContainerHeight(origin.height);
@@ -199,6 +205,19 @@ export function Walkthrough({
     // PACING minimums and carries the user's Next/Replay requests.
     const pace = createPaceController({ stepId: step.id });
     paceRef.current = pace;
+    // A step gates (waits for a real Next tap) UNLESS it's a field fill in the
+    // middle of a run of them: this step fills a field, isn't itself a
+    // checkpoint (no verify/reveal), and the NEXT step continues filling on
+    // the same screen. That collapses e.g. name→dose→purpose into one tap
+    // instead of three, while the real checkpoints (opening the form, the
+    // last field before Save, the final verify/reveal) still gate — see
+    // orchestrate.ts's `holdGate` for what each value does.
+    const isFieldAct = (s: WalkthroughStep | undefined) => !!s?.act && s.act.kind !== "click";
+    const nextStep = steps[stepIndex + 1];
+    const holdGate = !(
+      isFieldAct(step) && !step.verify && !step.reveal &&
+      nextStep && !nextStep.onEnter && isFieldAct(nextStep)
+    );
     void (async () => {
       // (Navigate) → Act → (Verify) → (Reveal) → advance. A failed Verify STOPS
       // here and shows an error — never advances, so success is never implied.
@@ -213,6 +232,7 @@ export function Walkthrough({
           onAdvance();
         },
         shouldCancel: () => cancelled,
+        holdGate,
       });
       if (cancelled) return;
       if (outcome === "verify-failed") {
@@ -386,9 +406,10 @@ export function Walkthrough({
     const first = step.review?.[0];
     if (!first) return;
     const el = document.querySelector<HTMLInputElement>(first.selector);
-    const origin = rootRef.current?.getBoundingClientRect();
-    if (!el || !origin) return;
+    if (!el || !rootRef.current) return;
     el.scrollIntoView({ block: "center" });
+    // origin measured after the scroll — see recompute()'s comment above.
+    const origin = rootRef.current.getBoundingClientRect();
     el.focus();
     el.setSelectionRange?.(el.value.length, el.value.length);
     const r = el.getBoundingClientRect();
@@ -407,21 +428,44 @@ export function Walkthrough({
           exists to remove — the card below now always renders on top of it. */}
       {!rect && <div className="absolute inset-0 bg-black/40" />}
       {rect && (
-        <svg className="absolute inset-0 w-full h-full pointer-events-none" style={{ transition: "opacity 200ms" }}>
-          <defs>
-            <mask id="walkthrough-cutout">
-              <rect x="0" y="0" width="100%" height="100%" fill="white" />
-              <rect x={rect.left - 6} y={rect.top - 6} width={rect.width + 12} height={rect.height + 12} rx="16" fill="black" />
-              {navRect && (
-                <rect x={navRect.left - 4} y={navRect.top - 4} width={navRect.width + 8} height={navRect.height + 8} rx="16" fill="black" />
-              )}
-              {changeRect && (
-                <rect x={changeRect.left - 6} y={changeRect.top - 6} width={changeRect.width + 12} height={changeRect.height + 12} rx="12" fill="black" />
-              )}
-            </mask>
-          </defs>
-          <rect x="0" y="0" width="100%" height="100%" fill="rgba(0,0,0,0.75)" mask="url(#walkthrough-cutout)" />
-        </svg>
+        <>
+          {/* Lightened from 0.75 to 0.4 (matching the unmeasured fallback above)
+              so the real screen behind the overlay reads as DIMMED, not hidden —
+              the form is still legible through it, which is the point: showing
+              what Mei is doing, not blacking it out. */}
+          <svg className="absolute inset-0 w-full h-full pointer-events-none" style={{ transition: "opacity 200ms" }}>
+            <defs>
+              <mask id="walkthrough-cutout">
+                <rect x="0" y="0" width="100%" height="100%" fill="white" />
+                <rect x={rect.left - 6} y={rect.top - 6} width={rect.width + 12} height={rect.height + 12} rx="16" fill="black" />
+                {navRect && (
+                  <rect x={navRect.left - 4} y={navRect.top - 4} width={navRect.width + 8} height={navRect.height + 8} rx="16" fill="black" />
+                )}
+                {changeRect && (
+                  <rect x={changeRect.left - 6} y={changeRect.top - 6} width={changeRect.width + 12} height={changeRect.height + 12} rx="12" fill="black" />
+                )}
+              </mask>
+            </defs>
+            <rect x="0" y="0" width="100%" height="100%" fill="rgba(0,0,0,0.4)" mask="url(#walkthrough-cutout)" />
+          </svg>
+          {/* A soft coloured glow around the spotlighted field, replacing the
+              scrim's hard cutout edge as the "this is what matters" cue — a drop
+              shadow rather than a binary mask boundary. Uses --ring, so it stays
+              legible (and becomes a solid ring, per that mode's own philosophy)
+              under contrast-max without a separate override. */}
+          <div
+            className="absolute dw-spotlight-glow"
+            style={{ top: rect.top - 6, left: rect.left - 6, width: rect.width + 12, height: rect.height + 12 }}
+          />
+          {/* The nav-bar tab for the step's page gets its own glow too, not
+              just an undimmed cutout — matches GuidedTour.tsx's same change. */}
+          {navRect && (
+            <div
+              className="absolute dw-spotlight-glow"
+              style={{ top: navRect.top - 4, left: navRect.left - 4, width: navRect.width + 8, height: navRect.height + 8 }}
+            />
+          )}
+        </>
       )}
 
       {/* ALWAYS rendered — never gated on the spotlight having been measured.

@@ -838,7 +838,7 @@ export default function App() {
                 onDeleteMedication={handleDeleteMedication}
               />
             )}
-            {screen === "timeline" && <TimelineScreen patient={patient} justAddedMed={justAddedMed} onSendReminder={handleSendReminder} />}
+            {screen === "timeline" && <TimelineScreen patient={patient} elderId={elderId} justAddedMed={justAddedMed} onSendReminder={handleSendReminder} />}
             {screen === "notifications" && (
               <NotificationsScreen
                 notifications={notifications}

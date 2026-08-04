@@ -16,6 +16,11 @@ export const PACING = {
   VERIFY_MIN_MS: 600,          // min "checking…" display even if the re-query is instant
   REVEAL_PULSE_MS: 2000,       // total reveal/highlight pulse animation duration
   HIGHLIGHT_DWELL_MIN_MS: 3800,// min highlight+caption dwell before auto-dismiss
+  // Brief settle between GROUPED consecutive field steps (see orchestrate.ts's
+  // `holdGate`) — long enough to read as its own moment, short enough that a
+  // run of fills doesn't stop and wait for a tap after every single one. Only
+  // the terminal gate (awaitNext) has no timer; this one always resolves.
+  GROUPED_STEP_PAUSE_MS: 500,
 } as const;
 
 // Mirror the JS pacing into CSS so keyframe durations (theme.css's

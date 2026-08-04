@@ -52,7 +52,9 @@ export type WeekdayToken = (typeof WEEKDAY_TOKENS)[number];
 
 export const weekdayToken = (d: Date): WeekdayToken => WEEKDAY_TOKENS[(d.getDay() + 6) % 7];
 
-const isoDate = (d: Date) => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
+// Exported so callers building a lookup key (fetchDoseHistory's Set) and
+// callers reading a specific day's status use the exact same key shape.
+export const isoDate = (d: Date) => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
 
 /**
  * Whether a medication is due on a given calendar day.
@@ -190,6 +192,25 @@ export async function fetchElderMedications(elderId: string): Promise<Medication
   return out;
 }
 
+// Which (medication, calendar day) pairs have an actually-logged taken dose,
+// for a date range — the PAST-day counterpart to fetchElderMedications' today-
+// only taken lookup. A day with no row here and no future date is read as
+// "missed", the same inference-from-absence the today-only status already
+// uses (doses are never pre-materialised for a day nobody has acted on —
+// see services/hermes/tools/doses.py's "doses aren't materialised" comment).
+// Keyed as `${medicationId}|${isoDate}` so callers get an O(1) Set lookup
+// per card without re-deriving the date string themselves.
+export async function fetchDoseHistory(elderId: string, fromDate: Date, toDate: Date): Promise<Set<string>> {
+  const from = new Date(fromDate); from.setHours(0, 0, 0, 0);
+  const to = new Date(toDate); to.setHours(23, 59, 59, 999);
+  const { data, error } = await supabase
+    .from("doses").select("medication_id,scheduled_at")
+    .eq("elder_id", elderId).eq("status", "taken")
+    .gte("scheduled_at", from.toISOString()).lte("scheduled_at", to.toISOString());
+  if (error) throw error;
+  return new Set((data ?? []).map(d => `${d.medication_id}|${isoDate(new Date(d.scheduled_at))}`));
+}
+
 // Days of supply left, from the pills actually remaining and how many are taken
 // per day — 30 pills taken twice daily is 15 days, not 30. Falls back to the
 // refill row's own run-out forecast when the pill count is unknown, and returns
@@ -255,11 +276,25 @@ export function anyMedicationRunningLow(meds: Medication[]): boolean {
 // one pending slot today (found live, Phase-4 spot-check of scenario s03).
 // No slotHHMM (caller doesn't know it) falls back to the old any-pending
 // behaviour, kept only for backward compatibility.
-export async function logDoseTaken(medicationId: string, elderId: string, slotHHMM?: string): Promise<void> {
+//
+// `forDay` logs a PAST calendar day's missed dose (the elder Home screen's
+// day-navigation view), not "now" — without it, a dose row eventually gets
+// inserted at today's timestamp, showing up under today instead of the day
+// actually being viewed (doses are never pre-materialised for a day nobody's
+// acted on, so a missed past day usually has no pending row to flip at all).
+// Left undefined (or today), behaviour is unchanged from before this existed.
+export async function logDoseTaken(medicationId: string, elderId: string, slotHHMM?: string, forDay?: Date): Promise<void> {
   const nowIso = new Date().toISOString();
-  const { data: allPending } = await supabase
-    .from("doses").select("id,scheduled_at")
+  const isPastDay = !!forDay && isoDate(forDay) !== isoDate(new Date());
+
+  let pendingQuery = supabase.from("doses").select("id,scheduled_at")
     .eq("medication_id", medicationId).eq("status", "pending");
+  if (isPastDay) {
+    const dayStart = new Date(forDay!); dayStart.setHours(0, 0, 0, 0);
+    const dayEnd = new Date(forDay!); dayEnd.setHours(23, 59, 59, 999);
+    pendingQuery = pendingQuery.gte("scheduled_at", dayStart.toISOString()).lte("scheduled_at", dayEnd.toISOString());
+  }
+  const { data: allPending } = await pendingQuery;
   const pending = allPending ?? [];
 
   if (pending.length) {
@@ -281,9 +316,15 @@ export async function logDoseTaken(medicationId: string, elderId: string, slotHH
     if (error) throw error;
     return;
   }
+  let scheduledAt = nowIso;
+  if (isPastDay) {
+    const d = new Date(forDay!);
+    if (slotHHMM) { const [h, m] = slotHHMM.split(":").map(Number); d.setHours(h, m, 0, 0); } else { d.setHours(0, 0, 0, 0); }
+    scheduledAt = d.toISOString();
+  }
   const { error } = await supabase.from("doses").insert({
     medication_id: medicationId, elder_id: elderId,
-    scheduled_at: nowIso, status: "taken", logged_at: nowIso, logged_by: elderId,
+    scheduled_at: scheduledAt, status: "taken", logged_at: nowIso, logged_by: elderId,
   });
   if (error) throw error;
   await shiftSupply(medicationId, -1);

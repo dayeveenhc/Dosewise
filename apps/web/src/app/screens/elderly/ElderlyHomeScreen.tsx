@@ -9,7 +9,7 @@ import { ConfirmDialog } from "../../components/ConfirmDialog";
 import { BottomSheet } from "../../components/BottomSheet";
 import { useLanguage } from "../../lib/languageContext";
 import { t, localizeMedText } from "../../lib/language";
-import { formatClock, formatClockAt, lowSupplyMedications, isDueOn } from "../../lib/medications";
+import { formatClock, formatClockAt, lowSupplyMedications, isDueOn, isoDate, fetchDoseHistory, logDoseTaken, to24h } from "../../lib/medications";
 
 // --- timeline window: morning (6 AM) to night (11 PM) ----------------------
 // One row per hour, in normal document flow rather than pixel-per-minute
@@ -65,8 +65,12 @@ function resolveDose(m: Medication): { minutes: number; clock: string; vague: bo
 const to24hInput = (d: Date) => `${String(d.getHours()).padStart(2, "0")}:${String(d.getMinutes()).padStart(2, "0")}`;
 
 
-export function ElderlyHomeScreen({ patient, onLogDose, onUnlogDose, onOpenTravel, justAddedMed, onAskMei }: {
+export function ElderlyHomeScreen({ patient, elderId, onLogDose, onUnlogDose, onOpenTravel, justAddedMed, onAskMei }: {
   patient: Patient;
+  // Needed to log/read dose history for days other than today directly
+  // (bypassing the onLogDose prop, which only ever touches patient.medications'
+  // flat today/upcoming state — see confirmTake's isSelectedToday branch).
+  elderId?: string;
   onLogDose: (id: number, takenAt?: string) => void;
   onUnlogDose: (id: number) => void;
   onOpenTravel: () => void;
@@ -87,6 +91,10 @@ export function ElderlyHomeScreen({ patient, onLogDose, onUnlogDose, onOpenTrave
   const [pendingUndo, setPendingUndo] = useState<Medication | null>(null);
   const [takenInput, setTakenInput] = useState("");
   const [showJump, setShowJump] = useState(false);
+  // Which (medicationId, isoDate) pairs actually have a logged taken dose —
+  // real per-day history, fetched once, replacing the old cosmetic hash that
+  // made every past day's status random regardless of what was logged.
+  const [takenHistory, setTakenHistory] = useState<Set<string>>(new Set());
   // Which way the next dose's card lies when it is off-screen ("up" once it has
   // scrolled above the fold, "down" while it is still below) — null whenever the
   // card is actually visible, since then the card itself is the indicator.
@@ -108,6 +116,18 @@ export function ElderlyHomeScreen({ patient, onLogDose, onUnlogDose, onOpenTrave
     const id = setInterval(() => setNow(new Date()), 30000);
     return () => clearInterval(id);
   }, []);
+
+  // Fetched once (mirrors fetchElderMedications' own once-on-mount load): a
+  // 90-day-back window comfortably covers casual day-navigation without
+  // paging a query per day tapped.
+  useEffect(() => {
+    if (!elderId) return;
+    const from = new Date();
+    from.setDate(from.getDate() - 90);
+    fetchDoseHistory(elderId, from, new Date())
+      .then(setTakenHistory)
+      .catch(err => console.error("[ElderlyHomeScreen] fetchDoseHistory failed", err));
+  }, [elderId]);
 
   const today = now;
   const isToday = (d: Date) => d.toDateString() === today.toDateString();
@@ -132,7 +152,10 @@ export function ElderlyHomeScreen({ patient, onLogDose, onUnlogDose, onOpenTrave
       if (m.status === "taken") return "taken";
       return hasPassed(resolveDose(m).minutes) ? "missed" : "upcoming";
     }
-    if (isPast(day)) return (day.getDate() * 3 + m.id) % 10 > 2 ? "taken" : "missed";
+    // A past day with no logged-taken row is read as missed — doses are never
+    // pre-materialised for a day nobody's acted on, so absence IS the signal,
+    // same inference the today branch above already makes.
+    if (isPast(day)) return m.medicationId && takenHistory.has(`${m.medicationId}|${isoDate(day)}`) ? "taken" : "missed";
     return "upcoming";
   };
 
@@ -145,8 +168,12 @@ export function ElderlyHomeScreen({ patient, onLogDose, onUnlogDose, onOpenTrave
     () => patient.medications
       .filter(m => isDueOn(m, selectedDay))
       .map(m => ({ ...m, status: statusForDay(m, selectedDay) as MedStatus })),
+    // takenHistory is a dep too: statusForDay reads it for past days, and
+    // without it here the memo doesn't recompute when a past-day log updates
+    // it — the card only picked up the change on the next unmount/remount
+    // (e.g. switching tabs and back), not immediately after tapping.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    [patient.medications, selectedDay, nowMinutes],
+    [patient.medications, selectedDay, nowMinutes, takenHistory],
   );
   // Today's local date (YYYY-MM-DD) for matching accessibility.dose_snoozes
   // entries — those are written with the elder's wall-clock date.
@@ -306,7 +333,18 @@ export function ElderlyHomeScreen({ patient, onLogDose, onUnlogDose, onOpenTrave
   };
   const confirmTake = () => {
     if (!pendingDose) return;
-    onLogDose(pendingDose.id, formatClock(takenInput, "12h"));
+    if (isSelectedToday) {
+      onLogDose(pendingDose.id, formatClock(takenInput, "12h"));
+    } else if (elderId && pendingDose.medicationId) {
+      // Past day: patient.medications is today/upcoming-only state, so
+      // onLogDose's optimistic flip would be meaningless here — log the real
+      // row directly for the day being viewed and reflect it locally.
+      const day = selectedDay;
+      const medicationId = pendingDose.medicationId;
+      logDoseTaken(medicationId, elderId, to24h(pendingDose.time), day)
+        .catch(err => console.error("[ElderlyHomeScreen] logDoseTaken (past day) failed", err));
+      setTakenHistory(prev => new Set(prev).add(`${medicationId}|${isoDate(day)}`));
+    }
     flashToast("taken", pendingDose.id);
     setPendingDose(null);
   };
@@ -330,9 +368,13 @@ export function ElderlyHomeScreen({ patient, onLogDose, onUnlogDose, onOpenTrave
 
   // --- one medication card -------------------------------------------------
   // Three deliberately distinct treatments, unchanged in meaning from before:
-  // the dose that's DUE NOW leads (saturated pine), a missed one alarms
-  // (orange, outside the brand ramp), everything else sits quiet. A taken dose
-  // recedes furthest — and is the only one that offers Undo.
+  // the dose that's DUE NOW leads (bold teal outline + pale fill), a missed
+  // one alarms (bordeaux red, outside the calm brand ramp), everything else
+  // sits quiet. A taken dose recedes furthest — and is the only one that
+  // offers Undo. None of the three is ever a solid saturated block: a
+  // colour that fills the whole card reads as "done/positive" regardless of
+  // which status it's attached to, so every state is an outline + light
+  // wash instead, same shape as the missed/taken treatment already was.
   const renderCard = (m: Medication & { status: MedStatus }, vague: boolean, note?: string) => {
     // "Due now" is a WINDOW, not a queue position: a dose an hour either side of
     // the clock. Highlighting the next dose whenever it happened to be next made
@@ -387,15 +429,16 @@ export function ElderlyHomeScreen({ patient, onLogDose, onUnlogDose, onOpenTrave
       ? patient.doseSnoozes?.find(s => s.medication_id === m.medicationId && s.date === localDateISO)
       : undefined;
     const justAdded = !!justAddedMed && m.name === justAddedMed;
-    // The dose that is due right now is a SOLID pine card — the one card on the
-    // screen that fills with the brand colour, the way the palette always
-    // intended the current dose to read. Everything inside it flips to the
-    // light-on-dark pair rather than the usual ink-on-cream.
-    const cardCls = justAdded ? "border-2 border-taken bg-taken-bg dw-shadow ring-2 ring-taken/40"
-                  : isNext ? "border-2 border-primary bg-primary dw-shadow dw-flow-onpine"
-                  : isMissed ? "border-2 border-missed-border bg-missed-bg dw-shadow dw-flow-missed"
+    // The dose due right now gets a bold teal outline + pale fill — the same
+    // shape of treatment missed/taken already use, just the boldest of the
+    // three since "due now" is meant to lead. Never a solid fill: a card that
+    // colours its whole surface reads as "done", which is the wrong signal
+    // for something that still needs action.
+    const cardCls = justAdded ? "border-[3px] border-taken bg-taken-bg dw-shadow ring-2 ring-taken/40"
+                  : isNext ? "border-[3px] border-upcoming-border bg-upcoming-bg/50 dw-shadow dw-flow-upcoming"
+                  : isMissed ? "border-[3px] border-[#EF8A17] bg-missed-bg/50 dw-shadow dw-flow-missed"
                   : "border border-border bg-card dw-shadow";
-    const timeCls = isNext ? "text-primary-foreground" : isMissed ? "text-missed-fg" : "text-muted-foreground";
+    const timeCls = isNext ? "text-upcoming-fg" : isMissed ? "text-missed-fg" : "text-muted-foreground";
 
     return (
       <div
@@ -418,13 +461,13 @@ export function ElderlyHomeScreen({ patient, onLogDose, onUnlogDose, onOpenTrave
                 </span>
               )}
               {isMissed && (
-                <span className="flex items-center gap-1 bg-card text-missed-fg border border-missed-border text-[calc(12px*var(--dw-text,1))] font-bold px-2 py-0.5 rounded-full">
+                <span className="flex items-center gap-1 bg-card text-missed-fg border border-[#EF8A17] text-[calc(12px*var(--dw-text,1))] font-bold px-2 py-0.5 rounded-full">
                   <AlertTriangle size={11} />{t(language, "common.missed")}
                 </span>
               )}
               {/* A one-off snooze for today (snooze_dose tool) — display only,
-                  the schedule itself is unchanged. bg-card like the missed
-                  badge so it stays legible on the solid pine next-dose card. */}
+                  the schedule itself is unchanged. bg-card matches the other
+                  badges in this strip. */}
               {snooze && (
                 <span className="flex items-center gap-1 bg-card text-warn-fg border border-warn-border text-[calc(12px*var(--dw-text,1))] font-bold px-2 py-0.5 rounded-full">
                   <Clock size={11} />{t(language, "home.snoozedUntil", { time: formatClock(snooze.until, timeFormat) })}
@@ -437,27 +480,27 @@ export function ElderlyHomeScreen({ patient, onLogDose, onUnlogDose, onOpenTrave
               <img src={photo} alt="" className="w-full h-full object-cover" />
             </div>
             <div className="flex-1 min-w-0">
-              <p className={`font-bold text-[calc(17px*var(--dw-text,1))] leading-tight truncate ${isNext ? "text-primary-foreground" : "text-foreground"}`}>{m.name}</p>
-              <p className={`text-[calc(14px*var(--dw-text,1))] mt-1 leading-snug ${isNext ? "text-primary-foreground/85" : "text-muted-foreground"}`}>{localizeMedText(language, m.name, "simple", direction)}</p>
-              {vague && <p className={`text-[calc(13px*var(--dw-text,1))] mt-1 ${isNext ? "text-primary-foreground/85" : "text-primary"}`}>🕒 {t(language, "home.vagueTimeNote", { note: note ?? "", clock: minutesToClock(resolveDose(m).minutes) })}</p>}
-              {colourBlind && shape && <p className={`text-[calc(13px*var(--dw-text,1))] mt-1 ${isNext ? "text-primary-foreground/85" : "text-muted-foreground"}`}>{shape.shape} · {shape.marking}</p>}
+              <p className="font-bold text-[calc(17px*var(--dw-text,1))] leading-tight truncate text-foreground">{m.name}</p>
+              <p className="text-[calc(14px*var(--dw-text,1))] mt-1 leading-snug text-muted-foreground">{localizeMedText(language, m.name, "simple", direction)}</p>
+              {vague && <p className="text-[calc(13px*var(--dw-text,1))] mt-1 text-primary">🕒 {t(language, "home.vagueTimeNote", { note: note ?? "", clock: minutesToClock(resolveDose(m).minutes) })}</p>}
+              {colourBlind && shape && <p className="text-[calc(13px*var(--dw-text,1))] mt-1 text-muted-foreground">{shape.shape} · {shape.marking}</p>}
             </div>
           </div>
         </div>
 
         {/* Logging stays available for a missed dose all day — being late is
-            exactly when someone needs to record it. Only the pine treatment is
-            limited to the due window; the button is not. */}
+            exactly when someone needs to record it. Only the due-now
+            treatment is limited to the due window; the button is not. */}
         {(dueNow || isMissed) && !isTaken ? (
           <button
             onClick={() => openTakeDialog(m)}
             data-walk="elder-take-dose"
-            className={`w-full flex items-center justify-center gap-2.5 py-3 border-t font-bold text-[calc(16px*var(--dw-text,1))] active:opacity-80 transition-opacity ${
-              isNext ? "border-white/20 bg-white/10 text-primary-foreground" : "border-missed-border bg-missed/10 text-missed-fg"
+            className={`w-full flex items-center justify-center gap-2.5 py-3 border-t font-bold text-[calc(16px*var(--dw-text,1))] text-white active:opacity-80 transition-opacity ${
+              isNext ? "border-upcoming-border bg-upcoming-border" : "border-[#EF8A17] bg-[#B45309]"
             }`}
           >
-            <div className={`w-6 h-6 rounded-full border-2 flex items-center justify-center ${isNext ? "border-primary-foreground" : "border-missed-fg"}`}>
-              <Check size={13} strokeWidth={3} className={isNext ? "text-primary-foreground" : "text-missed-fg"} />
+            <div className="w-6 h-6 rounded-full border-2 border-white flex items-center justify-center">
+              <Check size={13} strokeWidth={3} className="text-white" />
             </div>
             {t(language, "home.iTookIt")}
           </button>
@@ -499,33 +542,27 @@ export function ElderlyHomeScreen({ patient, onLogDose, onUnlogDose, onOpenTrave
       )}
 
       {/* Day navigation — single day with arrows (no week strip) */}
-      {/* Date leads at the top-left with the weekday beside it; the day controls
-          sit opposite at the top-right, and the progress line closes the block.
-          One consistent 12px rhythm throughout — the earlier mix of 8/10px gaps
-          read as accidental. */}
+      {/* Weekday and date read as one line, in one font ("Wed, 5 August"), with
+          the two arrows pushed out to the edges of the bar and the Today button
+          (when present) riding beside the left arrow. */}
       <div className="px-4 pt-3 pb-3 shrink-0 relative z-20 bg-background" data-walk="elder-day-nav">
-        <div className="flex items-center justify-between gap-3">
-          <div className="flex items-baseline gap-2 min-w-0">
-            <h2 className={`dw-display text-[calc(23px*var(--dw-text,1))] font-semibold leading-none whitespace-nowrap ${isSelectedToday ? "text-primary" : "text-foreground"}`}>
-              {selectedDay.toLocaleDateString("en-SG", { day: "numeric", month: "long" })}
-            </h2>
-            <p className="text-[calc(14px*var(--dw-text,1))] text-muted-foreground leading-none truncate">
-              {selectedDay.toLocaleDateString("en-SG", { weekday: "long" })}
-            </p>
-          </div>
-          <div className="flex items-center gap-1.5 shrink-0">
+        <div className="grid grid-cols-[auto_1fr_auto] items-center gap-3">
+          <div className="flex items-center gap-2">
             {!isSelectedToday && (
               <button onClick={() => setSelectedDay(new Date())} className="h-9 px-3 rounded-full bg-primary text-primary-foreground text-[calc(13px*var(--dw-text,1))] font-bold active:opacity-80 transition-opacity">
                 {t(language, "home.today")}
               </button>
             )}
-            <button onClick={() => changeDay(-1)} aria-label={t(language, "common.back")} className="w-9 h-9 rounded-full bg-card border border-border flex items-center justify-center active:bg-muted transition-colors">
+            <button onClick={() => changeDay(-1)} aria-label={t(language, "common.back")} className="w-9 h-9 rounded-full bg-card border border-border flex items-center justify-center shrink-0 active:bg-muted transition-colors">
               <ChevronLeft size={18} className="text-foreground" />
             </button>
-            <button onClick={() => changeDay(1)} aria-label={t(language, "home.scheduled")} className="w-9 h-9 rounded-full bg-card border border-border flex items-center justify-center active:bg-muted transition-colors">
-              <ChevronRight size={18} className="text-foreground" />
-            </button>
           </div>
+          <h2 className="dw-display text-[calc(21px*var(--dw-text,1))] font-semibold leading-none whitespace-nowrap text-center truncate text-foreground">
+            {selectedDay.toLocaleDateString("en-SG", { weekday: "short", day: "numeric", month: "long" })}
+          </h2>
+          <button onClick={() => changeDay(1)} aria-label={t(language, "home.scheduled")} className="w-9 h-9 rounded-full bg-card border border-border flex items-center justify-center shrink-0 active:bg-muted transition-colors">
+            <ChevronRight size={18} className="text-foreground" />
+          </button>
         </div>
         <div className="mt-3 flex items-center gap-3">
           <div className="flex-1 h-1.5 bg-muted rounded-full overflow-hidden">
@@ -614,10 +651,10 @@ export function ElderlyHomeScreen({ patient, onLogDose, onUnlogDose, onOpenTrave
                         </div>
                       )}
                         <div data-testid="now-line" className="flex items-center gap-2">
-                          <span className="shrink-0 text-[calc(13px*var(--dw-text,1))] font-bold text-white bg-destructive rounded-full px-2.5 py-1 leading-none">
+                          <span className="shrink-0 text-[calc(13px*var(--dw-text,1))] font-bold text-white bg-accent rounded-full px-2.5 py-1 leading-none">
                             {formatClockAt(now, timeFormat)}
                           </span>
-                          <div className="flex-1 h-1 bg-destructive/80 rounded-full" />
+                          <div className="flex-1 h-1 bg-accent/80 rounded-full" />
                         </div>
                       </div>
                     );

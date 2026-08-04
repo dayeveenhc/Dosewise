@@ -1,18 +1,22 @@
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { ChevronLeft, ChevronRight, Clock, Send, Check, X, Minus } from "lucide-react";
 import type { Patient, Medication, MedStatus } from "../types";
 import { StatusPill, MedAvatar } from "../components/shared";
 import { MED_SIMPLE } from "../data/medications";
-import { isDueOn, cadenceLabel, WEEKDAY_TOKENS } from "../lib/medications";
+import { isDueOn, cadenceLabel, WEEKDAY_TOKENS, isoDate, fetchDoseHistory } from "../lib/medications";
 import { useLanguage } from "../lib/languageContext";
 import { t } from "../lib/language";
 
-export function TimelineScreen({ patient, justAddedMed, onSendReminder }: { patient: Patient; justAddedMed?: string | null; onSendReminder: (medName?: string) => void }) {
+export function TimelineScreen({ patient, elderId, justAddedMed, onSendReminder }: { patient: Patient; elderId?: string; justAddedMed?: string | null; onSendReminder: (medName?: string) => void }) {
   const { language } = useLanguage();
   const [view, setView] = useState<"daily" | "weekly">("daily");
   const today = new Date();
   const [weekOffset, setWeekOffset] = useState(0);
   const [selectedDay, setSelectedDay] = useState<Date>(today);
+  // Which (medicationId, isoDate) pairs actually have a logged taken dose,
+  // for the visible week — real history, replacing the old cosmetic hash
+  // that made every past day's status random regardless of what was logged.
+  const [takenHistory, setTakenHistory] = useState<Set<string>>(new Set());
 
   const statusConfig: Record<MedStatus, { dot: string; line: string }> = {
     taken: { dot: "bg-taken", line: "border-taken-border" },
@@ -56,9 +60,23 @@ export function TimelineScreen({ patient, justAddedMed, onSendReminder }: { pati
   });
   const weekLabel = weekDays[3].toLocaleDateString("en-SG", { month: "long", year: "numeric" });
 
+  // Refetched per visible week (weekOffset) rather than once — the caregiver
+  // can page arbitrarily far back, unlike the elder Home screen's fixed
+  // 90-day window.
+  useEffect(() => {
+    if (!elderId) return;
+    fetchDoseHistory(elderId, weekDays[0], weekDays[6])
+      .then(setTakenHistory)
+      .catch(err => console.error("[TimelineScreen] fetchDoseHistory failed", err));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [elderId, weekOffset]);
+
   const statusForDay = (m: Medication, day: Date): MedStatus => {
     if (isToday(day)) return m.status;
-    if (isPast(day))  return (day.getDate() * 3 + m.id) % 10 > 2 ? "taken" : "missed";
+    // A past day with no logged-taken row is read as missed — same
+    // absence-is-the-signal inference the today branch above already makes
+    // (doses are never pre-materialised for a day nobody's acted on).
+    if (isPast(day)) return m.medicationId && takenHistory.has(`${m.medicationId}|${isoDate(day)}`) ? "taken" : "missed";
     return "upcoming";
   };
 

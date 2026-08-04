@@ -45,12 +45,17 @@ export function GuidedTour({ steps, onFinish }: { steps: TourStep[]; onFinish: (
       // width; this element (itself position:absolute; inset:0 in that same
       // parent) already sits exactly at the padding edge, so its own rect IS
       // the correct (0,0) origin with no border-width math needed.
-      const origin = rootRef.current?.getBoundingClientRect();
       const targetEl = document.querySelector(step.target);
-      if (origin && targetEl) {
+      if (rootRef.current && targetEl) {
         // Scroll first — measuring before the scroll settles captures stale
         // coordinates that don't match where the element ends up on screen.
+        // origin is measured AFTER, not before: scrollIntoView can scroll an
+        // ancestor shared with the overlay root itself (not just an inner
+        // list), which moves origin too — reading it beforehand mixes two
+        // different scroll positions into one offset and throws the cutout
+        // off by exactly that scroll delta.
         targetEl.scrollIntoView({ block: "center" });
+        const origin = rootRef.current.getBoundingClientRect();
         const t = targetEl.getBoundingClientRect();
         setRect({ top: t.top - origin.top, left: t.left - origin.left, width: t.width, height: t.height });
         setContainerHeight(origin.height);
@@ -86,27 +91,49 @@ export function GuidedTour({ steps, onFinish }: { steps: TourStep[]; onFinish: (
     <div ref={rootRef} className="absolute inset-0 z-[200] pointer-events-none">
       {!rect && <div className="absolute inset-0 bg-black/75" />}
       {rect && (
-        // A single mask with both holes — two independent 9999px box-shadow
-        // cutouts would each darken the other's hole, since each one's
-        // shadow covers the entire screen except its own box.
-        <svg className="absolute inset-0 w-full h-full pointer-events-none" style={{ transition: "opacity 200ms" }}>
-          <defs>
-            <mask id="tour-cutout">
-              <rect x="0" y="0" width="100%" height="100%" fill="white" />
-              <rect
-                x={rect.left - 6} y={rect.top - 6} width={rect.width + 12} height={rect.height + 12}
-                rx="16" fill="black"
-              />
-              {navRect && (
+        <>
+          {/* Lightened from 0.75 to 0.4, matching the autonomous Walkthrough
+              overlay's same change — the two are meant to mirror each other, so
+              a softer scrim on one without the other would read as an
+              inconsistency between the app's two guided-overlay surfaces. */}
+          {/* A single mask with both holes — two independent 9999px box-shadow
+              cutouts would each darken the other's hole, since each one's
+              shadow covers the entire screen except its own box. */}
+          <svg className="absolute inset-0 w-full h-full pointer-events-none" style={{ transition: "opacity 200ms" }}>
+            <defs>
+              <mask id="tour-cutout">
+                <rect x="0" y="0" width="100%" height="100%" fill="white" />
                 <rect
-                  x={navRect.left - 4} y={navRect.top - 4} width={navRect.width + 8} height={navRect.height + 8}
+                  x={rect.left - 6} y={rect.top - 6} width={rect.width + 12} height={rect.height + 12}
                   rx="16" fill="black"
                 />
-              )}
-            </mask>
-          </defs>
-          <rect x="0" y="0" width="100%" height="100%" fill="rgba(0,0,0,0.75)" mask="url(#tour-cutout)" />
-        </svg>
+                {navRect && (
+                  <rect
+                    x={navRect.left - 4} y={navRect.top - 4} width={navRect.width + 8} height={navRect.height + 8}
+                    rx="16" fill="black"
+                  />
+                )}
+              </mask>
+            </defs>
+            <rect x="0" y="0" width="100%" height="100%" fill="rgba(0,0,0,0.4)" mask="url(#tour-cutout)" />
+          </svg>
+          {/* Same drop-shadow glow as the autonomous Walkthrough overlay,
+              replacing the hard mask edge as the "this is what matters" cue. */}
+          <div
+            className="absolute dw-spotlight-glow"
+            style={{ top: rect.top - 6, left: rect.left - 6, width: rect.width + 12, height: rect.height + 12 }}
+          />
+          {/* The nav-bar tab for the step's page gets its own glow too, not
+              just an undimmed cutout — otherwise "which page is this?" only
+              reads from the tab's ordinary active-state colour, easy to miss
+              under the scrim next to the much louder main-target glow. */}
+          {navRect && (
+            <div
+              className="absolute dw-spotlight-glow"
+              style={{ top: navRect.top - 4, left: navRect.left - 4, width: navRect.width + 8, height: navRect.height + 8 }}
+            />
+          )}
+        </>
       )}
 
       {/* Always shown (unlike the autonomous walkthrough): this tour is

@@ -42,10 +42,15 @@ export function isFemaleVoice(v: { name: string; voiceURI: string }): boolean {
 
 // Install-time quality tiers some platforms expose in the voice name/voiceURI:
 // macOS's downloadable "Enhanced"/"Premium" voices, Windows 11/Edge's cloud
-// "<Name> Online (Natural)" voices. Soft signal, same spirit as the gender
-// list above — never excludes a voice, only reorders preference among voices
-// that already match the requested language.
-export const HIGH_QUALITY_VOICE_TOKENS = ["enhanced", "premium", "natural", "neural"];
+// "<Name> Online (Natural)" voices, and Google Cloud TTS's "Wavenet"/"Studio"
+// voice families (surfaced by some Chrome builds). "online" is its own token
+// because a handful of Edge voices carry "Online" in the voiceURI without
+// "(Natural)" surviving into it. Soft signal, same spirit as the gender list
+// above — never excludes a voice, only reorders preference among voices that
+// already match the requested language.
+export const HIGH_QUALITY_VOICE_TOKENS = [
+  "enhanced", "premium", "natural", "neural", "online", "wavenet", "studio",
+];
 // macOS's un-upgraded default voices carry "compact" in their voiceURI (e.g.
 // com.apple.voice.compact.en-US.Samantha) even when the display name doesn't
 // show it. espeak/espeak-ng (Linux/ChromeOS's default) is the most robotic-

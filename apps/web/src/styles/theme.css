@@ -59,15 +59,18 @@
      and `missed` stays deliberately outside it. Every fg/bg pair below is
      ≥ 7:1, i.e. WCAG AAA at body size. */
   --taken: #85B690;
-  --taken-bg: #EDF4EE;
+  /* Near-white now, on purpose: the fill is just a TINGE of the border
+     colour, not a visible tint — the border carries the colour, the fill
+     just keeps the card from looking like plain white/nothing. */
+  --taken-bg: color-mix(in srgb, var(--taken) 2%, transparent);
   --taken-border: #B9D6C1;
   --taken-fg: #2E5B48;
   --upcoming: #357266;
-  --upcoming-bg: #E6F0EC;
+  --upcoming-bg: color-mix(in srgb, var(--upcoming) 3%, transparent);
   --upcoming-border: #357266;
   --upcoming-fg: #23554B;
   --missed: #EA580C;
-  --missed-bg: #FFF1E6;
+  --missed-bg: color-mix(in srgb, var(--missed) 3%, transparent);
   --missed-border: #FDBA74;
   --missed-fg: #9A3412;
   --warn: #B45309;
@@ -357,6 +360,27 @@
   .dw-float {
     box-shadow: var(--shadow-lg);
   }
+  /* Same tinted-ink elevation as the other .dw-shadow* utilities, but cast
+     UPWARD (negative y) — for the bottom nav bar, which now matches the page
+     background exactly and needs its own shadow to still read as a separate,
+     raised layer rather than blending into the content scrolling behind it. */
+  .dw-shadow-up {
+    box-shadow: 0 -2px 4px rgba(16, 48, 43, 0.04), 0 -8px 20px rgba(16, 48, 43, 0.07);
+  }
+  /* Walkthrough overlay spotlight: the drop-shadow glow around the cutout that
+     replaces the old hard mask-edge as the "this is what matters" cue. Uses
+     --ring (already the brand primary token everywhere else a focus ring
+     appears), so contrast-high/max automatically get a stronger or fully solid
+     version for free — no separate override needed there. Steady, no pulse: a
+     walkthrough already narrates each step, so the glow only needs to mark
+     where, not draw the eye with motion on top of that. */
+  .dw-spotlight-glow {
+    box-shadow:
+      0 0 0 3px color-mix(in srgb, var(--ring) 55%, transparent),
+      0 8px 24px color-mix(in srgb, var(--ring) 35%, transparent);
+    border-radius: 16px;
+    pointer-events: none;
+  }
   /* Tappable surfaces settle slightly instead of just changing colour — the
      easing is deliberately fast-out so it feels responsive, not floaty. */
   .dw-press {
@@ -517,9 +541,11 @@
    Each variant is only a background-IMAGE: the card keeps its own
    background-color underneath, so the drift adds movement to the existing
    status tint instead of replacing it. Upcoming runs weaker than missed — the
-   next dose should lead, not compete with the one already overdue. */
+   next dose should lead, not compete with the one already overdue. Both cards
+   are pale-filled outlines now (never a solid block), so both variants tint
+   with their own status token the same way. */
 .dw-flow-missed,
-.dw-flow-onpine {
+.dw-flow-upcoming {
   background-size: 200% 100%;
   animation: dw-flow 7s linear infinite;
 }
@@ -531,15 +557,12 @@
     color-mix(in srgb, var(--missed) 8%, transparent) 100%
   );
 }
-/* Same drift, but ON the solid pine card: tinting with the status colour would
-   be invisible against a fill that already IS that colour, so the band is a
-   wash of light instead. */
-.dw-flow-onpine {
+.dw-flow-upcoming {
   background-image: linear-gradient(
     90deg,
-    rgba(255, 255, 255, 0) 0%,
-    rgba(255, 255, 255, 0.12) 50%,
-    rgba(255, 255, 255, 0) 100%
+    color-mix(in srgb, var(--upcoming) 5%, transparent) 0%,
+    color-mix(in srgb, var(--upcoming) 16%, transparent) 50%,
+    color-mix(in srgb, var(--upcoming) 5%, transparent) 100%
   );
 }
 
@@ -563,7 +586,7 @@
    reduced motion (that is the affordance, not decoration) and loses only the
    scale beat. */
 @media (prefers-reduced-motion: reduce) {
-  .dw-pulse, .dw-flow-missed, .dw-flow-onpine { animation: none; }
+  .dw-pulse, .dw-flow-missed, .dw-flow-upcoming { animation: none; }
   .dw-msg-in, .dw-view-in { animation: none; }
   .dw-press { transition: none; }
   .dw-press:active { transform: none; }

@@ -621,7 +621,7 @@ export function ElderlyApp({ patient, elderId, onUpdatePatient, onSignOut, start
       {/* Header — app name centred, help and profile in the corners. The screen
           title moved into each screen, so this bar stays one constant, always
           recognisable anchor rather than text that changes under you. */}
-      <div className="px-3 py-2 bg-background/70 backdrop-blur-md border-b border-border/50 shrink-0">
+      <div className="px-3 py-1 bg-background/70 backdrop-blur-md border-b border-border/50 shrink-0">
         {headerOverride ? (
           <div className="flex items-center gap-2.5">
             <button
@@ -657,7 +657,7 @@ export function ElderlyApp({ patient, elderId, onUpdatePatient, onSignOut, start
 
       {/* Screen content */}
       <div className="flex-1 min-h-0 overflow-hidden flex flex-col" style={{ zoom: contentZoom } as React.CSSProperties}>
-        {tab === "home"          && <ElderlyHomeScreen         patient={patient} onLogDose={handleLogDose} onUnlogDose={handleUnlogDose} onOpenTravel={() => setShowTravel(true)} justAddedMed={justAddedMed} onAskMei={openAIPrefill} />}
+        {tab === "home"          && <ElderlyHomeScreen         patient={patient} elderId={elderId} onLogDose={handleLogDose} onUnlogDose={handleUnlogDose} onOpenTravel={() => setShowTravel(true)} justAddedMed={justAddedMed} onAskMei={openAIPrefill} />}
         {tab === "prescriptions" && <ElderlyPrescriptionScreen patient={patient} onAddRx={() => setAddRx("manual")} onRequestRefill={name => openAIPrefill(t(language, "ai.refillRequestMsg", { name }))} onEditRx={med => { setEditingMed(med); setAddRx("manual"); }} justAddedMed={justAddedMed} highlightIds={highlightEntityIds} />}
         {tab === "ai"            && (
           <ElderlyAIScreen
@@ -700,14 +700,14 @@ export function ElderlyApp({ patient, elderId, onUpdatePatient, onSignOut, start
           negative margin then only controls how far it rises above the bar, not
           where it sits in it (with items-center it drifted a few px high). Five
           flex-1 columns keep the spacing exactly equal. */}
-      <div className="relative z-40 shrink-0 bg-card/85 backdrop-blur-xl border-t border-border/60 px-3 pt-4 pb-6">
+      <div className="relative z-40 shrink-0 bg-background dw-shadow-up border-t border-border/60 px-3 pt-4 pb-6">
         <div className="flex items-end">
           {NAV.map(item => {
             const isActive = tab === item.id;
             if (item.fab) {
               return (
                 <div key={item.id} className="relative z-40 flex-1 flex justify-center">
-                  <button onClick={() => setTab(item.id)} data-tour={`nav-${item.id}`} aria-label={item.label} aria-current={isActive ? "page" : undefined} className={`relative z-40 w-16 h-16 rounded-full flex items-center justify-center -mt-6 -top-1 dw-float dw-press bg-gradient-to-br from-[#3E8477] to-[#2C6055] ${isActive ? "ring-4 ring-accent/40" : ""}`}>
+                  <button onClick={() => setTab(item.id)} data-tour={`nav-${item.id}`} aria-label={item.label} aria-current={isActive ? "page" : undefined} className={`relative z-40 w-16 h-16 rounded-full flex items-center justify-center -mt-6 -top-1 dw-float dw-press bg-gradient-to-br from-primary to-accent ${isActive ? "ring-4 ring-accent/40" : ""}`}>
                     <Brain size={30} className="text-primary-foreground" />
                   </button>
                 </div>

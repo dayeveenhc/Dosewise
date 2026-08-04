@@ -56,6 +56,14 @@ export interface PhaseHandlers {
   onNavigate: (screen: WalkthroughScreen) => void;
   onAdvance: () => void;
   shouldCancel: () => boolean;
+  // False for a step in the middle of a run of consecutive field fills (the
+  // caller decides this by looking at the next step — see Walkthrough.tsx's
+  // `computeHoldGate`): skips the terminal tap-wait and auto-continues after a
+  // brief settle instead. A first-time walkthrough still gates at real
+  // checkpoints (opening the form, the last field before Save, the final
+  // verify/reveal) — it just stops making someone tap Next after every
+  // individual field. Defaults to true (always gate) when omitted.
+  holdGate?: boolean;
 }
 
 export type ActStepOutcome = "advanced" | "verify-failed" | "act-failed" | "cancelled";
@@ -142,7 +150,17 @@ export async function runActStep(step: WalkthroughStep, h: PhaseHandlers): Promi
   // so nothing is ever rushed past someone still reading it. Deliberately placed
   // AFTER the replay loop, so a Replay request is consumed by the reveal rather
   // than swallowed by the gate.
-  await h.pace.awaitNext("ready");
+  //
+  // A step in the middle of a grouped field run (holdGate === false) skips the
+  // tap-wait and auto-continues after a brief settle instead — the real gates
+  // stay at the checkpoints (opening the form, the last field before Save, the
+  // final verify/reveal), so a first walkthrough still proves itself at the
+  // moments that matter without a tap after every single field.
+  if (h.holdGate === false) {
+    await h.pace.paced("grouped", PACING.GROUPED_STEP_PAUSE_MS);
+  } else {
+    await h.pace.awaitNext("ready");
+  }
   // cancel() wakes the gate's waiter, so Exit mid-gate must not fall through
   // into onAdvance() — that would advance a walkthrough the user just left.
   if (h.shouldCancel()) return "cancelled";
