@@ -1,7 +1,7 @@
-import { useEffect, useRef, useState } from "react";
-import { Droplets, Home, Pill, Brain, Bell, Settings, HelpCircle, ChevronLeft } from "lucide-react";
+import { useEffect, useMemo, useRef, useState } from "react";
+import { Home, Pill, Brain, Bell, Settings, HelpCircle, ChevronLeft } from "lucide-react";
 import type { Patient, Medication, MedStatus, Message } from "../../types";
-import { ProfileAvatar } from "../../components/shared";
+import { ProfileAvatar, LiveStatusBar } from "../../components/shared";
 import type { ElderlyTab, DoctorQ } from "./types";
 import { ElderlyHomeScreen } from "./ElderlyHomeScreen";
 import { ElderlyPrescriptionScreen } from "./ElderlyPrescriptionScreen";
@@ -13,29 +13,31 @@ import { AddPrescriptionSheet } from "../AddPrescriptionSheet";
 import { TravelModeSheet } from "../TravelModeSheet";
 import { ChangeHighlight } from "../../components/ChangeHighlight";
 import { HighlightCaption } from "../../components/HighlightCaption";
-import type { AgentAction } from "../../lib/hermes";
+import type { AgentAction, AgentAlert, WalkthroughRisk } from "../../lib/hermes";
 import { GuidedTour } from "../../components/GuidedTour";
 import type { TourStep } from "../../components/GuidedTour";
 import { useContentZoom } from "../../accessibility";
 import { ConfirmDialog } from "../../components/ConfirmDialog";
-import { logDoseTaken, unlogDoseTaken, addMedication, updateMedication, fetchElderMedications, fetchArchivedMedications, to24h, anyMedicationRunningLow, isDueOn } from "../../lib/medications";
+import { buildAlerts, pickPopupAlert, inQuietHours, type Alert } from "../../lib/alerts";
+import { loadAlertState, saveAlertState, poppedKey, ALERT_POPUP_COOLDOWN_MS } from "../../lib/alertState";
+import { UrgentAlertPopup } from "../../components/UrgentAlertPopup";
+import { logDoseTaken, unlogDoseTaken, addMedication, updateMedication, archiveMedication, fetchElderMedications, fetchArchivedMedications, to24h, anyMedicationRunningLow, isDueOn } from "../../lib/medications";
 import { defaultDoseTime } from "../../components/TimesPicker";
-import { MED_COLOURS } from "../../data/medications";
+import { MED_COLOURS, localizeCatalogValue } from "../../data/medications";
 import { useLanguage } from "../../lib/languageContext";
 import { useAccessibility } from "../../accessibility.tsx";
 import { t } from "../../lib/language";
 import { Walkthrough } from "../../components/Walkthrough";
 import { resolveWalkthroughSteps, walkthroughShellFor } from "../../lib/walkthrough/steps";
 import { AUTONOMOUS_TASKS } from "../../lib/walkthrough/types";
-import { PACING } from "../../lib/walkthrough/pacing";
+import { PACING, TRUST_MODE_THRESHOLD } from "../../lib/walkthrough/pacing";
 import { highlightableEntities } from "../../lib/changeHighlight";
 import { buildVerifyRunner } from "../../lib/walkthrough/verify";
 import type { WalkthroughScreen, WalkthroughTaskName, VerifyDirective, RevealDirective, WalkthroughParams } from "../../lib/walkthrough/types";
 import { loadWalkthroughSession, saveWalkthroughSession, clearWalkthroughSession } from "../../lib/walkthroughState";
 import { markWalkthroughCompleted, fetchProfile } from "../../lib/profile";
 import { fetchDoctorQuestions, createDoctorQuestion } from "../../lib/doctor";
-import { hasActiveCareLink } from "../../lib/careLinks";
-import { formatClockAt } from "../../lib/medications";
+import { hasActiveCareLink, fetchPendingLinkRequests, type PendingLinkRequest } from "../../lib/careLinks";
 
 export function ElderlyApp({ patient, elderId, onUpdatePatient, onSignOut, startTour, careMessages, onDismissCareMessage, onReplyCareMessage, onStartOnboardingWizard }: {
   patient: Patient;
@@ -63,15 +65,24 @@ export function ElderlyApp({ patient, elderId, onUpdatePatient, onSignOut, start
   // elder reading surface actually grows/shrinks with the setting. "large" is the
   // default → scale 1 (no change out of the box).
   const contentZoom = useContentZoom();
-  const [currentTime, setCurrentTime] = useState(() => new Date());
 
   const [pendingAIMessage, setPendingAIMessage] = useState<string | undefined>();
+  // "Open Ask Mei on the conversation, not the help tiles" — consumed and
+  // cleared by ElderlyAIScreen exactly like pendingAIMessage below it.
+  const [pendingChatView, setPendingChatView] = useState(false);
   // Pre-fills Ask Mei's input box WITHOUT sending — the elder still taps Send
   // themselves (unlike pendingAIMessage above, which auto-sends).
   const [pendingPrefill, setPendingPrefill] = useState<string | undefined>();
   const [walkthroughTask, setWalkthroughTask] = useState<WalkthroughTaskName | null>(null);
   const [walkthroughStepIndex, setWalkthroughStepIndex] = useState(0);
   const [walkthroughParams, setWalkthroughParams] = useState<WalkthroughParams>({});
+  // RiskClassifier result for the walkthrough currently running (Item 5's
+  // Confirm phase reads this — decision B). Set once, at start, from the real
+  // Hermes turn; NOT part of lib/walkthroughState.ts's persisted session
+  // shape, so a same-tab restore (below) loses it and a risk-flagged instance
+  // falls back to the non-tap Confirm path on that specific path only — a
+  // known gap, not silently accepted: see the restore effect's own comment.
+  const [walkthroughRisk, setWalkthroughRisk] = useState<WalkthroughRisk | undefined>();
   // Bumped when a walkthrough starts: screens that hold their own internal view
   // state (Ask Mei's help-vs-chat, Settings' sub-pages/search, the Reminders
   // demo alert) return to the state a tour's first step expects. Same mechanism
@@ -112,7 +123,14 @@ export function ElderlyApp({ patient, elderId, onUpdatePatient, onSignOut, start
   const [revealCaption, setRevealCaption] = useState<{ rect: DOMRect; verb: string; text: string } | null>(null);
   const revealCaptionRaf = useRef<number>();
   const { language } = useLanguage();
-  const { notifications: notifyPrefs, timeFormat } = useAccessibility();
+  const {
+    notifications: notifyPrefs, timeFormat,
+    walkthroughManualMode, walkthroughCompletionCount, incrementWalkthroughCompletionCount,
+  } = useAccessibility();
+  // TrustMode (Item 2, decision C): first-timers/manual-mode keep today's
+  // unconditional tap gate; a veteran (past TRUST_MODE_THRESHOLD completions,
+  // manual mode off) gets the new auto-advance path instead.
+  const requireExplicitAdvance = walkthroughManualMode || walkthroughCompletionCount < TRUST_MODE_THRESHOLD;
 
   // Entity ids the current ChangeHighlight is trying to ring — handed to
   // screens that keep content behind a collapsed section, so they can reveal it
@@ -128,11 +146,6 @@ export function ElderlyApp({ patient, elderId, onUpdatePatient, onSignOut, start
     justAddedTimer.current = window.setTimeout(() => setJustAddedMed(null), 6000);
   };
 
-  useEffect(() => {
-    const intervalId = window.setInterval(() => setCurrentTime(new Date()), 1000);
-    return () => window.clearInterval(intervalId);
-  }, []);
-
   // Ask once for permission to pop a browser notification at dose time. Only
   // works while this tab is open (no service worker / push infra) — that's a
   // known limit, not a bug: see CONTEXT.md notification-tier notes.
@@ -147,10 +160,105 @@ export function ElderlyApp({ patient, elderId, onUpdatePatient, onSignOut, start
   // fresh by refreshMeds after the agent adds/reminds via chat or photo scan).
   // notifiedRef tracks "id|date" so a slot notifies once per day, not every poll tick.
   const notifiedRef = useRef<Set<string>>(new Set());
+
+  // --- Urgent alerts (item 5) ---------------------------------------------
+  // ONE evaluation feeding three surfaces — the Reminders list, the nav badge
+  // and the popup — so the same thing can never be reported three times, and
+  // acknowledging it anywhere clears it everywhere.
+  // Whether patient.medications holds REAL, fetched data yet. Until it does it
+  // holds data/patients.ts's demo fixture, whose Metformin and Latanoprost
+  // carry refillDaysLeft 4 and 3 — under both supply thresholds. Without this
+  // gate every elder session opened with a full-screen alert about medicines
+  // the person does not take, which is the same dishonesty CONTEXT.md's "real
+  // medical facts have NO mock fallback" rule already forbids elsewhere.
+  //
+  // Set on SUCCESS only, deliberately. refreshMeds is a bare Promise.all with
+  // no catch, so a rejected fetch leaves the fixture in place — flipping this
+  // on settle would build alerts from exactly the data it exists to exclude.
+  // The trade is that a failed fetch means no alerts for that session, which is
+  // the right way round for a medication app: don't warn about data you don't
+  // have.
+  const [medsLoaded, setMedsLoaded] = useState(false);
+  const [linkRequests, setLinkRequests] = useState<PendingLinkRequest[]>([]);
+  const [acknowledgedAlerts, setAcknowledgedAlerts] = useState<Set<string>>(new Set());
+  const [popupAlert, setPopupAlert] = useState<Alert | null>(null);
+  const [agentAlerts, setAgentAlerts] = useState<Alert[]>([]);
+  const [alertNow, setAlertNow] = useState(() => new Date());
+  const alerts = useMemo(
+    () => [
+      // Mei's own alerts are about THIS conversation, not about stored
+      // medication state, so they don't wait on the fetch.
+      ...agentAlerts,
+      ...(medsLoaded
+        ? buildAlerts({ medications: patient.medications, careMessages, linkRequests, now: alertNow })
+        : []),
+    ],
+    [agentAlerts, medsLoaded, patient.medications, careMessages, linkRequests, alertNow],
+  );
+  const liveAlerts = alerts.filter(a => !acknowledgedAlerts.has(a.id));
+  const urgentCount = liveAlerts.filter(a => a.severity !== "notice").length;
+
+  // Never stack modals: a walkthrough owns the screen while it runs (and its
+  // callout is the only host of Exit), a tour likewise, and a sheet is a form
+  // the person is mid-way through.
+  const alertsSuppressed = walkthroughTask !== null || showTour || addRx !== null || showTravel;
+
+  // Mei raised something urgent from a chat turn. Folded into the SAME array
+  // and the same pickPopupAlert gate as the derived alerts, so it inherits
+  // every anti-nag rule rather than being a second, unguarded way to interrupt.
+  // Kept in state (not derived) because it is an event, not a condition — there
+  // is nothing to re-derive it from on the next poll.
+  const handleAgentAlert = (raised: AgentAlert) => {
+    setAgentAlerts(prev => {
+      // Keyed on the title so the same warning repeated across turns doesn't
+      // stack up — raise_alert already refuses a second one per turn, but a
+      // conversation can revisit the same subject.
+      const id = `agent:${raised.title}`;
+      if (prev.some(a => a.id === id)) return prev;
+      return [...prev, {
+        id,
+        kind: "agent" as const,
+        severity: raised.severity,
+        // PROSE, not keys. The model already wrote these in the reader's own
+        // language (Hermes holds no translation table — the same reason the
+        // client owns the synthesized Yes/No pair), and the popup renders every
+        // alert through t(). That works only because `t()` ends in `?? key` and
+        // echoes anything it doesn't recognise; if that ever changed, an agent
+        // alert would render a blank modal. Locked in by alerts.test.ts's
+        // "an agent-raised alert renders its own prose".
+        titleKey: raised.title,
+        bodyKey: raised.body,
+        params: {},
+        medName: raised.medication_name ?? undefined,
+        pref: "doseReminders" as const,
+      }];
+    });
+  };
+
+  const dismissPopupAlert = () => {
+    const alert = popupAlert;
+    setPopupAlert(null);
+    if (!alert) return;
+    // Recorded as seen for the rest of the day AND acknowledged in the list, so
+    // dismissing here doesn't leave the same item shouting from the badge.
+    const state = loadAlertState("elder", elderId);
+    saveAlertState("elder", elderId, {
+      popped: [...new Set([...state.popped, poppedKey(alert.id)])],
+      cooldownUntil: Date.now() + ALERT_POPUP_COOLDOWN_MS,
+    });
+    setAcknowledgedAlerts(prev => new Set(prev).add(alert.id));
+  };
   useEffect(() => {
-    if (typeof window === "undefined" || !("Notification" in window)) return;
+    if (typeof window === "undefined") return;
+    const canNotify = "Notification" in window;
     const check = () => {
-      if (Notification.permission !== "granted" || !notifyPrefs.doseReminders) return;
+      // Advance the alert clock on the SAME tick — one interval, two jobs.
+      // Deliberately outside the permission gate below: an in-app popup has no
+      // dependency on the browser's Notification permission, and inheriting
+      // that gate would silently disable urgent alerts for everyone who
+      // declined (or never saw) the OS prompt.
+      setAlertNow(new Date());
+      if (!canNotify || Notification.permission !== "granted" || !notifyPrefs.doseReminders) return;
       const now = new Date();
       const nowLabel = now.toLocaleTimeString("en-SG", { hour: "numeric", minute: "2-digit", hour12: true }).toUpperCase();
       const today = now.toISOString().slice(0, 10);
@@ -162,15 +270,62 @@ export function ElderlyApp({ patient, elderId, onUpdatePatient, onSignOut, start
         const key = `${med.id}|${today}`;
         if (notifiedRef.current.has(key)) continue;
         notifiedRef.current.add(key);
-        new Notification(`💊 Time for ${med.name}`, {
-          body: `${med.dose || ""} — ${med.purpose || "your medicine"}`.trim(),
+        // Localized, like everything else the person reads. This was the last
+        // hardcoded-English surface in the elder shell — and the least
+        // forgivable one, since a dose reminder is exactly the message someone
+        // reads at a glance without the app open. `purpose` goes through
+        // localizeCatalogValue so it matches how the same value renders on the
+        // medication card.
+        new Notification(t(language, "notifications.doseReminderTitle", { med: med.name }), {
+          body: t(language, "notifications.doseReminderBody", {
+            dose: med.dose || "",
+            purpose: med.purpose
+              ? localizeCatalogValue(med.purpose, k => t(language, k))
+              : t(language, "notifications.doseReminderPurposeFallback"),
+          }).trim(),
         });
       }
     };
     check();
     const interval = setInterval(check, 30_000);
     return () => clearInterval(interval);
-  }, [patient.medications, notifyPrefs.doseReminders]);
+    // `language` included so a switch takes effect on the NEXT reminder rather
+    // than only after something else happens to remount this.
+  }, [patient.medications, notifyPrefs.doseReminders, language]);
+
+  // Whether an alert may INTERRUPT is decided entirely in lib/alerts.ts, so
+  // every anti-nag rule (tier, preference toggle, once-per-day dedupe, cooldown,
+  // quiet hours, other modals) lives in one testable place rather than being
+  // spread across this component.
+  useEffect(() => {
+    // Suppression is checked BEFORE the already-open short-circuit, and that
+    // order is the whole point. It used to be the other way round, so
+    // `alertsSuppressed` only stopped a NEW popup opening — one already on
+    // screen when a walkthrough started just stayed there, and its z-[120]
+    // backdrop swallowed every tap beneath it, including the walkthrough's own
+    // Save button. (Found by s15-edit-profile, which fails on exactly that:
+    // sign in -> popup -> start walkthrough -> Save is unclickable.)
+    //
+    // Deliberately does NOT record it as popped-for-the-day: the situation is
+    // still urgent, so it should be free to re-raise once the overlay is gone.
+    // Swallowing it because a walkthrough happened to start is the opposite
+    // failure to the one being fixed.
+    if (alertsSuppressed) {
+      if (popupAlert) setPopupAlert(null);
+      return;
+    }
+    if (popupAlert) return;
+    const state = loadAlertState("elder", elderId);
+    const next = pickPopupAlert(liveAlerts, {
+      popped: new Set(state.popped),
+      prefs: notifyPrefs,
+      suppressed: alertsSuppressed,
+      quiet: inQuietHours(alertNow, { start: patient.sleepTime, end: patient.wakeTime }),
+      cooldownUntil: state.cooldownUntil,
+    });
+    if (next) setPopupAlert(next);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [liveAlerts, alertsSuppressed, notifyPrefs, elderId, alertNow]);
 
   const tourSteps: TourStep[] = [
     {
@@ -220,6 +375,13 @@ export function ElderlyApp({ patient, elderId, onUpdatePatient, onSignOut, start
   // Resume a same-tab, in-progress walkthrough (e.g. the elder switched to
   // chat mid-way and came back) — never across a hard refresh, matching the
   // onboarding wizard's own existing (accepted) behaviour of not surviving one.
+  // NOTE: walkthroughRisk is deliberately NOT restored here — it isn't part of
+  // the persisted session shape (loadWalkthroughSession), so a resume lands
+  // back on a risk-flagged instance with risk undefined, and its Confirm step
+  // falls back to the non-tap path unless requireExplicitAdvance is also true.
+  // Acceptable for this pass (Confirm only ships on add_prescription_auto,
+  // whose fill steps take seconds, not enough to realistically resume across),
+  // but a real gap if a future *_auto flow's fill takes long enough to resume.
   useEffect(() => {
     const session = loadWalkthroughSession("elder", elderId);
     if (session) {
@@ -237,7 +399,11 @@ export function ElderlyApp({ patient, elderId, onUpdatePatient, onSignOut, start
   // show you now" and then absolutely nothing happened — indistinguishable from
   // the app being broken, and the single most confusing failure this shell had.
   // The chat screen renders the reason instead.
-  const handleWalkthroughStart = (taskName: WalkthroughTaskName, params: WalkthroughParams = {}): string | null => {
+  const handleWalkthroughStart = (
+    taskName: WalkthroughTaskName,
+    params: WalkthroughParams = {},
+    risk?: WalkthroughRisk,
+  ): string | null => {
     // "onboarding" steps live on the wizard, not this shell — running them here
     // would stall on selectors that never mount. Surface it to App instead
     // (chat→wizard entry; scenario s30 finishes the UX). Deliberately does NOT
@@ -258,6 +424,19 @@ export function ElderlyApp({ patient, elderId, onUpdatePatient, onSignOut, start
     if (taskName === "request_refill" && !anyMedicationRunningLow(patient.medications)) {
       console.warn("[dosewise] walkthrough \"request_refill\" needs a medication running low — not starting it");
       return "walk.refused.nothingLow";
+    }
+    // Same shape again, and NEW as of the alerts work: the Reminders row this
+    // tour spotlights (notif-refill-row / notif-ack-btn) used to be a hardcoded
+    // demo card that was always present. It is real data now, so an elder with
+    // nothing outstanding has no card to point at.
+    // `medsLoaded &&` is load-bearing: without it the tour is refused during
+    // the window before the first fetch resolves, i.e. we'd claim "nothing to
+    // show" for someone who does have alerts. Refuse only when we KNOW the tab
+    // is empty. (s19 seeds real low stock and starts this tour before its own
+    // wait-for-the-card step, so it races exactly this window.)
+    if (taskName === "notifications_tour" && medsLoaded && liveAlerts.length === 0) {
+      console.warn("[dosewise] walkthrough \"notifications_tour\" needs something on the Reminders tab — not starting it");
+      return "walk.refused.nothingToShow";
     }
     // Same shape as the refill gate above: this tour ends on a CONSENT tap of
     // the emergency-contact Call button, which only renders when a caregiver is
@@ -286,6 +465,7 @@ export function ElderlyApp({ patient, elderId, onUpdatePatient, onSignOut, start
     setWalkthroughTask(taskName);
     setWalkthroughStepIndex(0);
     setWalkthroughParams(params);
+    setWalkthroughRisk(risk);
     saveWalkthroughSession("elder", elderId, { taskName, stepIndex: 0, startedAt: Date.now(), params });
     return null;
   };
@@ -382,12 +562,17 @@ export function ElderlyApp({ patient, elderId, onUpdatePatient, onSignOut, start
   useEffect(() => { startWalkthroughRef.current = handleWalkthroughStart; });
 
   // Dev-only deterministic trigger so an e2e drive can start an autonomous
-  // walkthrough without depending on the LLM choosing start_walkthrough.
+  // walkthrough without depending on the LLM choosing start_walkthrough. The
+  // optional 3rd arg (Item 2, TrustMode verification) lets a live drive force
+  // a risk-flagged instance without depending on RiskClassifier actually
+  // flagging real params through a live Hermes turn — proving the CLIENT
+  // wiring (does risk still force a tap on a veteran account?) independent of
+  // the server-side classifier, which is verified separately.
   useEffect(() => {
     if (!import.meta.env.DEV) return;
-    type Hook = (t: string, p?: WalkthroughParams) => void;
-    (window as unknown as { __dwStartWalkthrough?: Hook }).__dwStartWalkthrough = (task, params) =>
-      startWalkthroughRef.current(task as WalkthroughTaskName, params ?? {});
+    type Hook = (t: string, p?: WalkthroughParams, risk?: WalkthroughRisk) => void;
+    (window as unknown as { __dwStartWalkthrough?: Hook }).__dwStartWalkthrough = (task, params, risk) =>
+      startWalkthroughRef.current(task as WalkthroughTaskName, params ?? {}, risk);
     // Companion hook: fire ChangeHighlight with a committed action (real
     // entity_id) so an e2e can prove the highlight lands on a real record
     // without depending on the LLM choosing a write tool.
@@ -416,6 +601,11 @@ export function ElderlyApp({ patient, elderId, onUpdatePatient, onSignOut, start
       // stored list with entries that mean nothing and hand the same category
       // error to the next reader of this column.
       if (elderId && !AUTONOMOUS_TASKS.has(walkthroughTask)) void markWalkthroughCompleted(elderId, "elder", walkthroughTask);
+      // TrustMode (Item 2, decision E): a DIFFERENT "completed" concept from
+      // markWalkthroughCompleted above — a plain device-local tally of ANY
+      // finished walkthrough (autonomous ones included), so it deliberately
+      // is NOT gated on AUTONOMOUS_TASKS the way that call is.
+      incrementWalkthroughCompletionCount();
       clearWalkthroughSession("elder", elderId);
       setWalkthroughTask(null);
       setWalkthroughStepIndex(0);
@@ -430,12 +620,42 @@ export function ElderlyApp({ patient, elderId, onUpdatePatient, onSignOut, start
     saveWalkthroughSession("elder", elderId, { taskName: walkthroughTask, stepIndex: next, startedAt: Date.now(), params: walkthroughParams });
   };
 
+  // Step back one, for when something went wrong on the step just finished.
+  // The overlay only offers this where lib/walkthrough/gating.ts::canGoBack
+  // agrees (never across a committed write, never back into a click act), so
+  // this side just moves the index — and persists it the same way the advance
+  // path does, params included, so a mid-run remount lands on the same step.
+  const handleWalkthroughBack = () => {
+    if (!walkthroughTask || walkthroughStepIndex <= 0) return;
+    const prev = walkthroughStepIndex - 1;
+    setWalkthroughStepIndex(prev);
+    saveWalkthroughSession("elder", elderId, { taskName: walkthroughTask, stepIndex: prev, startedAt: Date.now(), params: walkthroughParams });
+  };
+
   // Exiting/skipping clears client state only — nothing is ever written back
   // for an abandoned walkthrough, only genuine completion (above).
   const handleWalkthroughExit = () => {
     clearWalkthroughSession("elder", elderId);
     setWalkthroughTask(null);
     setWalkthroughStepIndex(0);
+  };
+
+  // IdleTimeout (Item 6) "Talk to Mei": exit first (the overlay would
+  // otherwise sit on top of the chat sheet it's supposed to hand off to,
+  // same reason a walkthrough start closes the chat sheet elsewhere), then
+  // land on Ask Mei's chat. openAI() with no message, NOT openAIPrefill —
+  // this must not spend a real turn or risk Mei launching another
+  // walkthrough on top of the one just exited.
+  //
+  // pendingChatView is what makes it land on the CONVERSATION. Exiting +
+  // switching tabs alone was not enough: Ask Mei seeds its view from the
+  // restored thread, and someone who launched the walkthrough from the help
+  // tiles has no thread to restore — so a button reading "Talk to Mei"
+  // reliably showed the category tiles instead of Mei.
+  const handleWalkthroughTalkToMei = () => {
+    handleWalkthroughExit();
+    setPendingChatView(true);
+    openAI();
   };
   // Bumped when a doctor_message change is highlighted, so the Reminders screen
   // opens its doctor tab and the highlight has a card to land on.
@@ -471,6 +691,15 @@ export function ElderlyApp({ patient, elderId, onUpdatePatient, onSignOut, start
   useEffect(() => {
     if (!elderId) return;
     void hasActiveCareLink(elderId).then(setHasCaregiver);
+  }, [elderId, tab]);
+
+  // Pending caregiver link requests are fetched HERE rather than inside the
+  // Reminders screen, because the badge and the urgent popup both need to know
+  // about them while that tab is closed — which is precisely when an
+  // unanswered consent request matters.
+  useEffect(() => {
+    if (!elderId) return;
+    void fetchPendingLinkRequests(elderId).then(setLinkRequests);
   }, [elderId, tab]);
 
   useEffect(() => {
@@ -516,10 +745,22 @@ export function ElderlyApp({ patient, elderId, onUpdatePatient, onSignOut, start
       ? await addMedication(elderId, {
           name: med.name, dosage: med.dose, purpose: med.purpose, timeHHMMs,
           refillDays: med.refillDaysLeft, days: med.days, intervalDays: med.intervalDays,
+          endDate: med.endDate,
         })
       : undefined;
     onUpdatePatient({ ...patient, medications: [...patient.medications, { ...med, id: nextId, medicationId, status: "upcoming" as MedStatus }] });
     flagJustAdded(med.name);
+  };
+
+  // Retires a medicine whose fixed course has run out, from the card's own
+  // "Move to past medicines" button. Uses the same archive write
+  // discontinue_medication makes — never a delete, and never automatic: the
+  // course ending stops the DOSES (isDueOn), but leaving the active list is the
+  // person's own call.
+  const handleArchivePrescription = async (med: GroupedMed) => {
+    if (!elderId || !med.medicationId) return;
+    await archiveMedication(med.medicationId);
+    await refreshMeds();
   };
 
   // Saves an edit from a medication card's detail popup. Real, Supabase-backed
@@ -532,7 +773,7 @@ export function ElderlyApp({ patient, elderId, onUpdatePatient, onSignOut, start
     if (elderId && original.medicationId) {
       await updateMedication(original.medicationId, {
         name: med.name, dosage: med.dose, purpose: med.purpose, timeHHMMs,
-        days: med.days, intervalDays: med.intervalDays,
+        days: med.days, intervalDays: med.intervalDays, endDate: med.endDate,
       });
       await refreshMeds();
     } else {
@@ -541,7 +782,7 @@ export function ElderlyApp({ patient, elderId, onUpdatePatient, onSignOut, start
       let nextId = patient.medications.reduce((max, m) => Math.max(max, m.id), 0);
       const rows: Medication[] = timeHHMMs.map((time, i) => ({
         ...original, name: med.name, dose: med.dose, purpose: med.purpose, time,
-        days: med.days, intervalDays: med.intervalDays,
+        days: med.days, intervalDays: med.intervalDays, endDate: med.endDate,
         id: i === 0 ? original.id : ++nextId,
       }));
       onUpdatePatient({ ...patient, medications: [...others, ...rows] });
@@ -564,6 +805,8 @@ export function ElderlyApp({ patient, elderId, onUpdatePatient, onSignOut, start
       fetchArchivedMedications(elderId),
       fetchProfile(elderId),
     ]);
+    // Only now is it safe to reason about supply — see medsLoaded's own note.
+    setMedsLoaded(true);
     onUpdatePatient(prev => ({
       ...prev,
       medications,
@@ -606,17 +849,10 @@ export function ElderlyApp({ patient, elderId, onUpdatePatient, onSignOut, start
 
   return (
     <div className="flex flex-col h-full bg-background dw-app-bg">
-      {/* Status bar */}
-      <div className="flex items-center justify-between px-6 pt-3 pb-1 shrink-0">
-        <span className="text-xs font-semibold text-foreground font-mono">
-          {formatClockAt(currentTime, timeFormat)}
-        </span>
-        <div className="flex items-center gap-1.5">
-          <div className="flex gap-0.5 items-end h-3">{[2,3,4,4].map((ht,i) => <div key={i} className="w-1 bg-foreground rounded-sm" style={{ height: `${ht*3}px` }} />)}</div>
-          <Droplets size={11} className="text-foreground" />
-          <span className="text-xs font-semibold text-foreground font-mono">100%</span>
-        </div>
-      </div>
+      {/* Status bar — the shared component, not a copy. This shell used to
+          carry a hand-inlined duplicate, which meant the app's PRIMARY surface
+          silently kept the old bar whenever the component was restyled. */}
+      <LiveStatusBar timeFormat={timeFormat} />
 
       {/* Header — app name centred, help and profile in the corners. The screen
           title moved into each screen, so this bar stays one constant, always
@@ -658,7 +894,7 @@ export function ElderlyApp({ patient, elderId, onUpdatePatient, onSignOut, start
       {/* Screen content */}
       <div className="flex-1 min-h-0 overflow-hidden flex flex-col" style={{ zoom: contentZoom } as React.CSSProperties}>
         {tab === "home"          && <ElderlyHomeScreen         patient={patient} elderId={elderId} onLogDose={handleLogDose} onUnlogDose={handleUnlogDose} onOpenTravel={() => setShowTravel(true)} justAddedMed={justAddedMed} onAskMei={openAIPrefill} />}
-        {tab === "prescriptions" && <ElderlyPrescriptionScreen patient={patient} onAddRx={() => setAddRx("manual")} onRequestRefill={name => openAIPrefill(t(language, "ai.refillRequestMsg", { name }))} onEditRx={med => { setEditingMed(med); setAddRx("manual"); }} justAddedMed={justAddedMed} highlightIds={highlightEntityIds} />}
+        {tab === "prescriptions" && <ElderlyPrescriptionScreen patient={patient} onAddRx={() => setAddRx("manual")} onRequestRefill={name => openAIPrefill(t(language, "ai.refillRequestMsg", { name }))} onEditRx={med => { setEditingMed(med); setAddRx("manual"); }} onArchiveRx={handleArchivePrescription} justAddedMed={justAddedMed} highlightIds={highlightEntityIds} />}
         {tab === "ai"            && (
           <ElderlyAIScreen
             patient={patient}
@@ -667,14 +903,23 @@ export function ElderlyApp({ patient, elderId, onUpdatePatient, onSignOut, start
             onMedsChanged={refreshMeds}
             onMedAdded={flagJustAdded}
             onHighlightChange={setHighlightChange}
+            onAgentAlert={handleAgentAlert}
             onOpenTravel={() => setShowTravel(true)}
             autoMessage={pendingAIMessage}
             prefillMessage={pendingPrefill}
             onAutoMessageConsumed={() => setPendingAIMessage(undefined)}
             onPrefillConsumed={() => setPendingPrefill(undefined)}
+            openChatView={pendingChatView}
+            onOpenChatViewConsumed={() => setPendingChatView(false)}
             onWalkthroughStart={handleWalkthroughStart}
             onHeaderOverride={setHeaderOverride}
-            walkthroughResetSignal={screenResetSignal}
+            // "Is a guided overlay on screen RIGHT NOW", not "has one ever
+            // started" — see the prop's own comment in ElderlyAIScreen. Both
+            // overlays need this screen showing its help tiles: the autonomous
+            // walkthrough spotlights the category rows, and the passive tour's
+            // Ask-Mei step spotlights [data-tour="elder-quickhelp"], which only
+            // exists in the help view.
+            guidedViewActive={walkthroughTask !== null || showTour}
           />
         )}
         {tab === "notifications" && (
@@ -689,6 +934,11 @@ export function ElderlyApp({ patient, elderId, onUpdatePatient, onSignOut, start
             onReplyMessage={onReplyCareMessage}
             openQuestionsSignal={openQuestionsSignal}
             walkthroughResetSignal={screenResetSignal}
+            alerts={liveAlerts}
+            onAcknowledgeAlert={id => setAcknowledgedAlerts(prev => new Set(prev).add(id))}
+            onRequestRefill={name => openAIPrefill(t(language, "ai.refillRequestMsg", { name }))}
+            linkRequests={linkRequests}
+            onLinkRequestsChanged={() => { if (elderId) void fetchPendingLinkRequests(elderId).then(setLinkRequests); }}
           />
         )}
         {tab === "settings"      && <ElderlySettingsScreen     patient={patient} elderId={elderId} onUpdatePatient={onUpdatePatient} onSignOut={onSignOut} onHeaderOverride={setHeaderOverride} walkthroughResetSignal={screenResetSignal} />}
@@ -718,7 +968,38 @@ export function ElderlyApp({ patient, elderId, onUpdatePatient, onSignOut, start
                 {/* Active state pops the icon up a size and colours both the
                     icon and its label, so "where am I" reads at a glance. */}
                 <div className="w-16 h-12 flex flex-col items-center justify-end gap-1">
-                  <item.icon size={26} className={`transition-all duration-150 ${isActive ? "text-primary scale-125" : "text-muted-foreground/70 scale-100"}`} />
+                  {/* Count of things still waiting on this person. Urgent ones
+                      recolour it, so the badge distinguishes "you have mail"
+                      from "you are out of a critical medicine".
+
+                      It OVERLAPS the bell's top-right corner on purpose — that
+                      is the conventional badge, and it is what was asked for.
+                      An earlier pass read "the number overlaps the bell" as
+                      "remove the overlap" and pushed it fully clear with
+                      bottom-full; the result read as a detached number floating
+                      above the tab. Do not "fix" the overlap again. The corner
+                      is where a Bell glyph has whitespace (its dome curves away
+                      from x>22), so the digits sit beside the ink, not on it,
+                      and ring-2 keeps a hard edge between the two.
+
+                      Anchored to the ICON's own wrapper, not to the column: the
+                      active tab's glyph is scale-125 and grows from its centre,
+                      so a column-anchored badge shifts relative to the icon
+                      exactly when the tab is selected. The wrapper is not
+                      scaled, so the offset is constant in both states. */}
+                  <span className="relative inline-flex">
+                    {item.id === "notifications" && liveAlerts.length > 0 && (
+                      <span
+                        aria-label={t(language, "alerts.badgeLabel", { count: liveAlerts.length })}
+                        className={`absolute -top-1.5 -right-2.5 min-w-[18px] h-[18px] px-1 rounded-full flex items-center justify-center text-[calc(10px*var(--dw-text,1))] font-bold text-white ring-2 ring-background ${
+                          urgentCount > 0 ? "bg-missed-fg" : "bg-primary"
+                        }`}
+                      >
+                        {liveAlerts.length > 99 ? "99+" : liveAlerts.length}
+                      </span>
+                    )}
+                    <item.icon size={26} className={`transition-all duration-150 ${isActive ? "text-primary scale-125" : "text-muted-foreground/70 scale-100"}`} />
+                  </span>
                   <span className={`text-[calc(10px*var(--dw-text,1))] font-medium leading-none transition-colors ${isActive ? "text-primary" : "text-muted-foreground/70"}`}>{item.label}</span>
                 </div>
               </button>
@@ -732,10 +1013,26 @@ export function ElderlyApp({ patient, elderId, onUpdatePatient, onSignOut, start
           initialTab={addRx}
           editing={editingMed ?? undefined}
           routine={{ ...patient.mealTimes, sleepTime: patient.sleepTime }}
+          // So an autonomous run can CLICK a real control for a course length
+          // outside the sheet's three presets, instead of snapping to the
+          // nearest one and quietly changing what the doctor prescribed.
+          // Renders an extra preset only; nothing is pre-selected, so Mei still
+          // performs the taps in view.
+          initialDurationDays={Number.parseInt(walkthroughParams.duration_days ?? "", 10) || undefined}
           onClose={() => { setAddRx(null); setEditingMed(null); }}
           onAdd={med => editingMed ? handleEditPrescription(editingMed, med) : handleAddPrescription(med)}
           onAdded={() => { setEditingMed(null); if (!walkthroughTask) setTab("prescriptions"); }}
           onAgentAdded={(name?: string) => { void refreshMeds(); flagJustAdded(name); setTab("prescriptions"); }}
+          // SpotlightVisual-Fix's hook point, wired (Item 5): the walkthrough's
+          // OWN Confirm phase already risk-gated and tapped through the SAME
+          // dosage-jump signal this dialog would otherwise re-ask about, so a
+          // THIRD confirm on one write is redundant. Narrow on purpose — keyed
+          // on "dosage_jump" specifically (not risk.flagged broadly), since
+          // most add_prescription_auto risk flags are "unknown_medication"
+          // (any brand-new drug, by construction) and have nothing to do with
+          // THIS dialog's own trigger. Never suppressed on the direct-UI path
+          // (walkthroughTask unset there), which stays this dialog's only net.
+          suppressDoseConfirm={walkthroughTask === "add_prescription_auto" && !!walkthroughRisk?.signals.includes("dosage_jump")}
         />
       )}
       {showTravel && (
@@ -746,6 +1043,26 @@ export function ElderlyApp({ patient, elderId, onUpdatePatient, onSignOut, start
           onSaved={plan => onUpdatePatient({ ...patient, travelPlan: plan })}
         />
       )}
+      {popupAlert && (
+        <UrgentAlertPopup
+          alert={popupAlert}
+          onDismiss={dismissPopupAlert}
+          // "Show me" is offered only when there is somewhere specific to land.
+          onView={() => {
+            const target = popupAlert.kind === "low_supply" || popupAlert.kind === "out_of_supply"
+              ? "prescriptions" as const
+              : "notifications" as const;
+            dismissPopupAlert();
+            setTab(target);
+          }}
+          onTalkToMei={() => {
+            const alert = popupAlert;
+            dismissPopupAlert();
+            openAIPrefill(t(language, alert.titleKey, alert.params));
+          }}
+        />
+      )}
+
       <ChangeHighlight
         change={highlightChange}
         mode="elderly"
@@ -769,10 +1086,19 @@ export function ElderlyApp({ patient, elderId, onUpdatePatient, onSignOut, start
           currentScreen={{ mode: "elderly", tab }}
           onNavigate={handleWalkthroughNavigate}
           onAdvance={handleWalkthroughAdvance}
+          onBack={handleWalkthroughBack}
           onExit={handleWalkthroughExit}
           onVerify={handleWalkthroughVerify}
           onReveal={handleWalkthroughReveal}
           onVerifyFailed={handleWalkthroughVerifyFailed}
+          risk={walkthroughRisk}
+          requireExplicitAdvance={requireExplicitAdvance}
+          // AutoNav starts on unless the person explicitly asked to be walked
+          // through step by step — the trust signal above still decides the
+          // Confirm recap's tap, but where the callout's switch STARTS is a
+          // stated preference, not an inferred one.
+          autoNavDefault={!walkthroughManualMode}
+          onTalkToMei={handleWalkthroughTalkToMei}
         />
       )}
       {showTourConfirm && (
@@ -780,7 +1106,12 @@ export function ElderlyApp({ patient, elderId, onUpdatePatient, onSignOut, start
           title={t(language, "confirm.replayTourTitle")}
           body={t(language, "confirm.replayTourBodyElder")}
           confirmLabel={t(language, "confirm.replay")}
-          onConfirm={() => { setShowTourConfirm(false); setShowTour(true); }}
+          // Same preparation handleWalkthroughStart does, and for the same
+          // reason: several tour steps spotlight targets that only exist when
+          // a screen is on its HUB (Settings' font-size/language/QR rows) —
+          // replaying from a sub-page pointed them at nothing. The chat screen
+          // is handled separately, by guidedViewActive.
+          onConfirm={() => { setShowTourConfirm(false); setScreenResetSignal(n => n + 1); setShowTour(true); }}
           onCancel={() => setShowTourConfirm(false)}
         />
       )}

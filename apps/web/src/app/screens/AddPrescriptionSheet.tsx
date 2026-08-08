@@ -2,7 +2,7 @@ import { useState, useRef, useEffect } from "react";
 import type { ReactNode, ChangeEvent } from "react";
 import { X, Check, Plus, Minus, Pill, Camera, PenLine, Image as ImageIcon, Sparkles } from "lucide-react";
 import type { Medication } from "../types";
-import { WEEKDAY_TOKENS } from "../lib/medications";
+import { WEEKDAY_TOKENS, courseDaysLeft, isoDate } from "../lib/medications";
 import { MED_COLOURS, MEDICATION_CATALOG, COMMON_CONDITIONS, MED_PHOTOS, localizeCatalogValue } from "../data/medications";
 import { TimesPicker, defaultDoseTime } from "../components/TimesPicker";
 import type { RoutineTimes } from "../components/TimesPicker";
@@ -36,6 +36,24 @@ interface AddPrescriptionSheetProps {
   // with the edited values instead of a blank one — the scan tab makes no
   // sense for an edit, so it's hidden and manual is forced.
   editing?: Medication & { times?: string[] };
+  // A course length Mei already knows (from the chat request the walkthrough was
+  // started for). Only used to render an extra exact-value preset alongside the
+  // standard three, so an autonomous walkthrough can CLICK a real control for a
+  // duration like 5 days instead of snapping to the nearest preset and silently
+  // rewriting a doctor's instruction. Deliberately does NOT pre-select anything:
+  // Mei still performs both taps visibly, which is the point of the walkthrough.
+  initialDurationDays?: number;
+  // HOOK POINT for the Confirm phase (plan doc: "Item 5 — ConfirmBack-Phase",
+  // not yet built). Once a walkthrough's own Confirm step has risk-gated and
+  // tapped through the SAME dosage-jump signal checkDoseSafety detects here,
+  // this dialog would be a THIRD confirm on one write (Confirm-phase tap ->
+  // Submit tap -> this interstitial) — so an `*_auto` write path should be
+  // able to pass true here to skip it. Deliberately unwired for now (no
+  // caller sets it): the Confirm phase doesn't exist yet, so nothing may
+  // suppress this dialog today — it stays the only dose-safety net for every
+  // current walkthrough AND the ordinary direct-UI path. Leave untouched for
+  // the direct-UI path even after Item 5 lands.
+  suppressDoseConfirm?: boolean;
 }
 
 // A small type-ahead input: shows filtered suggestions as the user types.
@@ -81,7 +99,7 @@ function TypeAhead<T>({ value, onChange, onPick, items, filter, label, render, p
   );
 }
 
-export function AddPrescriptionSheet({ onClose, onAdd, onAdded, initialTab = "manual", routine, onAgentAdded, editing }: AddPrescriptionSheetProps) {
+export function AddPrescriptionSheet({ onClose, onAdd, onAdded, initialTab = "manual", routine, onAgentAdded, editing, suppressDoseConfirm = false, initialDurationDays }: AddPrescriptionSheetProps) {
   const { language } = useLanguage();
   const [tab, setTab] = useState<"scan" | "manual">(editing ? "manual" : initialTab);
   const [scannedPhoto, setScannedPhoto] = useState<string | null>(null);
@@ -103,6 +121,13 @@ export function AddPrescriptionSheet({ onClose, onAdd, onAdded, initialTab = "ma
   const [weekDays, setWeekDays] = useState<string[]>(editing?.days ?? []);
   const [intervalDays, setIntervalDays] = useState(editing?.intervalDays ?? 2);
   const [refillDays, setRefillDays] = useState(editing?.refillDaysLeft ? String(editing.refillDaysLeft) : "");
+  // The stored truth is the END DATE, not a duration: presets and the stepper
+  // SET it, the summary DERIVES days-remaining from it. That is what makes
+  // re-opening an existing medicine show the course's remaining days rather
+  // than restarting it — saving without touching this control passes the
+  // original date straight back through, with no drift across repeated edits.
+  const [courseMode, setCourseMode] = useState<"ongoing" | "fixed">(editing?.endDate ? "fixed" : "ongoing");
+  const [endDate, setEndDate] = useState<string | undefined>(editing?.endDate);
   const [colour, setColour] = useState(editing?.colour ?? MED_COLOURS[0].hex);
   const [showDoseConfirm, setShowDoseConfirm] = useState(false);
   // Cleared whenever the dose or its schedule changes, so an "I'm sure" given
@@ -112,9 +137,31 @@ export function AddPrescriptionSheet({ onClose, onAdd, onAdded, initialTab = "ma
 
   // "Certain days" with nothing ticked is not a schedule — block the save rather
   // than silently falling back to daily, which would be a different medicine
-  // regimen than the person just described.
+  // regimen than the person just described. Same shape for a fixed course with
+  // no length chosen.
   const isValid = !!(name.trim() && dose.trim() && purpose.trim() && selectedTimes.length > 0
-    && (cadence !== "days" || weekDays.length > 0));
+    && (cadence !== "days" || weekDays.length > 0)
+    && (courseMode !== "fixed" || !!endDate));
+
+  // n days INCLUSIVE of today, so "2 weeks" ends 13 days from now — the same
+  // rule tools/medications.py applies to duration_days and the same one
+  // courseDaysLeft reads back.
+  const endDateAfter = (days: number) => {
+    const d = new Date();
+    d.setDate(d.getDate() + days - 1);
+    return isoDate(d);
+  };
+  const courseDays = courseDaysLeft({ endDate });
+  // Presets the walkthrough can click. The fourth appears only when Mei arrived
+  // with a duration that isn't one of the standard three.
+  const DURATION_PRESETS = [7, 14, 30];
+  const showCustomPreset = !!initialDurationDays && initialDurationDays > 0
+    && !DURATION_PRESETS.includes(initialDurationDays);
+  const courseSummary = courseDays === null
+    ? t(language, "prescription.courseOngoing")
+    : courseDays < 0 ? t(language, "prescription.courseFinished")
+      : courseDays === 0 ? t(language, "prescription.courseEndsToday")
+        : t(language, "prescription.courseEndsInDays", { days: courseDays });
 
   const toggleWeekDay = (token: string) =>
     setWeekDays(prev => prev.includes(token) ? prev.filter(d => d !== token) : [...prev, token]);
@@ -131,7 +178,7 @@ export function AddPrescriptionSheet({ onClose, onAdd, onAdded, initialTab = "ma
 
   const handleAdd = async () => {
     if (!isValid || submitState === "saving") return;
-    if (doseConcern && !doseConfirmed) { setShowDoseConfirm(true); return; }
+    if (doseConcern && !doseConfirmed && !suppressDoseConfirm) { setShowDoseConfirm(true); return; }
     const chosenTimes = selectedTimes;
     setSubmitState("saving");
     setSubmitError(null);
@@ -146,6 +193,7 @@ export function AddPrescriptionSheet({ onClose, onAdd, onAdded, initialTab = "ma
         colour,
         days: cadence === "days" ? WEEKDAY_TOKENS.filter(d => weekDays.includes(d)) : undefined,
         intervalDays: cadence === "interval" ? intervalDays : undefined,
+        endDate: courseMode === "fixed" ? endDate : undefined,
       });
       setSubmitState("success");
       window.setTimeout(() => {
@@ -439,6 +487,98 @@ export function AddPrescriptionSheet({ onClose, onAdd, onAdded, initialTab = "ma
                 )}
               </div>
 
+              {/* How long — a course the doctor issued for a fixed period ("take
+                  this for 2 weeks"). Sits with "which days" because both answer
+                  the same question, the schedule. Tap-only like everything else
+                  here: presets are individually clickable buttons rather than a
+                  date field, both because no date picker exists in this app and
+                  because an autonomous walkthrough can only act:click a real
+                  control. */}
+              <div data-walk="rx-duration">
+                <label className="block text-xs font-semibold text-foreground mb-1.5">{t(language, "prescription.courseLength")}</label>
+                <div className="flex gap-1 bg-muted/60 rounded-xl p-1">
+                  {([
+                    ["ongoing", t(language, "prescription.courseOngoing")],
+                    ["fixed", t(language, "prescription.courseFixed")],
+                  ] as ["ongoing" | "fixed", string][]).map(([id, label]) => (
+                    <button
+                      key={id}
+                      data-walk={`rx-duration-${id}`}
+                      onClick={() => {
+                        setCourseMode(id);
+                        // Seed the user's own example rather than nothing, so
+                        // switching to a course is one tap if they agree.
+                        setEndDate(id === "ongoing" ? undefined : (endDate ?? endDateAfter(initialDurationDays || 14)));
+                      }}
+                      aria-pressed={courseMode === id}
+                      className={`flex-1 py-2 rounded-lg text-[calc(12px*var(--dw-text,1))] font-bold transition-colors ${courseMode === id ? "bg-card text-foreground shadow-sm" : "text-muted-foreground"}`}
+                    >
+                      {label}
+                    </button>
+                  ))}
+                </div>
+
+                {courseMode === "fixed" && (
+                  <>
+                    <div className="flex gap-1 mt-2.5">
+                      {DURATION_PRESETS.map(n => {
+                        const on = courseDays !== null && courseDays === n - 1;
+                        return (
+                          <button
+                            key={n}
+                            data-walk={`rx-duration-${n}`}
+                            onClick={() => setEndDate(endDateAfter(n))}
+                            aria-pressed={on}
+                            className={`flex-1 h-11 rounded-xl text-[calc(12px*var(--dw-text,1))] font-bold border transition-colors ${on ? "bg-primary text-primary-foreground border-primary" : "bg-card text-foreground border-border"}`}
+                          >
+                            {t(language, n === 7 ? "prescription.course1Week" : n === 14 ? "prescription.course2Weeks" : "prescription.course1Month")}
+                          </button>
+                        );
+                      })}
+                      {showCustomPreset && (
+                        <button
+                          data-walk="rx-duration-custom"
+                          onClick={() => setEndDate(endDateAfter(initialDurationDays!))}
+                          aria-pressed={courseDays === initialDurationDays! - 1}
+                          className={`flex-1 h-11 rounded-xl text-[calc(12px*var(--dw-text,1))] font-bold border transition-colors ${courseDays === initialDurationDays! - 1 ? "bg-primary text-primary-foreground border-primary" : "bg-card text-foreground border-border"}`}
+                        >
+                          {t(language, "prescription.courseDays", { days: initialDurationDays! })}
+                        </button>
+                      )}
+                    </div>
+
+                    {/* Anything the presets don't cover. No data-walk: like the
+                        interval stepper, this is a human-only control — an
+                        ActDirective has no way to drive a stepper to a value. */}
+                    <div className="flex items-center gap-3 mt-2.5 bg-card border border-border rounded-xl px-3 py-2.5">
+                      <button
+                        onClick={() => setEndDate(endDateAfter(Math.max(1, (courseDays ?? 0) + 1 - 1)))}
+                        disabled={(courseDays ?? 0) + 1 <= 1}
+                        aria-label={t(language, "prescription.fewerCourseDays")}
+                        className="w-10 h-10 rounded-full bg-muted flex items-center justify-center text-foreground disabled:opacity-40 shrink-0"
+                      >
+                        <Minus size={16} />
+                      </button>
+                      <p data-walk="rx-duration-summary" className="flex-1 text-center text-[calc(14px*var(--dw-text,1))] font-bold text-foreground">
+                        {courseSummary}
+                      </p>
+                      <button
+                        // max(1,…) so stepping up from an already-finished
+                        // course (negative days left, seen when editing) lands
+                        // on "ends today" rather than another past date.
+                        onClick={() => setEndDate(endDateAfter(Math.min(60, Math.max(1, (courseDays ?? 0) + 2))))}
+                        disabled={(courseDays ?? 0) + 1 >= 60}
+                        aria-label={t(language, "prescription.moreCourseDays")}
+                        className="w-10 h-10 rounded-full bg-muted flex items-center justify-center text-foreground disabled:opacity-40 shrink-0"
+                      >
+                        <Plus size={16} />
+                      </button>
+                    </div>
+                    <p className="text-[calc(11px*var(--dw-text,1))] text-muted-foreground mt-1.5">{t(language, "prescription.courseHint")}</p>
+                  </>
+                )}
+              </div>
+
               {/* Refill supply */}
               <div>
                 <label className="block text-xs font-semibold text-foreground mb-1.5">{t(language, "prescription.currentSupply")}</label>
@@ -473,7 +613,9 @@ export function AddPrescriptionSheet({ onClose, onAdd, onAdded, initialTab = "ma
                   <div>
                     <p className="text-sm font-semibold text-foreground">{name} <span className="text-xs font-normal text-muted-foreground">{dose}</span></p>
                     <p className="text-[calc(11px*var(--dw-text,1))] text-muted-foreground">{localizeCatalogValue(purpose, k => t(language, k))} · {selectedTimes.join(" • ") || "8:00 AM"}</p>
-                    <p className="text-[calc(11px*var(--dw-text,1))] text-muted-foreground">{cadenceSummary}</p>
+                    <p className="text-[calc(11px*var(--dw-text,1))] text-muted-foreground">
+                      {[cadenceSummary, courseMode === "fixed" ? courseSummary : null].filter(Boolean).join(" · ")}
+                    </p>
                   </div>
                 </div>
               )}

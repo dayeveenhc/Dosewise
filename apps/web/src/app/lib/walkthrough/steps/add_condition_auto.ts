@@ -47,12 +47,33 @@ export function addConditionAutoSteps(p: WalkthroughParams = {}): WalkthroughSte
       act: { kind: "click", selector: '[data-walk="elder-conditions-add-btn"]' },
     },
     {
-      // MANUAL CONFIRM: the person taps Save themselves (waitFor, no act/Next) —
-      // nothing is written on autopilot. Same pattern as accept_caregiver_link.ts.
+      // Confirm phase (Item 5, "ConfirmBack-Phase", decision B): a brief recap,
+      // gated on trust/risk at RUNTIME by Walkthrough.tsx/orchestrate.ts (not
+      // here). Deliberately carries NO `review` — TagList's own "Add" button
+      // (the previous step) clears its input the instant it commits the chip,
+      // so a ReviewField reading that same selector would always read blank
+      // and wrongly force the clarifying-question path on every single run.
+      // Uses walk.confirmSubmit (not the walk.confirmSave every other *_auto
+      // sibling uses here) for exactly that reason: confirmSave's copy tells
+      // the person to "tap Change" for a Change button that, with no review
+      // card, never renders — a tour must never claim an interaction that
+      // doesn't happen. The condition chip is still visible (dimmed) on the
+      // real form behind the spotlight cutout for the person to check.
       id: "autoCond.confirm",
       screen: ON_SETTINGS,
       selector: '[data-walk="elder-profile-save"]',
-      instructionKey: "walk.confirmSave",
+      instructionKey: "walk.confirmSubmit",
+      confirm: { recap: true },
+    },
+    {
+      // MANUAL SUBMIT: the person has reviewed the change above and now taps
+      // Save THEMSELVES — nothing is committed on autopilot. A waitFor step (no
+      // act, no Next button), so the run pauses here until the real tap. Mirrors
+      // the consent pattern in accept_caregiver_link.ts.
+      id: "autoCond.submit",
+      screen: ON_SETTINGS,
+      selector: '[data-walk="elder-profile-save"]',
+      instructionKey: "walk.confirmSubmit",
       waitFor: { type: "click", source: "dom" },
     },
     {

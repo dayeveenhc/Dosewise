@@ -8,8 +8,22 @@ import type { ReviewField } from "../lib/walkthrough/types";
 // enough — see readValues below.
 const POLL_MS = 300;
 
-const readValues = (fields: ReviewField[]): string[] =>
-  fields.map(f => (document.querySelector(f.selector) as HTMLInputElement | null)?.value?.trim() ?? "");
+// Exported: orchestrate.ts's Confirm phase (decision B) needs the exact same
+// live read to decide whether a blank field forces the explicit-tap path —
+// via a host-injected callback (Walkthrough.tsx), so this stays the ONE place
+// that knows how to read a ReviewField, never re-implemented at the call site.
+// Falls back to textContent so a review row can name a control that isn't an
+// <input> — a chosen preset, a segmented control, a derived summary line. This
+// is NOT cosmetic: a `.value`-only read returns "" for those, `onBlankChange`
+// fires, and the Confirm phase blocks on a clarifying question for a field the
+// person really did fill. Provably backward compatible for the existing rows —
+// a real <input> has `.value === ""` when empty, never undefined, and "" is not
+// nullish, so `??` cannot reach the fallback for them.
+export const readValues = (fields: ReviewField[]): string[] =>
+  fields.map(f => {
+    const el = document.querySelector(f.selector) as HTMLInputElement | null;
+    return el?.value?.trim() ?? el?.textContent?.trim() ?? "";
+  });
 
 /**
  * The "check these details" card shown inside the walkthrough callout before a
@@ -21,12 +35,22 @@ const readValues = (fields: ReviewField[]): string[] =>
  * retyping updates the card immediately and the person always confirms what is
  * really in the fields.
  */
-export function WalkthroughReview({ fields, onChange }: {
+export function WalkthroughReview({ fields, onChange, onBlankChange }: {
   fields: ReviewField[];
   onChange: () => void;
+  // Confirm phase (decision B): reports which fields currently read blank, so
+  // the host can block advancement and show a clarifying question. Fed from
+  // the SAME live poll below rather than a second read, so the card and the
+  // blank-field question can never disagree about what's actually empty.
+  onBlankChange?: (blank: ReviewField[]) => void;
 }) {
   const { language } = useLanguage();
   const [values, setValues] = useState<string[]>(() => readValues(fields));
+
+  useEffect(() => {
+    onBlankChange?.(fields.filter((_, i) => !values[i]));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [values]);
 
   useEffect(() => {
     const sync = () => setValues(prev => {

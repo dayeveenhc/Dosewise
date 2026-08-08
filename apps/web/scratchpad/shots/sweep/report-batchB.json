@@ -1,0 +1,96 @@
+{
+  "log": [
+    {
+      "task": "travel_mode_auto",
+      "shell": "elder",
+      "visited": 6,
+      "stoppedAt": "step 8 is user-driven (waitFor: write-committed)"
+    },
+    {
+      "task": "emergency_contact_tour",
+      "shell": "elder",
+      "visited": 3,
+      "stoppedAt": "step 3 is user-driven (waitFor: acknowledge)"
+    },
+    {
+      "task": "caregiver_view_toggle_tour",
+      "shell": "caregiver",
+      "visited": 0,
+      "stoppedAt": "ERRORED: caregiver_view_toggle_tour (caregiver) exceeded 240000ms"
+    },
+    {
+      "task": "patient_schedule_tour",
+      "shell": "caregiver",
+      "visited": 0,
+      "stoppedAt": "overlay unmounted after 0 step(s)"
+    },
+    {
+      "task": "weekly_summary_tour",
+      "shell": "caregiver",
+      "visited": 0,
+      "stoppedAt": "ERRORED: weekly_summary_tour (caregiver) exceeded 240000ms"
+    },
+    {
+      "task": "check_schedule",
+      "shell": "elder",
+      "visited": 1,
+      "stoppedAt": "step 1 is user-driven (waitFor: click)"
+    },
+    {
+      "task": "log_dose",
+      "shell": "elder",
+      "visited": 1,
+      "stoppedAt": "step 1 is user-driven (waitFor: click)"
+    }
+  ],
+  "findings": [
+    {
+      "task": "travel_mode_auto",
+      "shell": "elder",
+      "step": 3,
+      "stepId": "autoTravel.enable",
+      "kind": "cutout-misaligned",
+      "detail": "cutout {top:660.4 left:262.6 w:71.5 h:46.0} != target+6 {top:657.4 left:262.6 w:71.5 h:46.0} [dy=3.0 prehighlight=true transform=matrix(1, 0, 0, 1, 0, -3)]"
+    },
+    {
+      "task": "travel_mode_auto",
+      "shell": "elder",
+      "step": 3,
+      "stepId": "autoTravel.enable",
+      "kind": "callout-gap-too-small",
+      "detail": "only 13.5px between callout and target (GAP=16)"
+    },
+    {
+      "task": "travel_mode_auto",
+      "shell": "elder",
+      "step": 7,
+      "stepId": "autoTravel.confirm",
+      "kind": "cutout-misaligned",
+      "detail": "cutout {top:417.5 left:29.0 w:320.0 h:63.0} != target+6 {top:415.3 left:29.0 w:320.0 h:63.0} [dy=2.3 prehighlight=false transform=matrix(1, 0, 0, 1, 0, -329)]"
+    },
+    {
+      "task": "travel_mode_auto",
+      "shell": "elder",
+      "step": 7,
+      "stepId": "autoTravel.confirm",
+      "kind": "callout-overlaps-target",
+      "detail": "callout {top:295.0 left:17.0 w:344.0 h:426.8} overlaps spotlighted target {top:421.3 left:35.0 w:308.0 h:51.0}"
+    },
+    {
+      "task": "travel_mode_auto",
+      "shell": "elder",
+      "step": 8,
+      "stepId": "autoTravel.submit",
+      "kind": "cutout-misaligned",
+      "detail": "cutout {top:415.3 left:29.0 w:320.0 h:63.0} != target+6 {top:744.3 left:29.0 w:320.0 h:63.0} [dy=-329.0 prehighlight=false transform=none]"
+    },
+    {
+      "task": "emergency_contact_tour",
+      "shell": "elder",
+      "step": 3,
+      "stepId": "emergency.call-button",
+      "kind": "target-absent",
+      "detail": "step selector matched nothing (fallbackScrim=true, cutouts=0)"
+    }
+  ]
+}

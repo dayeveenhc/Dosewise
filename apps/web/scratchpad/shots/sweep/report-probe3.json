@@ -1,0 +1,32 @@
+{
+  "log": [
+    {
+      "task": "patient_schedule_tour",
+      "shell": "caregiver",
+      "visited": 2,
+      "stoppedAt": "overlay unmounted after 2 step(s)"
+    }
+  ],
+  "findings": [
+    {
+      "task": "patient_schedule_tour",
+      "shell": "caregiver",
+      "step": 1,
+      "stepId": "patsched.go-to-schedule",
+      "kind": "target-occluded",
+      "detail": "spotlight frames {top:752.5 left:83.3 w:70.5 h:51.0} but nothing (outside the viewport) is painted over it"
+    },
+    {
+      "task": "patient_schedule_tour",
+      "shell": "caregiver",
+      "step": 3,
+      "stepId": "patsched.week-strip",
+      "kind": "target-occluded",
+      "detail": "spotlight frames {top:184.7 left:17.0 w:344.0 h:137.9} but <div class=\"text-[calc(10px*var(--dw-text,1))] text-muted-foreground\"> is painted over it"
+    }
+  ],
+  "pool": {
+    "minted": 1,
+    "reused": 0
+  }
+}

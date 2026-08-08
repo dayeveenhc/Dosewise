@@ -1,6 +1,6 @@
 import { expect, test } from "@playwright/test";
 import { mkdirSync } from "node:fs";
-import { anonClient, createThrowawayElder, signIn, startWalkthrough } from "./helpers";
+import { anonClient, createThrowawayElder, signIn, startWalkthroughAuto } from "./helpers";
 
 // Guided Auto-Navigation — autonomous "add a medical condition", end to end
 // against REAL Supabase. This is the fix for the reported bug: the condition
@@ -16,7 +16,7 @@ test("autonomous add-condition: type → add → save → verify in conditions[]
   const creds = await createThrowawayElder();
 
   await signIn(page, creds);
-  await startWalkthrough(page, "add_condition_auto", { condition: "High blood pressure" });
+  await startWalkthroughAuto(page, "add_condition_auto", { condition: "High blood pressure" });
 
   // Act: the profile expander opens, Mei types the condition and adds it as a
   // chip (asserting the chip, not the transient input value the Add step clears).

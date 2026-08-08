@@ -1,0 +1,40 @@
+{
+  "http": 200,
+  "reply": "I'll add Lisinopril 20mg to your prescription list now and make sure it's saved correctly. \n\nI've also sent a question to your doctor about the dosage increase. They'll review it soon.\n\nThank you for your patience.",
+  "tools_used": [
+    "start_walkthrough",
+    "add_doctor_question"
+  ],
+  "actions": [
+    {
+      "tool": "add_doctor_question",
+      "summary": "Is it okay to increase Lisinopril dose from 5mg to 20mg?",
+      "entity_type": "doctor_message",
+      "entity_id": "858e4ec0-76ce-4bd4-92ea-475ba63b7acc",
+      "changed_fields": {
+        "question": {
+          "before": null,
+          "after": "Is it okay to increase Lisinopril dose from 5mg to 20mg?"
+        }
+      }
+    }
+  ],
+  "walkthrough": {
+    "task_name": "add_prescription_auto",
+    "params": {
+      "name": "Lisinopril",
+      "dose": "20mg",
+      "purpose": "blood pressure",
+      "frequency": "once daily in the morning"
+    },
+    "risk": {
+      "flagged": true,
+      "signals": [
+        "dosage_jump"
+      ],
+      "reasons": [
+        "'20mg' is 4x the existing on-file dose ('5mg') for 'Lisinopril'."
+      ]
+    }
+  }
+}

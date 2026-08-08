@@ -114,3 +114,31 @@ async def test_intake_active_forces_intake_mode_and_commit_clears_it(monkeypatch
     await update_medical_profile(ctx, content="Allergic to aspirin.", confirmed=False)
     await update_medical_profile(ctx, content="Allergic to aspirin.", confirmed=True)
     assert session.intake_active is False
+
+
+# --- ANSWER BUTTONS (unconditional) -----------------------------------------
+def test_answer_buttons_block_is_unconditional():
+    """Both shells, always. The web client renders answer buttons only when a turn
+    carries `choices` (offer_choices) or `awaiting_confirmation` (a tool PROPOSE),
+    so a purely conversational yes/no left the person with only the keyboard. This
+    block is what steers the model to call offer_choices for that case too, so it
+    must not sit behind a role/dialect/onboarding branch the way every other
+    appended block does — a caregiver asking "Shall I look that up?" has the same
+    problem an elder does."""
+    for role in ("elder", "caregiver"):
+        out = system_prompt_for(app_role=role)
+        assert "ANSWER BUTTONS" in out, role
+        assert "offer_choices" in out, role
+        # The conversational case named explicitly — the omission this closes.
+        assert "conversational" in out.lower(), role
+    # Present on the bare default too (no role, no profile, no language).
+    assert "ANSWER BUTTONS" in system_prompt_for()
+
+
+def test_answer_buttons_block_names_no_symbol():
+    """Mei cannot see how the answer control is drawn — the web app has no tick at
+    all. Instructing her to say "tap ✅" writes a lie into the reply text."""
+    out = system_prompt_for()
+    block = out[out.index("ANSWER BUTTONS") :]
+    assert "✅" not in block
+    assert "✖" not in block

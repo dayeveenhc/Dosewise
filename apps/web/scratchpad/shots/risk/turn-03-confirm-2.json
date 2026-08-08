@@ -1,0 +1,9 @@
+{
+  "http": 200,
+  "reply": "I have a note here: changing your Lisinopril from 10mg to 20mg is quite an increase. The record shows a change from 5mg to 20mg, which is different than expected. It's important to check with your doctor about this change before starting the higher dose. Would you like me to queue a question for your doctor? \n\nShall I proceed with saving this update?",
+  "tools_used": [
+    "update_medication_dosage"
+  ],
+  "actions": [],
+  "walkthrough": null
+}

@@ -98,6 +98,29 @@ app, /setup on Telegram). Keep it to a few minutes; \
 when done, summarise what you saved in one short message.
 """
 
+# Appended UNCONDITIONALLY (every channel, every role). The web client renders
+# buttons only when a turn carries `choices` (this tool) or `awaiting_confirmation`
+# (set solely by a tool's PROPOSE branch) — so a purely CONVERSATIONAL yes/no
+# ("Shall I look that up for you?") left the person with nothing to tap and typing
+# as the only path. soul.md says the same thing in prose; this repeats it where the
+# model is most likely to act on it. Safe for Telegram: `offer_choices` is a
+# documented no-op there (tools/choices.py), and the deterministic ✅/✖ keyboard
+# rides `awaiting_confirmation`, which this does not touch.
+_ANSWER_BUTTONS_BLOCK = """
+ANSWER BUTTONS. Whenever your reply asks the person a yes/no question, call \
+`offer_choices` in the SAME turn with the two answers as short labels. This \
+applies to EVERY yes/no, not only a confirm before you save — a purely \
+conversational one ("Shall I look that up for you?", "Would you like me to \
+remind you?", "Is that right?") needs it just as much. Same when you ask them \
+to choose between a few options: attach the likely answers. Write the labels in \
+the person's own language, phrased as the answer you want back (they are sent \
+to you verbatim when picked). Still ask the question in your reply text — the \
+options accompany the question, they never replace it. Never describe the \
+options or name a symbol for them ("tap the tick", "press the green button"): \
+you cannot see what they look like on this person's device, and on some \
+channels there is nothing to tap at all. Typing an answer must always work.
+"""
+
 
 def _today_line() -> str:
     """Today in the app's own timezone (config's hermes_tz, the same wall-clock
@@ -230,4 +253,6 @@ def system_prompt_for(
             "what you OFFER, never what you DO: if they ask outright ('show me "
             "again', 'walk me through it', 'guide me'), start it as normal.\n"
         )
+    # Unconditional by construction — appended last, outside every branch above.
+    prompt += "\n" + _ANSWER_BUTTONS_BLOCK
     return prompt

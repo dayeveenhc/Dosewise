@@ -1,0 +1,32 @@
+{
+  "log": [
+    {
+      "task": "language_voice_tour",
+      "shell": "elder",
+      "visited": 3,
+      "stoppedAt": "reached the 12-step sweep cap"
+    },
+    {
+      "task": "notifications_tour",
+      "shell": "elder",
+      "visited": 0,
+      "stoppedAt": "ERRORED: notifications_tour (elder) exceeded 240000ms"
+    },
+    {
+      "task": "emergency_contact_tour",
+      "shell": "elder",
+      "visited": 0,
+      "stoppedAt": "ERRORED: emergency_contact_tour (elder) exceeded 240000ms"
+    }
+  ],
+  "findings": [
+    {
+      "task": "language_voice_tour",
+      "shell": "elder",
+      "step": 2,
+      "stepId": "langvoice.section",
+      "kind": "callout-overlaps-target",
+      "detail": "callout {top:519.0 left:17.0 w:344.0 h:202.7} overlaps spotlighted target {top:100.2 left:17.0 w:344.0 h:456.1}"
+    }
+  ]
+}

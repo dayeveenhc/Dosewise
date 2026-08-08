@@ -22,7 +22,16 @@ export const patientScheduleTourSteps: WalkthroughStep[] = [
     onEnter: ON_TIMELINE,
     selector: '[data-tour="cg-patientswitcher"]',
     instructionKey: "walk.patientScheduleTour.step2",
-    act: { kind: "click", selector: '[data-tour="cg-patientswitcher"]' },
+    // Act-less + reveal, for the same reason step 3 below is: clicking here
+    // opened the patient dropdown and NEVER closed it (PatientSwitcher has no
+    // outside-click close), so it stayed spread over the week strip that step 3
+    // then spotlights — the only genuine occlusion the geometry sweep found,
+    // reproducing identically at zoom 1.0 and 1.25. Opening a list and
+    // abandoning it was never the point either: this step's own copy is "Tap
+    // here to switch which person you're viewing", i.e. it POINTS at the
+    // control rather than claiming to have used it, so pulsing it is the more
+    // honest reading as well as the one that doesn't bury the next step.
+    reveal: { screen: ON_TIMELINE, selector: '[data-tour="cg-patientswitcher"]' },
   },
   {
     id: "patsched.week-strip",

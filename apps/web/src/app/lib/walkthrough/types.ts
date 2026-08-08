@@ -125,6 +125,18 @@ export interface RevealDirective {
   caption?: { verb: string; text: string };
 }
 
+// The Confirm phase (cross-cutting decision B, "ConfirmBack-Phase"): a brief
+// recap of what Mei is about to submit, run between Act/Verify and the real
+// Submit `waitFor` step (orchestrate.ts::runActStep). Gated on trust/risk at
+// RUNTIME, not here — this directive only marks that a step carries the
+// confirm phase; WHAT to recap is the existing `review` field below, reused
+// rather than duplicated (WalkthroughReview renders it either way). An
+// object, not a bare boolean, so a future per-step override has somewhere to
+// go without a breaking type change.
+export interface ConfirmDirective {
+  recap: true;
+}
+
 // One row of the "check these details" summary shown inside the callout before
 // a manual Save. Declared as label + SELECTOR, never as a captured value: the
 // card reads the LIVE form, so it always shows what is actually there —
@@ -147,13 +159,23 @@ export interface WalkthroughStep {
   selector: string;
   navSelector?: string;
   instructionKey: string; // through t() — no raw strings, this app has an i18n parity gate
-  voiceKey?: string; // falls back to instructionKey for TTS
+  // NOTE: no `voiceKey` here. It existed as a TTS override for the idle popup's
+  // "Explain this step again" button, which was that field's only consumer ever
+  // and was removed 2026-08-07 — leaving it declared would be the same
+  // declared-and-read-by-nothing shape as `skippable` and
+  // WALKTHROUGH_TASK_LABELS, both of which this repo has already paid for once.
+  // Re-add it (and a consumer) together if walkthrough narration is ever wired
+  // to real speech.
   // A step ends EITHER when the user does `waitFor` OR after Mei performs `act`
   // (which then auto-advances). Exactly one should be set; `waitFor` stays for
   // every existing highlight-only step and the consent flows' human-tap Submit.
   waitFor?: WaitFor;
   act?: ActDirective;
   verify?: VerifyDirective;
+  // Confirm phase (decision B) — see ConfirmDirective above. Paired with
+  // `review` below; a step carrying `confirm` typically has no `verify`/
+  // `reveal` of its own (those live on the tail step after the real Submit).
+  confirm?: ConfirmDirective;
   reveal?: RevealDirective;
   // Show the live values of these fields in the callout so the person can
   // actually CHECK what Mei filled in before committing it.

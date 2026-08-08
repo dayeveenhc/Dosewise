@@ -16,15 +16,21 @@ from .base import ToolContext, register
 _SCHEMA = {
     "name": "offer_choices",
     "description": (
-        "Offer the person tappable option buttons in the app so they can answer "
-        "with a single tap instead of typing. Call this WHENEVER you ask a yes/no "
-        "question — especially before saving anything, offer a Yes and a No — or "
-        "when you ask them to pick between options, or a guided clarifying question "
-        "with a few likely answers (like verifying a detail before you act). Pass "
-        "2-4 short options in the person's own language. Still say the question in "
-        "your reply text too; the buttons accompany it. The tapped option is sent "
-        "back verbatim as the person's next message, so word each option as the "
-        "answer you want to receive (e.g. 'Yes, save it' / 'No, not now')."
+        "Offer the person ready-made answers to your question so they can pick one "
+        "instead of typing it out. Call this EVERY time your reply asks a yes/no "
+        "question. That includes a purely CONVERSATIONAL yes/no — 'Shall I look "
+        "that up for you?', 'Would you like me to remind you?', 'Is that right?' — "
+        "not only a confirm before you save something; a conversational question "
+        "with no answers attached leaves the person with nothing but the keyboard. "
+        "Also call it when you ask them to pick between options, or a guided "
+        "clarifying question with a few likely answers (like verifying a detail "
+        "before you act). Pass 2-4 short options in the person's own language. "
+        "Still say the question in your reply text too; the options accompany it "
+        "and never replace it. The chosen option is sent back verbatim as the "
+        "person's next message, so word each one as the answer you want to receive "
+        "(e.g. 'Yes, save it' / 'No, not now'). Never describe the answer control "
+        "or name a symbol for it in your reply text — how it is drawn differs by "
+        "device and channel, and you cannot see it."
     ),
     "input_schema": {
         "type": "object",

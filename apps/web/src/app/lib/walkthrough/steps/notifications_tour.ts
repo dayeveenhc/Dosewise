@@ -3,9 +3,16 @@ import type { WalkthroughStep } from "../types";
 const ON_NOTIFICATIONS: WalkthroughStep["screen"] = { mode: "elderly", tab: "notifications" };
 
 // Spotlight tour of the elder Notifications tab (ElderlyNotificationsScreen.tsx),
-// centred on the MOCK low-stock/refill alert (there is no live push infra — the
-// card is a static demo row carrying the stable anchors notif-refill-row /
-// notif-ack-btn). Owned by the s19 low-stock-reorder scenario agent.
+// centred on the low-stock/refill alert. Owned by the s19 low-stock-reorder
+// scenario agent.
+//
+// The card was a hardcoded "Metformin, 4 days" demo row until 2026-08-08 and is
+// now derived from real supply data (lib/alerts.ts). Two consequences this file
+// depends on: the anchors below ride the FIRST alert card rather than a fixed
+// medicine, and ElderlyApp REFUSES to start this tour at all when nothing is
+// outstanding — otherwise step 2 would spotlight an element that isn't there.
+// Only notif-refill-row and notif-ack-btn are used here, and every alert card
+// renders both, so the tour is safe whatever kind of alert is topmost.
 //
 // Steps 1 and 3 are `act` and step 2 is an act-less `reveal` (the alert row is
 // a plain container with no click handler, so pretending to click it would be a
@@ -19,8 +26,10 @@ const ON_NOTIFICATIONS: WalkthroughStep["screen"] = { mode: "elderly", tab: "not
 // assert the tab even though step 1's tap already switched it (a harmless no-op
 // if already there), keeping the target present no matter the entry point.
 // AI-automated (2026-07-28): Mei auto-advances the spotlight herself at the slow
-// PACING rate — the person just watches. The card is a static mock (no real
-// notification is dismissed on the backend), so auto-clicking through it is safe.
+// PACING rate — the person just watches. Auto-clicking Got it stays safe now the
+// alerts are real, because acknowledging one is host STATE, not a backend write:
+// nothing is deleted, and the alert returns on the next evaluation if the
+// underlying situation still holds.
 export const notificationsTourSteps: WalkthroughStep[] = [
   {
     id: "notif.go-to-notifications",
@@ -45,7 +54,7 @@ export const notificationsTourSteps: WalkthroughStep[] = [
     onEnter: ON_NOTIFICATIONS,
     selector: '[data-walk="notif-ack-btn"]',
     instructionKey: "walk.notificationsTour.step3",
-    // Tapping Got it dismisses the mock card and completes the tour.
+    // Tapping Got it acknowledges the card and completes the tour.
     act: { kind: "click", selector: '[data-walk="notif-ack-btn"]' },
   },
 ];

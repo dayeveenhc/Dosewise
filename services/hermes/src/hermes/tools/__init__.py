@@ -1,8 +1,9 @@
-"""Importing this package registers all 28 tools (across 15 modules —
+"""Importing this package registers all 29 tools (across 16 modules —
 ``doses`` and ``medications`` register five each; ``caregiver`` and ``refills``
 register three each; ``profile`` registers two) into the registry."""
 
 from . import (  # noqa: F401  (imported for registration side effects)
+    alerts,
     caregiver,
     choices,
     doctor,

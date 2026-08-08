@@ -32,18 +32,57 @@ def _parse_hhmm(value: str | None) -> time | None:
         return None
 
 
+def _parse_date(value: str | None) -> date | None:
+    try:
+        return date.fromisoformat(str(value))
+    except (ValueError, TypeError):
+        return None
+
+
 def scheduled_today(schedule: dict, local_today: date) -> bool:
     """Whether a medication's schedule fires on ``local_today``.
 
-    Backward compatible: a schedule with no ``days`` (or ``frequency`` != weekly)
-    fires every day, exactly as before. A weekly schedule fires only when today's
-    weekday token is listed in ``schedule.days`` (e.g. ``["mon", "thu"]``).
+    Mirrors ``apps/web/src/app/lib/medications.ts::isDueOn`` — the two engines
+    have to agree, or the app shows one cadence while the reminder scheduler
+    sends another.
+
+    1. ``end_date`` (a fixed course, "take this for 2 weeks") is checked FIRST
+       and beats every cadence below: past the last day nothing is due. The date
+       is INCLUSIVE, matching the TS side.
+    2. ``days`` — a weekly schedule fires only when today's weekday token is
+       listed (e.g. ``["mon", "thu"]``).
+    3. ``interval_days`` — every N days counted from ``start_date``.
+
+    Backward compatible throughout: a schedule with none of these keys fires
+    every day, exactly as before. Every parse failure FAILS OPEN (still due) —
+    a medication that silently stops reminding is worse than one that reminds a
+    day too long.
     """
+    end = _parse_date(schedule.get("end_date"))
+    if end is not None and local_today > end:
+        return False
+
     days = schedule.get("days")
-    if not days:
+    if days:
+        tokens = {str(d).strip().lower()[:3] for d in days}
+        return WEEKDAYS[local_today.weekday()] in tokens
+
+    try:
+        every = int(schedule.get("interval_days") or 1)
+    except (ValueError, TypeError):
+        every = 1
+    if every <= 1:
         return True
-    tokens = {str(d).strip().lower()[:3] for d in days}
-    return WEEKDAYS[local_today.weekday()] in tokens
+    start = _parse_date(schedule.get("start_date"))
+    if start is None:
+        # No anchor to count from. buildSchedule only writes start_date on the
+        # interval branch and set_medication_reminder never writes it at all, so
+        # rows without one are real — treat them as daily rather than silently
+        # muting them.
+        return True
+    # Python's % is already non-negative for a positive modulus, so the TS
+    # side's ((d % n) + n) % n dance is deliberately absent here.
+    return (local_today - start).days % every == 0
 
 
 def due_reminders(meds: list[dict], *, now: datetime, tz: str) -> list[dict]:

@@ -124,7 +124,12 @@ export function buildVerifyRunner(deps: VerifyDeps): (verify: VerifyDirective) =
           // this medication's slots (12h labels) and compare as a set against
           // the expected HH:MM times.
           const slots = meds.filter(m => norm(m.name) === norm(verify.name)).map(m => m.time);
-          const expected = verify.times.map(hhmmTo12h);
+          // Explicit arrow, NOT point-free: hhmmTo12h now takes an optional
+          // CaptionOptions second argument, and Array.map would hand it the
+          // index. Deliberately called with NO options here — this compares
+          // against the app's own stored 12h labels, so a localized/24h
+          // rendering would never match.
+          const expected = verify.times.map(t => hhmmTo12h(t));
           return expected.length > 0
             && expected.length === slots.length
             && expected.every(t => slots.includes(t));

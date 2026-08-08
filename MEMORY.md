@@ -9,7 +9,1357 @@ letting this grow forever — it's a memory aid, not an audit log.
 
 ---
 
-## 2026-08-02 (latest) — 8 reported defects, 6 root causes. The headline one was a PROMPT rail, not the engine.
+## 2026-08-08 (latest) — Badge back ON the bell, and a full walkthrough sweep that found two real occlusions
+
+**THE BADGE OVERLAPS THE BELL ON PURPOSE. Do not "fix" it again.** The report
+"the number overlaps with the bell icon" was read as *remove the overlap*, and
+the badge was pushed fully clear (`bottom-full mb-2`, 8.5px of daylight). That
+was wrong: it then read as a detached number floating above the tab. The ask was
+the conventional iOS/Android badge — on the icon's top-right corner, overlapping
+it. Now `-top-1.5 -right-2.5`, measured overlap 36.6×32.4px inactive /
+39.9×35.6px active. The corner is where a Bell glyph has whitespace, and
+`ring-2 ring-background` is what keeps the digits from reading as painted onto
+the ink. The icon-wrapper anchoring stayed (the active glyph is `scale-125` and
+grows from its centre, so a column-anchored badge shifts exactly when selected).
+`scratchpad/statusbar.spec.ts` now asserts the overlap, corner placement, and
+in-nav containment rather than the absence of overlap.
+
+---
+
+**A sweep harness can go BLIND rather than noisy, and that is far worse.**
+`highlight-sweep.spec.ts` mirrors placement's constants on purpose (an imported
+constant can never catch that constant being wrong) — but its mirror was still
+`HEADER_RESERVE = 84` after the product moved to 100. `callout-above-header`
+fires below the reserve, and placement now clamps to ≥100, so **the check could
+never fire**, while a callout landing at 85-99 would sit under the ~99px header
+unreported. Independence is the point; staleness is not. Same trap bit
+`sweepChangeCutout`'s independent copy of `readValues`: it read `.value` only,
+so the new course-length review row (a `<p>`) scored blank, the sweep expected
+the Change hole there, and it reported a **712px** `change-cutout-misaligned`
+against a product that was behaving correctly. Both mirrors updated.
+
+**Two REAL occlusions found, both now fixed:**
+
+1. **`travel_mode_auto#2`** — step 2 clicks the Travel Mode tile, the sheet
+   slides up over it, and the run then HELD with its spotlight on a tile behind
+   the sheet's own backdrop. `computeHoldGate`'s case 2 already existed for
+   exactly this ("a click that opens the surface the next step fills") but was
+   too narrow: it required the next step to FILL, and **burial does not care
+   what the next act is** — here the next step clicks the sheet's own toggle.
+   Widened to "the next step ACTS". A step with no act still holds, because then
+   nothing has moved on. Note this file's earlier entry WITHDREW this finding as
+   a clipping artifact — that withdrawal was wrong; it reproduces at the correct
+   viewport, and the sweep's own screenshot shows the sheet over the tile.
+2. **`patient_schedule_tour#3`** (and its zoom-1.25 twin) — the only occlusion
+   the previous baseline still carried. Step 2's click opened the patient
+   dropdown, `PatientSwitcher` has **no outside-click close**, so it stayed
+   spread over the week strip step 3 spotlights. Fixed by making step 2 an
+   act-less `reveal` — which its own copy already justifies: *"Tap here to
+   switch which person you're viewing"* POINTS at the control rather than
+   claiming to have used it, and opening a list only to abandon it was never the
+   demonstration. MEMORY.md's rule (a passing governed scenario outranks a sweep
+   finding) was honoured: **s28 passes**, and its phase log now shows
+   `reveal` at steps 2 and 3.
+
+**The gate widening cost two governed specs, and the fix is a PATTERN worth
+reusing.** `s02` and `s14` both armed their mid-fill observation AFTER
+`advanceWalkthroughToStep`, which worked only because the run used to stop and
+wait there. With the run carrying itself, the fill was over before they looked.
+Both now **arm the watcher first and await it after** the advance. The
+`advanceWalkthroughToStep` call is kept as a deliberate no-op so the specs still
+work if the gate ever tightens again.
+
+**`presspulse`'s headline number was measuring the wrong thing.** It reported
+amplitude 6.25px / worst dy 40.59px against a recorded baseline of 0.00 / 2.64
+— which looks like a serious regression and is not one. The spec samples ONE
+fixed element for a fixed 4s, but step 1's gate collapses into step 2, so the
+later frames compare step 2's cutout against step 1's button. Restricted to the
+frames that actually carry a `scale` transform: **amplitude 0.00px, worst dy
+0.36px**. The spec now reports the press window as its headline and labels the
+whole-window figure as spanning a step advance.
+
+**Sweep numbers — the new baseline is
+`scratchpad/shots/sweep/report-final2-2026-08-08.json` (25 findings, 24 log
+rows, all 21 tasks + 3 zoom cases).** Against
+`report-fullrun-corrected-2026-08-07.json` (26): **HARD GATE = 0** —
+`cutout-misaligned`, `glow-*`, `nav-cutout-*`, `change-*` and
+`zoom-boundary-not-reached` all zero, and `target-occluded` went **2 → 0** (both
+`patient_schedule_tour#3` rows, at zoom 1.0 and 1.25, are gone). 5 baseline rows
+GONE, 4 new: two are the accepted wrapper pair on the newly-covered duration
+step, one is the known `autoRx.verify` row reindexed #7→#9 by those two steps,
+and one is `add_doctor_question_auto#3` — benign and timing-dependent, a step
+whose own act (opening the question composer) removes the button it spotlights,
+after which the widened gate carries the run straight on, so nobody sees a
+stranded highlight. All three zoom boundaries genuinely crossed
+(`[1.25,1,1]`, `[0.85,1,1]`, `[1,1,1.25]`).
+
+Note the sweep's final `expect(findings).toHaveLength(0)` ALWAYS reports a
+failed test when anything is found — that is its design, not a run error.
+
+Coverage went UP:
+`add_prescription_auto` 6→8 steps (the new duration steps are swept now — pass
+`duration_days` or `hasDuration` is false and all three additions are silently
+skipped) and `request_refill` 1→3. **`notifications_tour` needed a low-stock
+seed or it would not start at all** — its card became data-driven and gated on
+`medsLoaded`, and `resetElderState` nulls `refills.pills_remaining`, so a pooled
+account has nothing low and `handleWalkthroughStart` returns
+`walk.refused.nothingToShow`. **Diff on `(task, shell, step, kind)`, never on
+the whole row:** the status bar's +12px changes every `detail` coordinate, and
+`fKey` includes `detail`. Adding two steps also reindexes
+`add_prescription_auto`'s later findings (its known `autoRx.verify` moved #7→#9).
+**Predicted boundary flips from the −16px band did NOT materialise** — zero new
+`callout-could-not-clear`.
+
+**A collapsing gate needs the sweep to re-read the step index AFTER measuring.**
+The widened case 2 produced a NEW hard-gate `cutout-misaligned` (dy=527.9) plus
+a companion `target-occluded` on `add_doctor_question_auto#2` — and the product
+was fine: the sweep's own screenshot showed **"Step 3 of 7"** with the cutout
+perfectly glued to step 3's control. The run had carried itself onward WHILE
+measureSettled was sampling, so the cutout belonged to step N+1 while
+`step.selector` still named N's target, by then scrolled to `top:-83`. The sweep
+now re-reads the position after measuring and DROPS the sample if it moved (the
+step advanced into is measured on the very next pass, so nothing goes
+unchecked). Expect this to matter more as gates collapse more —
+`add_doctor_question_auto` went from stopping at 6 to walking all 7 steps.
+
+**Read `target-occluded: "but nothing (outside the viewport) is painted over
+it"` as a FABRICATED finding, every time.** It means the target was off-viewport
+and `elementFromPoint` returned null — this file already records a whole class
+of those from a clipped viewport. Here it was a genuinely off-screen target, and
+the fix was upstream (the stale-sample drop), not in the occlusion check.
+
+**Accepted, not fixed:** `add_prescription_auto#5` frames the labelled duration
+block (Δ20.4px, 1.75×) — the same deliberate-wrapper class as
+`langvoice.section` (Δ79.9) and `textSize.slider` (10.24×); the label is what
+makes the step legible. **Pre-existing, still open:** `s19`'s final assertion
+expects the refill caption to name "Metformin" but it reads *"Updated: supply 4
+pills → 60 pills"* — `changeHighlight.ts`'s generic field-diff branch has no med
+name, and that file's uncommitted diff is a localization rework from an earlier
+session.
+
+**Gates:** web `tsc` · **304** vitest · `build` · `coverage.spec.ts` 33/33 ·
+`spotlight-frames` (glue ≤1.95px, 0 frames over 2px, callout intersect 0ms) ·
+`presspulse` 0.00px · s01, s02, s14, s15, s27, s28, s33 green against a scratch
+Hermes on `:8901`.
+
+---
+
+## 2026-08-08 — iOS status bar + badge: two status bars existed, and the new urgent popup was blocking walkthroughs
+
+**There were TWO status bars, and only one was a component.** `LiveStatusBar`
+(`components/shared.tsx`) served the caregiver shell and the three pre-auth
+screens; the elder shell — the app's PRIMARY surface — carried a hand-inlined
+byte-for-byte duplicate. Restyling the component alone would have silently left
+the main demo screen on the old bar. Extracting it also deleted `currentTime`
+and its **1-second `setInterval`**, which existed only to feed that copy: the
+whole elder shell was re-rendering once per second for a clock.
+
+**The clock needs an EXPLICIT `font-sans`, and nothing about that is obvious.**
+All four phone-frame wrappers in `App.tsx` set
+`style={{ fontFamily: "'DM Sans', system-ui, sans-serif" }}`, and inline
+font-family inherits — so "just use the system font" renders in DM Sans and
+looks almost right. Tailwind v4's default `--font-sans` is
+`ui-sans-serif, system-ui, …`, **which IS SF Pro on Apple hardware**; SF Pro
+itself is not redistributable, so that stack is the whole SF Pro story. Verified
+headlessly by asserting the computed family does NOT contain "DM Sans" — SF Pro
+will never resolve on this Linux box, and chasing that is a wasted cycle.
+
+**The notch is deliberately NOT `md:`-gated even though the bezel is.** An
+exploration pass asserted the Playwright viewports were "≥ md, so screenshots
+always show the bezel" — **that is wrong**: `md` is 768px and both configs are
+430/460px, so `md:` styles never apply there and the bezel has never appeared in
+a screenshot. A gated notch would therefore be invisible at exactly the width
+this phone mockup is looked at. It belongs with the fake cellular/Wi-Fi/battery
+icons, which render at every width, not with the desktop-only bezel.
+
+**The badge overlapped because it was anchored to the COLUMN.** `w-16 h-12
+justify-end` leaves the icon's top edge at y≈8, so an 18px badge at `top-0`
+overlapped by ~10px by construction — worst on the ACTIVE tab, where
+`scale-125` grows the icon into a badge that cannot move. Fixed by anchoring to
+the icon's own (unscaled) wrapper and giving that ONE column `h-14`: the row is
+`items-end`, so extra height extends upward and nothing else shifts. Measured
+clearance went from overlap to **8.50px inactive / 5.25px active**. `mb-1` was
+not enough — it measured 1.00px on the active tab, technically clear and
+visually touching.
+
+**`HEADER_RESERVE` 84 → 100, and this is the OPPOSITE call to the AutoNav one
+two entries up — deliberately.** There, raising it would have shrunk
+`GuidedTour`'s band for a toggle GuidedTour doesn't have. Here the status bar
+grew 28→40px and pushed BOTH shells' headers down equally, so the reserve is
+just tracking a real shift (elder header measured 98.8px). Also **exported
+`GAP`/`NAV_RESERVE`/`HEADER_RESERVE`**: `placement.test.ts` mirrored `84` as a
+literal in eight places, so a legitimate change surfaced as two failures that
+looked like placement bugs. It imports them now.
+
+**The caregiver header has ALWAYS been outside the reserve (~160px before this
+pass, 172 after) and is left alone on purpose.** Clearing it would cost ~88px of
+band in both shells. It is also not the failure it looks like: the overlay is
+`z-[200]` and the header `z-30`, so a high callout paints OVER the header rather
+than hiding behind it. The reserve is a tidiness floor, not a correctness one.
+
+---
+
+**The real find: the previous pass's urgent popup was breaking walkthroughs, two
+ways.** `s15-edit-profile` failed on *"`I'll deal with it later` from
+`[data-walk="urgent-alert-popup"]` subtree intercepts pointer events"*.
+
+1. **Suppression only gated OPENING a popup, never closing one.** The effect
+   began `if (popupAlert) return;` — *before* the `alertsSuppressed` check — so a
+   popup already on screen when a walkthrough started just stayed there, and its
+   `z-[120]` backdrop swallowed every tap beneath it including the walkthrough's
+   own Save. The previous entry called two competing full-screen modals "the
+   worst outcome available"; this was exactly that, via an ordering I hadn't
+   covered. Suppression is now checked FIRST and closes a standing popup —
+   without recording it as popped-for-the-day, so it can re-raise afterwards
+   rather than being silently swallowed because a walkthrough happened to start.
+2. **Demo fixture data was raising real alerts.** The elder shell seeds `patient`
+   from `data/patients.ts`, whose Metformin and Latanoprost carry
+   `refillDaysLeft` 4 and 3 — under both thresholds. So **every elder session
+   opened with a full-screen alert about medicines the person does not take**,
+   until `refreshMeds` asynchronously replaced them. Same dishonesty class as the
+   hardcoded "Metformin, 4 days" card removed earlier the same day, and against
+   CONTEXT.md's own "real medical facts have NO mock fallback" rule. Gated on a
+   `medsLoaded` flag, set on **success only** — `refreshMeds` is a bare
+   `Promise.all` with no catch, so flipping it on settle would build alerts from
+   the very fixture being excluded. A failed fetch therefore means no alerts that
+   session: the right way round for a medication app.
+
+**`medsLoaded` forced a second fix that is easy to miss.** The
+`notifications_tour` dispatch gate was `liveAlerts.length === 0 → refuse`; with
+`medsLoaded` false that FALSELY refuses during the pre-fetch window, i.e. tells
+someone who does have alerts that there is nothing to show. It is now
+`medsLoaded && liveAlerts.length === 0` — refuse only when we KNOW the tab is
+empty. `s19` races exactly that window.
+
+**`s19` needed a medicine that STAYS low, and this is not obvious.** Seeding a
+low `refills` row on Metformin does not survive the spec's own flow: its real
+`log_refill` turn RAISES `pills_remaining` (4 → 60 — that is what a reorder
+does), so by UI time nothing is low and `notifications_tour` has no card to
+spotlight. A second, untouched medicine (Atorvastatin, 3 pills) is what keeps a
+real target on screen.
+
+**Pre-existing, flagged not fixed:** `s19`'s final assertion
+(`caption).toContain("Metformin")`) fails against caption text
+`"Updated: supply 4 pills → 60 pills"`. `changeHighlight.ts`'s generic
+field-diff branch does not include the medication name, and that file's
+uncommitted diff is a pure localization rework (`"Taken"` → `verb("taken")`)
+from an earlier session — not this pass. Left for whoever owns that work.
+
+**Gates:** web `tsc` clean · **303** vitest · `build` clean ·
+`scratchpad/statusbar.spec.ts` 3/3 · `s01`, `s02`, `s15` (both tests) pass live
+against a scratch Hermes on `:8901`. Badge count dropped 4 → 3 in the visual
+spec once the fixture gate landed — direct evidence the demo data stopped
+leaking in.
+
+---
+
+## 2026-08-08 — Five-item pass: two "bugs" that were one missing line, a control that never resized, and two features that had to reach the backend to be true
+
+**Item 1 was not a render flash, and looking for one would have wasted the
+pass.** "Talk to Mei after idle still shows the previous screen" reads like a
+one-frame paint, and it isn't: there is no `setTimeout`/`rAF`/`flushSync`
+anywhere on that path in either shell, and React 18 batches the handler's three
+`setState`s into one commit. The real cause is that
+`ElderlyAIScreen`'s `openChatView` effect was **mount-only and never set
+`mode`** — it set `category`/`query` and called `onOpenChatViewConsumed`, on the
+assumption that the `useState` initializer had already read the flag. That
+assumption fails exactly when the host's handoff is a no-op: `openAI()` is
+`setTab("ai")`, and the person is very often ALREADY on the ai tab
+(`travel_mode_setup` is entirely there, `request_refill` steps 2-3 are, and
+`narrated.ts::navStep` is step 1 of five tours). No remount ⇒ no re-read ⇒ they
+stay on the help tiles, and `pendingChatView` leaks `true` into the next visit.
+Fix is `setMode("chat")` plus keying the effect on `[openChatView]`. Terminates
+on its own (host clears the flag in response to the consume). **Present in the
+caregiver shell too** — same seed, same mount-only consume — and fixed there.
+
+**Item 4 was simply absent, not broken.** No mount/restore scroll-to-bottom
+existed anywhere; all ~9 `scrollToBottom` call sites are append paths (send,
+tool_start, reply, upload), so a thread restored from sessionStorage rendered at
+`scrollTop = 0`. Keyed the new effect on `mode` so it covers both a remount that
+seeds into "chat" and the help→chat switch, **always instant** — gliding down
+through the whole history is the reported symptom, not the fix. Checked and
+**not** a hazard, so don't spend time on it: `dw-view-in`/`dw-msg-in` animate
+`opacity`/`transform` only and transforms don't affect layout, so neither can
+perturb `scrollHeight`. The one real hazard is a restored `msg.image`, which has
+no intrinsic size — hence the `onLoad` correction, gated on still being near the
+bottom so it can't yank someone who scrolled up. Worth stating plainly: "recent
+chats appear" on a plain tab round-trip **already worked** via the mode seed
+(`scratchpad/chatshot.spec.ts` covers it); only item 1's path was broken.
+
+**Item 2: the button never resized — its CONTAINER did.** The AutoNav toggle is
+a fixed 44×44 circle, but its wrapper was `absolute top-2 right-3 flex flex-col
+items-center` with **no width**, i.e. shrink-to-fit at `max(44, labelWidth)`.
+"Auto" (~38px) gave a 44px box with the button flush right; "Step by step"
+(clamped to `max-w-[76px]`) gave a 76px box, and `items-center` re-centred the
+same button `(76-44)/2 = 16px` inward. Fixed `w-[84px]` + `w-full` on the label
+pins the centring axis in both states. **A single inline icon+label pill was
+measured and rejected**: ms is `"Langkah demi langkah"` (20 chars) ≈ 158px, and
+~185px at `--dw-text` 1.25 — 40% of a 460px frame. Also moved `right-3` →
+`right-4` to line up with the callout's own `left-4 right-4`.
+**`HEADER_RESERVE` was deliberately NOT raised**: `placement.ts` is shared with
+`GuidedTour`, which has no toggle, so bumping it would shrink the passive tour's
+band to make room for a control that doesn't exist there. The column is ~79px at
+one line and ~92px wrapped against an 84px reserve; the wrapped case overlaps
+the callout's top edge by a few px, and this block paints AFTER the callout so
+the label sits on top rather than being hidden. Acceptable, and recorded rather
+than silently left. All 29 existing `Walkthrough.test.tsx` tests passed
+**unmodified**, which is the actual proof the contract held (`aria-pressed` on
+the `data-walk` element, one label visible at a time, the consent invariant).
+
+**Item 3's real trap was `updateMedication`, not the storage choice.**
+`end_date` rides the existing `medications.schedule` jsonb (no migration —
+`schedule` is already in every select list). But `buildSchedule` rebuilds the
+blob from scratch and `updateMedication` wrote it **wholesale**, so any key the
+sheet doesn't know about was destroyed the first time somebody corrected a dose.
+`set_medication_reminder` had always MERGED into `old_schedule`; that asymmetry
+is the bug. Now read → spread → **explicit deletes** for the cadence not chosen
+— without those, turning a weekly medicine back to daily would resurrect `days`.
+Costs one extra select per edit and fixes the whole class.
+Other decisions worth not re-litigating: the stored truth is the **end date**,
+not a duration (so re-opening an existing med shows remaining days instead of
+restarting the course, with no drift across repeated edits); it is **inclusive**
+on both sides, pinned in three doc comments, because an off-by-one between the
+app and the scheduler is exactly the divergence this pass closed; auto-cancel is
+**derived in `isDueOn`/`scheduled_today`**, never a write-on-render; and a
+finished course stays `archived=false` behind a one-tap "Move to past medicines"
+— archiving is the same state `discontinue_medication` writes, so it is the
+person's call.
+**Closed the `interval_days` divergence in the same edit**, which
+`lib/medications.ts:68-73` had documented since 2026-07. Provably additive:
+`grep interval_days services/hermes` returned **zero hits** — no fixture, no
+tool, no test — and a schedule without the key takes the `every <= 1 → True`
+path byte-identically. Two cautions recorded because they are real: it is a
+**behaviour change to existing data** (an every-other-day medicine was being
+reminded DAILY and reported missed on its off days — worse than the bug being
+fixed), and it needs the same **"no anchor → daily" fail-open** `isDueOn` has,
+since `buildSchedule` only writes `start_date` on the interval branch.
+
+**`WalkthroughReview::readValues` read `.value` ONLY, and that is a hard stall,
+not a cosmetic miss.** A review row naming anything that isn't an `<input>` — a
+chosen preset, a segmented control, a derived summary `<p>` — read as `""`,
+fired `onBlankChange`, and blocked the Confirm phase on a clarifying question
+about a field the person really did fill. Added a `textContent` fallback.
+Provably backward compatible: a real `<input>` has `.value === ""` when empty
+(never `undefined`), and `""` is not nullish, so `??` cannot reach the fallback
+for the four pre-existing rows. This is what made the course-length review row
+possible at all; without it, adding the row would have broken every run.
+
+**Item 5, class 4 ("Mei decides"): the 0/6 lesson applies, but its FIX does
+not.** `raise_alert` has exactly the shape that measured 0/6 for `offer_choices`
+— a tool whose only effect is a side effect. But `answers.py`'s forced extra
+completion was affordable only because a cheap deterministic gate existed ("the
+reply ends in `?`"). There is no equivalent for "should this turn raise an
+alert?", so forcing would tax **every** turn. Took the other exit instead:
+**make the tool not side-effect-only.** It returns the deduplication verdict —
+either "raised, so say it once, briefly" or "NOT raised, a more serious one is
+already interrupting them; mention this in your reply and do not promise a
+popup" — a fact the model cannot know and must incorporate. A tool whose answer
+changes what you have to write next is a tool that gets called. If measurement
+later shows it still gets skipped, the forced-completion mechanism is the
+escalation, not the starting point.
+
+**Making the low-stock card real had a cost that had to be paid, not dodged.**
+It was a hardcoded `"Metformin"`/`4 days` literal that rendered for everyone,
+which quietly guaranteed `notifications_tour` always had a target. Real data can
+be absent, so: the tour is now refused at dispatch when nothing is outstanding
+(mirroring `request_refill`'s existing `anyMedicationRunningLow` gate verbatim),
+its anchors ride the FIRST supply alert rather than a fixed medicine, and
+**`e2e/scenarios/s19` had to start seeding a real `refills` row** — it asserted
+`notif-refill-row` appears then disappears while seeding no supply data at all.
+That spec is more honest now; its own header had already conceded the card was a
+mock.
+
+**Three things the alert design reuses rather than invents, all found by
+looking:** `NotificationPrefs` already has exactly four toggles
+(`doseReminders`/`refillAlerts`/`caregiverNotes`/`missedDoseAlerts`) that map
+one-to-one onto the four trigger classes — already persisted, already in
+Settings, already localized; `medications.priority` is a real enum the Hermes
+scheduler already escalates on, and `fetchElderMedications` simply wasn't
+selecting it; and `dosing.py::in_quiet_hours` already existed, so `inQuietHours`
+is a direct transcription including the wrap-around branch rather than a second
+definition that could drift.
+
+**Two mechanics the popup could not inherit from `WalkthroughIdlePrompt`:** it
+needs its **own z-index** (`z-[120]` — above the sheet's `z-50` and the nav's
+`z-40`, below the walkthrough's `z-[200]`, whose callout is the only host of
+Exit, and below `ToastStack`'s `z-[300]`), and the dedupe set must be
+**sessionStorage, not a ref** — every elder screen unmounts on a tab switch, so
+an in-memory Set re-pops the same alert on every round trip (the same class of
+mistake as the `screenResetSignal` counter this file already documents).
+Also: the alert evaluation had to sit **above** the existing 30s poller's
+`Notification.permission !== "granted"` early-return. An in-app popup has no
+dependency on the OS prompt, and inheriting that gate would have silently
+disabled the whole feature for anyone who declined it.
+
+**The repo's own lint test caught a real accessibility slip**: `textScale.test.ts`
+rejected a hardcoded `text-[10px]` on the new nav badge. Every size is
+`text-[calc(Npx*var(--dw-text,1))]` for a reason.
+
+**Gates:** web `tsc` clean, **299** vitest (262 → 299: +37 across new
+`medications.test.ts`, `alerts.test.ts`, `WalkthroughReview.test.ts`, and the
+AutoNav/duration cases), `npm run build` clean, `coverage.spec.ts` 33/33.
+Hermes **433** pytest (415 → 433) + ruff clean. **Not yet run live**: no scratch
+Hermes was driven this pass, so the course-duration end-to-end and the popup's
+anti-nag behaviour have unit/`pytest` coverage but no browser proof. `s19`'s fix
+is static. POST has not been run — Hermes was not restarted.
+
+---
+
+## 2026-08-07 — Six-item pass: the spotlight was already glued, the Auto toggle didn't do what it said, and a correct prompt fix that measured 0/6
+
+**Theme: three of the six items were wrong about their own cause, and only
+measuring found that out.** Item 1 was already fixed and the artifact "proving"
+otherwise was a pre-fix baseline. Item 5's new toggle worked and changed
+nothing, because a different function ignored it. Item 4's prompt change shipped
+correctly, was verified present in the built prompt, and had zero effect on real
+turns. In all three the code read as if it worked.
+
+**The headline is a NEGATIVE result, and it matters more than the fixes.**
+`scratchpad/shots/sweep/report.json` looked like proof that item 1 ("highlight
+boxes are not accurate and very off centering") was live: five *settled*
+findings on `add_prescription_auto`, including 3px cutout offsets and a 427px
+callout painted over the Save button. **That file is dated Aug 6 15:47 — it is
+the PRE-fix baseline the 2026-08-06 per-frame watcher was written against, not
+evidence against the current tree.** A fresh per-frame measurement
+(`scratchpad/spotlight-frames.spec.ts`, new) reports glue at **max 1.20px,
+resting 0.36px** across steps 1-4. Do not re-hunt the stale-rect bug; it is
+fixed. Read a report.json's mtime against the commit that fixed what it
+describes before treating it as current.
+
+**What item 1 actually was, all four found by measuring rather than reading:**
+1. **Callout/cutout transition desync.** `SpotlightCallout` carries
+   `transition-[top] duration-300`; on a step change the cutout jumps next
+   frame while the card glides, so for that window it sits across the target it
+   is describing. Measured at 33/174/186ms per step change. New `animateTop`
+   prop, false for two frames after `stepIndex` changes (one to commit the new
+   `top` untransitioned, one to re-arm) — within-step moves still glide.
+   Re-measured: **3 windows → 1 single frame.**
+2. **`pressPulse` destroyed the lift.** `actor.ts` set
+   `transform = "scale(0.94)"`, and step selectors ARE `[data-walk]` nodes, so
+   the lift effect's `closest("[data-walk]")` returns the target itself — the
+   `translateY(-Npx)` was thrown away for ~460ms mid-click. Now composes onto
+   the LIVE inline value with `translateY` kept FIRST (so the lift's own
+   `DOMMatrixReadOnly(...).m42` still reads it; reversed, the lift oscillates)
+   and strips only its own `scale()` token. Snapshot/restore was rejected: the
+   lift may write during the press. Transition restore moved into a `finally` —
+   the cancel path leaked `transition: transform 200ms ease` permanently.
+3. **`changeRect` was a one-shot with no watcher and no glow** — measured once
+   in `focusFirstReviewField` and never again, though tapping "Change" is
+   exactly what reflows the sheet. Now a selector in a ref, measured by the
+   same per-frame `recompute()` as `rect`/`navRect`, plus the missing third
+   `.dw-spotlight-glow`.
+4. **`calloutTop`'s else branch.** Split into `calloutPlacement() → {top, cleared}`
+   (`calloutTop` kept as `.top` so GuidedTour is untouched). It returned
+   `bottomFloor` unconditionally, which lands ON any target in the band's lower
+   half. **"Take the roomier side" is NOT the fix and the unit test caught it:**
+   the roomier side can still be shorter than `calloutHeight`, and the clamp
+   then drags the card straight back across the target — 355px of room below
+   still produced a full overlap. It now evaluates both clamped candidates and
+   keeps the one that covers LESS of the target. `cleared:false` is a SIGNAL,
+   surfaced as `data-walk-callout-cleared` on the overlay root: for a target
+   taller than the band no placement can clear it, and the resolution is
+   shorter copy or a smaller step selector, not geometry. `placement.test.ts`
+   went from one `typeof … === "number"` assertion to real branch coverage.
+
+**Item 5's toggle was a lie until `computeHoldGate` learned about it.** The
+fast-forward button moved out of the callout's `aside` slot (below the review
+card, easy to miss) to a floating `rounded-full` control pinned to the overlay's
+top right — but live-driving it showed the run walking **Step 1 → Step 4 with
+Auto OFF**. Cause: `computeHoldGate` collapses a run of consecutive field fills
+regardless of AutoNav. Split the two cases it handles — case 1 (consecutive
+fills) is a CONVENIENCE and is now suppressed when the person asked for step by
+step; case 2 (a click that opens the surface the next step fills) is a
+CORRECTNESS fix — holding there leaves the spotlight on a control the new sheet
+buried — and still applies in both modes. Checkpoints gate for everyone
+regardless, so nothing commits without a tap either way.
+
+**Turning Auto back ON now releases the gate it is parked at**, which needed a
+`readyIsTapGatedRef`: gating only on `phase === "ready"` ALSO fires on a gate
+that is already auto-elapsing, cutting `READY_AUTO_MS`'s deliberate beat to zero
+on every auto run. Narrow to the terminal `ready` phase only — post-act, so
+resolving it re-runs nothing; never Confirm (risk/trust/blank decide that), and
+`waitFor` steps never reach `ready` at all.
+
+**Idle popup: two actions deleted, not renamed.** "Skip this step" called
+`requestNext()`, which on a Confirm phase resolves that phase's gate rather than
+skipping the step — the label described something it did not do — and it was
+correctly absent on `waitFor` steps, i.e. missing exactly when a stuck person
+wanted it. "Explain this step again" was `WalkthroughStep.voiceKey`'s only
+consumer ever, so **`voiceKey` is deleted too** rather than left declared-and-
+unused (the `skippable` / `WALKTHROUGH_TASK_LABELS` mistake, already paid for
+twice); the `voiceOutput` prop went with it. Leaves Talk to Mei / End the
+walkthrough / I'm still here.
+
+**"Talk to Mei" landing on the tiles was deterministic, not flaky.** Ask Mei
+seeds its view from the restored thread, and someone who launched the
+walkthrough from the help tiles has no thread — so the handoff reliably showed
+anything but Mei. New `openChatView` + `onOpenChatViewConsumed`, the exact
+`autoMessage`/`onAutoMessageConsumed` shape, in BOTH shells. **Deliberately not
+a monotonic counter** — that is the `screenResetSignal` bug this file already
+documents. Item 3's own tab-round-trip case was verified live and already
+worked; the caregiver shell got the parity it was missing (a bidirectional
+`ai.backToChat` pill — every `setMode("chat")` there was a side effect of
+sending, so the help list was a one-way door — plus the 60s idle-TTL sweeper).
+
+**Item 4: the prompt fix was correct, shipped, verifiable — and did nothing.
+0/6.** Buttons render only from `offer_choices` or `awaiting_confirmation` (a
+tool's propose branch), so a purely conversational yes/no gets neither.
+`soul.md` also told Mei to have people "tap ✅" in six places with no channel
+guard, on a web app with no ✅ control. All of that was fixed — `soul.md`
+channel-neutral, an unconditional ANSWER BUTTONS block in `prompts.py`, a
+widened `offer_choices` description — and verified present in the built
+27.8k-char prompt with `offer_choices` in the 28-tool list. **Then measured on
+real turns: 0 of 6 conversational yes/no questions carried answers.** A model
+that has committed to a text reply routinely skips a tool whose only effect is a
+side effect. **Do not try to fix that with more wording.**
+
+The mechanism fix is `agent/answers.py`: when a reply ends in a question mark
+(`?` or full-width `？`) with no options attached, `run_agent_turn` spends ONE
+extra completion with a **forced** `suggest_answers` tool call — `extract.py`'s
+existing trick, which is why it was cheap to build and provider-agnostic across
+all three backends. Forcing removes the compliance problem entirely, and the
+model writes the labels **in the reader's own language** — the thing that killed
+every server-side heuristic (Hermes holds no translation table; that is *why*
+the client owns the confirm-case Yes/No). Re-measured: **2/6**, and the two
+misses are correct — the model returned **[]** for the genuinely open "What
+would you like to ask them?" while giving three options for "Would you like me
+to do that?". The regex/English-only backstop was deleted, not disabled.
+`Settings.answer_buttons` (default ON) trades it back for the latency.
+
+**`tests/conftest.py` turns `answer_buttons` OFF by default and that is
+load-bearing:** the extra call goes through the same client, so in any
+fake-client test whose reply ends in a question it silently eats the next
+scripted response and the assertion fails several steps later, nowhere near the
+cause. `test_resolve_missed_doses_time_qualified` broke exactly that way (a
+propose turn legitimately ends "…shall I mark them all as taken?").
+
+**Correction to a premise worth recording:** the ✅ tap does NOT always bypass
+the model — `telegram.py`'s unmapped slots (dosage, missed doses, bulk)
+deliberately route a ✅ Yes through the LLM as literal `"yes"`, which makes
+"after they clearly say yes" a better fit than the old wording, not a worse one.
+
+**i18n: the diseases bug was a vocabulary mismatch, not a missing translation.**
+`localizeCatalogValue` does an exact lowercase lookup and the *stored* values
+did not match the *catalog* ones — `Type 2 Diabetes` vs `Diabetes`,
+`Hypertension` vs `Blood Pressure`, `Osteoarthritis` vs `Joint Pain`, and two
+with no entry at all. 5 of 6 conditions rendered English **on screens that
+called the localizer correctly**. Fixed with ~200 `CATALOG_ALIASES` + a
+normaliser that strips a trailing parenthetical. Free text still falls through
+by design. Also: every post-write ChangeHighlight caption was English (now 49
+`caption.*` keys, `hhmmTo12h` finally honours `timeFormat: "24h"` and moves
+AM/PM per language), `App.tsx`'s `readStoredLanguage()` was a genuine stale
+cache above the provider (new `useStoredLanguage()` escape hatch + a
+`CaregiverTour` wrapper), and **7 keys referenced by `AskMeiScreen` existed in
+no map at all** — the caregiver patient picker was rendering raw key names.
+Maps went 886 → 998 keys × 6.
+
+**Two open i18n gaps, reported not fixed:** `MED_SHAPES` can't be keyed without
+splitting `shape`/`shapeKey`, because `PillIcon.shapeFor()` string-matches the
+English text to pick a glyph; and `lib/medications.ts::to12h` still emits
+English AM/PM, so a caption can read `下午8:00` beside a chip reading `8:00 PM`.
+
+**The full geometry sweep finally has COMPLETE coverage, and the result is a
+clean negative.** 21/21 tasks, both shells, zero errored, zero timeouts (the
+account pool did it: 3 minted, 19 reused). **Zero `cutout-misaligned`, zero
+`glow-drift`, zero `nav-cutout-*`, zero `change-*`.** Prior passes could never
+say this because coverage was partial; this is the first run a future diff is
+worth taking against. `report-fullrun-2026-08-07.json` is the snapshot.
+Two corrections to the reset design that would have failed SILENTLY:
+migration `0004_rls_hardening` adds a RESTRICTIVE `for delete using (false)` to
+all seven tables, and **PostgREST reports an RLS-filtered write as success** —
+so a delete-based reset hands over dirty accounts with `error: null`. It is
+UPDATE-based with an independent read-back per step. And
+`walkthroughCompletionCount` is NOT in `profiles.accessibility` — it is browser
+localStorage, so clearing the DB blob never touched it.
+
+**Two real defects the sweep found, plus one FALSE POSITIVE worth recording
+because it nearly cost a working feature:**
+- **`caregiver_view_toggle_tour#2` — NOT a defect. Do not "fix" it.** The sweep
+  reported `callout-missing` and read it as the tour stranding the person:
+  step 2's click reaches `openModeSwitch()` → `setAppMode("onboarding")`, which
+  unmounts the caregiver branch and the overlay with it. The observation is
+  right and the conclusion is wrong — the screen it lands on is the app's own
+  "Who are you using Dosewise for today?" PICKER, and the flow continues into
+  ElderlyApp. `e2e/scenarios/s27` drives that whole path and passes. I turned
+  step 2 into an act-less reveal, s27 went red immediately, and that is what
+  caught it. **A passing governed scenario outranks a sweep finding**; check
+  whether one covers the step before acting on a `callout-missing`. The overlay
+  unmounting here is intentional navigation out of the shell that owns it, not
+  the "callout is the only host of Exit" invariant failing.
+- **`patient_schedule_tour#3`** spotlights the week strip while step 2's own
+  click left the patient dropdown open over it. **Open — and the only real
+  occlusion in the whole corpus.** Reproduces identically at zoom 1.0 and 1.25.
+- ~~`travel_mode_auto#2` spotlights a row the Travel Mode sheet slid over~~ —
+  **withdrawn.** Does not reproduce at the corrected viewport; it was the same
+  clipping artifact as the bottom-nav rows.
+
+**RE-RUN AT THE CORRECTED VIEWPORT — the numbers that count.** 42 findings →
+**26**, and the delta is the point (`report-fullrun-2026-08-07.json` vs
+`report-fullrun-corrected-2026-08-07.json`, both kept):
+- **The headline four are still ZERO** — `cutout-misaligned`, `glow-drift`,
+  `nav-cutout-*`, `change-*`. That claim now rests on a run with a correct
+  viewport and live occlusion checking.
+- **All 14 bottom-nav `target-occluded` rows vanished and NONE became a real
+  occlusion** (`target-occluded` 16 → 2, and the 2 are the same
+  `patient_schedule_tour#3` bug seen at 1.0 and 1.25).
+- **`language_voice_tour#2`'s "no callout placement can clear a 456px target"
+  was ALSO an artifact.** This file has carried it as a known limitation since
+  2026-08-06 and it is now withdrawn: the band was measured as 638px against a
+  clipped 720px viewport; at the real 940px the band is 746px and the callout
+  clears. **Two genuine instances remain** (`autoDoctorQ.verify` target 688px,
+  `schedule.readTimeline` target 657px, both in a 746px band) — those are real
+  step-content items.
+- Two findings are NEW and neither is a regression: `weekly_summary_tour#2
+  target-absent` surfaced only because the run now reaches step 3 instead of 2
+  (`patient_schedule_tour` likewise 2 → 3), and the caregiver-zoom copy of the
+  `patient_schedule_tour` dropdown bug.
+
+**Generalise the lesson:** a clipped viewport does not just suppress checks, it
+FABRICATES findings — `target-occluded` "but nothing is painted over it" and
+`callout-could-not-clear` are both computed against viewport-derived bounds.
+Before treating any placement/occlusion finding as a product defect, confirm the
+run's viewport matches the frame.
+
+**Harness bug worth not rediscovering:** `scratchpad/pw.config.ts` set
+`viewport: 460x940` at top level, but the project's
+`use: {...devices["Desktop Chrome"]}` **overrides** it with 1280x720 — a
+project-level `use` beats the top-level one. The overlay frame is 832px tall, so
+every bottom-nav target sat outside the viewport and `elementFromPoint` returned
+null: the occlusion check was silently skipped on 14 of 21 tasks while still
+reporting them as findings. Box arithmetic was unaffected (overlay-local
+coords). Fixed by repeating `viewport` inside the project's `use`. Proof it was
+the config and not the product: `patient_schedule_tour` step 1
+(`[data-tour="nav-timeline"]`, a bottom-nav tab) reported
+`target-occluded: … but nothing (outside the viewport) is painted over it` at
+1280x720 and reports **nothing at all** at 460x940.
+
+**CSS `zoom` is now cleared in BOTH shells, and the elder-only caveat is gone.**
+The three zoom cases had never actually executed — the sweep file's
+`test.describe.configure({mode:"serial"})` skipped every later test once the
+sweep's own intentional `expect(findings).toHaveLength(0)` failed, so
+`1 failed, 3 did not run` was silently hiding all of them. With `mode:"default"`
+(safe: `fullyParallel:false` + 1 worker already guarantees order) all three run.
+Elder at 1.25 and 0.85: **0 findings**. Caregiver at 1.25: boundary genuinely
+crossed (`zooms=[1,1,1.25]` — steps 1-2 are siblings OUTSIDE `<ZoomContent>`,
+step 3 measured 1.25 inside it) and **clean** — no cutout/glow/nav/callout/
+controlFit findings. `getBoundingClientRect` accounts for CSS `zoom` in
+`App.tsx`'s caregiver shell exactly as in the elder one. Its one finding is the
+`patient_schedule_tour#3` dropdown occlusion, which reproduces identically at
+1.0 and 1.25 — itself evidence it has nothing to do with the boundary.
+
+**e2e: 48 passed / 16 failed, and 13 of the 16 are STALE SPECS, not
+regressions.** Establish this before chasing them:
+- **5 walkthrough specs frozen at 2026-07-24** (`travel-mode-auto`,
+  `edit-profile-auto`, `add-condition-auto`, `add-prescription-auto`,
+  `reveal-caption` — 7 tests) never tap Save, but the manual-Save contract
+  landed **2026-07-28**. They cannot pass and have not since. Superseded by
+  `e2e/scenarios/s01/s02/s14/s15`, which do handle it and do pass.
+- **3 specs frozen at 2026-07-26** (`bugfix-highlight` ×4, `scenario1-dose-taken`,
+  `scenario6-dosage-update`) assert `document.querySelector(".border-stone-800")`
+  — a raw Tailwind palette class the **2026-07-29** design revamp deleted; it
+  exists nowhere in `src/`.
+- **s13** failed only because the sweep was running concurrently on the same
+  `:5173`/`:8901`. Passes cleanly. Don't run the gate and a sweep together.
+- **s26 is a real, diagnosed, pre-existing race:** `startWalkthrough` fires
+  `__dwStartWalkthrough` and only THEN calls `useStepByStepNav`, so step 1 runs
+  in Auto (the default since the previous pass) and auto-advances after
+  `READY_AUTO_MS`; the spec's single Next tap then lands on step 2, a consent
+  `waitFor` with no Next by design. Fix belongs in the harness — set the mode
+  before the run starts, not after.
+- **s02 WAS a real regression from this pass** — see the alias note above.
+
+**`startWalkthroughAuto` (new, `e2e/helpers.ts`) exists because the toggle
+started meaning what it says.** Specs that watch a whole autonomous flow reach
+its outcome and never tap Next were relying on `computeHoldGate` collapsing
+field runs for everyone; now that step-by-step really gates per field, they have
+to ask for Auto explicitly. `startWalkthrough` (step-by-step) stays for specs
+that assert gate by gate.
+
+**Harness lesson that cost real time: `pkill -f "hermes-serve"` kills the
+pm2-managed PRODUCTION processes.** Kill the scratch instance by the PID holding
+its port instead. And a scratch Hermes started without `TELEGRAM_BOT_TOKEN=`
+becomes a SECOND Telegram poller and produces exactly the 409 double-poller
+POST exists to catch — `main.py` only builds a TelegramClient when the token is
+non-empty, so blanking it is the whole fix.
+
+---
+
+## 2026-08-07 — Seven-item pass: neural TTS, bubble-width confirm buttons, walkthrough Back + AutoNav, and one stale-signal bug behind three symptoms
+
+**One root cause explained three of the seven reports.**
+`ElderlyAIScreen`'s "show the help tiles" effect was keyed on
+`screenResetSignal` — a MONOTONIC COUNTER that is bumped when a walkthrough
+starts and **never reset**. That screen unmounts on every bottom-nav switch, so
+once any walkthrough had run, the effect re-fired *on every remount* with the
+same non-zero value and forced `mode: "help"`, clobbering the conversation
+restored from sessionStorage. Symptoms it produced: (a) "switching tabs and
+coming back lands on Frequently used", (b) "the idle popup's Talk to Mei only
+quits the walkthrough" (the handler was already correct — the remount threw the
+person onto the tiles), and (c) a replayed product tour dead-ending at the
+Ask-Mei step. Fix: a live boolean `guidedViewActive` instead
+(`walkthroughTask !== null || showTour`), applied on mount AND on change.
+**It must OR in `showTour`** — the passive `GuidedTour` is separate state, not a
+`walkthroughTask`, and keying only off the latter silently re-breaks the replay
+path, because `[data-tour="elder-quickhelp"]` / `cg-askmei` exist only in the
+help view.
+
+**Tour replay had a second half:** the Help (?) button's ConfirmDialog only did
+`setShowTour(true)`; it never did the screen-preparation `handleWalkthroughStart`
+does, so Settings sub-page targets didn't exist. It now bumps
+`screenResetSignal` too. `GuidedTour` also gave up after **20 rAF frames
+(~330ms)** with **no stall state** — a black scrim over a callout pointing at
+nothing. Now 4000ms (matching `Walkthrough.tsx`/`actor.ts`) plus honest
+`tour.cannotFind` copy.
+
+**"The highlight isn't removed after the click"** was not a geometry bug — the
+cutout was correctly on "+ Add". The step then HELD at its terminal gate while
+the sheet it opened covered that button. Fixed by letting the step continue, not
+by clearing the box: `computeHoldGate` (new pure `lib/walkthrough/gating.ts`)
+now also collapses **a click act whose next step fills a field on the same
+screen**, so the spotlight moves onto the first form field by itself. Clearing
+`rect` was rejected — `calloutTop(null, …)` returns `bottomFloor`, which would
+drop the callout straight onto the sheet's own fields.
+
+**Back** (same module, `canGoBack`) refuses three cases, and the middle one is
+the load-bearing one: index 0; **any commit boundary strictly before the current
+step** (a step carrying `verify`, or a `waitFor` immediately followed by one —
+that pair IS the real Save, and nothing client-side can un-write a Supabase
+row); and **a previous step whose act is a `click`**, because the driver effect
+is keyed on `stepIndex` and re-entering re-runs the act — re-clicking a toggle
+collapses what it opened. Re-running a `fill` is idempotent, which is exactly
+the "that field went wrong" case Back exists for. Tagged
+`data-walk="walk-back"` so the consent invariant in `Walkthrough.test.tsx` can
+exclude it, mirroring the `walk-idle-popup` carve-out.
+
+**AutoNav (Auto vs Step by step)** is per-mount state in the overlay — that IS
+"per walkthrough session" — defaulting to Auto, seeded from
+`autoNavDefault={!walkthroughManualMode}`. It relaxes **only the terminal
+`ready` gate** (`PhaseHandlers.autoAdvance`); the Confirm recap keeps deciding
+from trust/risk/blank-field, and **no `waitFor` step ever auto-fires** — the
+real Save and consent taps stay the person's own in both modes. Switching to
+Step-by-step folds into `requireExplicitAdvance` (`!autoNav || prop`), so an
+explicit choice beats an inferred one in the direction of more care. Flipping
+mid-step applies from the NEXT step: re-deriving it would re-run the driver
+effect, and that re-runs the act. **e2e**: `helpers.ts::startWalkthrough` now
+calls `useStepByStepNav(page)` — the specs drive by tapping Next, so Auto would
+move the run out from under their assertions.
+
+**Neural TTS** — `POST /voice/tts` (`agent/tts.py`, OpenAI `gpt-4o-mini-tts`,
+voice `shimmer`). The whole point is the `instructions` field: Web Speech has
+no SSML and no instruction channel, so `speech.ts` was already at its ceiling
+(rate 0.9, ±0.04 pitch variance, quality-tier voice ranking) and no further
+parameter tuning would have made it warmer. Deliberately NOT the HF
+`facebook/mms-tts-eng` already wired for Telegram — that is *more* robotic than
+a decent browser voice. Kept as a SEPARATE export `speakReply()` rather than
+changing `speak()`: making `speak()` async would have invalidated every one of
+`speech.test.ts`'s synchronous voice-selection tests, and `VITE_HERMES_URL` is
+set in `apps/web/.env` so vitest can't dodge the remote path with an env guard.
+Any non-200 (503 with no key, offline, autoplay-blocked `play()` rejection)
+falls back to `speak()` — a silent reply is worse than a plain one. Verified
+live against `:8000`: 200, `audio/mpeg`, 71KB, `MPEG ADTS layer III 24kHz mono`.
+POST green, and `/voice/tts` verified live against `:8000`: 200, `audio/mpeg`,
+71KB, `MPEG ADTS layer III 24kHz mono`. `hermes-demo` (`:5010`, the backend the
+web app actually talks to) has its own `OPENAI_API_KEY` in
+`deploy/pm2/.env.demo`, so the route serves there too — the `jwt required` 401
+it returns to an unauthenticated probe is the same gate `/agent/turn` has.
+
+**e2e: the holdGate change moved a real gate, and four specs encoded the old
+one.** Running them is what caught it — every failure was a spec tapping Next
+once too often and landing the tap on the auto-continuing step's SUCCESSOR:
+`s01` (autoRx.open), `s02` (autoCond.edit), `s14` (autoTravel.enable) all now
+flow straight into their following fill. Each spec now advances one step less
+and lets the auto-continue carry it, with a comment saying why. A second, more
+general failure: with AutoNav forced to Step-by-step the runs genuinely idle
+past `IDLE_TIMEOUT_MS` between assertions, and the popup's backdrop swallowed
+the next tap. Fixed once, in `tapWalkthroughNext` (a new
+`dismissIdlePopupIfOpen`) rather than per spec — `autoDismissIdlePopup` had
+existed for exactly this since Item 6 and was used by nothing, and a background
+poller can race the tap it's meant to unblock. **s01/s02/s10/s14/s15 all pass.**
+
+Items 2 and 6 verified in a browser (`scratchpad/chatshot.spec.ts`): on the
+reported case — "Lisinopril 10mg — 8:00 AM (once a day)... Is this correct?" —
+the answers render as **271px buttons under a 271px bubble** (they were ~90px
+pills), fully in view, and a Home→Ask-Mei round trip lands back in the
+conversation rather than on the tiles.
+
+---
+
+## 2026-08-06 — Full walkthrough verification: the spotlight was NEVER re-measured mid-step. Two real geometry bugs fixed; zoom cleared; items 1 & 3 finally proven live
+
+Swept walkthrough tasks across both shells for highlight-box geometry
+(`apps/web/scratchpad/highlight-sweep.spec.ts` — new; measures cutout vs target,
+all four cutout sources, callout/target overlap, in-frame clamp, occlusion, at
+every settled step), then fixed what it found and re-proved it.
+
+**Actual coverage — be honest about the tiers, the fix is systemic but the
+evidence is not uniform.** Re-measured AFTER the fix and geometry-clean: all
+five `*_auto` tasks, plus `undo_dose`, `reminder_settings`, `text_size`,
+`request_refill` (1-2 steps each), plus `add_prescription_auto` at content
+zoom 1.25 and 0.85. Measured BEFORE the fix only (all showed the same 3px
+drift the fix addresses, none re-run since): `language_voice_tour`,
+`notifications_tour`, `emergency_contact_tour`, `check_schedule`, `log_dose`,
+and the three caregiver tours. Never successfully driven in any batch:
+`travel_mode_setup`, `accept_caregiver_link`, `link_caregiver` (both roles).
+**The binding constraint was Supabase signup throttling, not the product** —
+one fresh throwaway elder per task, ~70 signups over the pass, after which
+`createThrowawayElder` starts hanging and tasks hit their budget. A task that
+timed out in a batch passed instantly when probed alone (`text_size`), so read
+"ERRORED: exceeded 240000ms" in these reports as an environment result, not a
+finding. If extending this: reuse a small pool of accounts, or space batches.
+
+**The root cause behind almost every bad highlight box: `Walkthrough.tsx`
+measured its target on step entry and then only on scroll/resize — but the
+target MOVES mid-step for reasons that fire neither event.** Three movers, all
+measured live: `actor.ts`'s `.walk-field-prehighlight` translates it -3px
+(`theme.css`, `both` fill holds the risen state); `targetLiftPx`'s repositioning
+animates it up to ~330px; containers expand/collapse under it. Symptoms found:
+every field step's cutout sat 3px off, an expanding profile section left an
+84px-too-tall hole, and — the headline — **the Save step of `edit_profile_auto`
+/ `travel_mode_auto` drew its highlight 292-329px above the Save button the
+callout was telling the person to tap** (screenshot: the box was around the
+"12:30 PM Lunch" row while the copy read "go ahead and tap Save").
+
+Two fixes:
+1. **Step-change cleanup order.** It set `transform = ""` *before*
+   `transition = ""`, so removing the lift ANIMATED the element ~330px back
+   down while the next step's first measurement (a rAF away) landed
+   mid-flight. Transition first, then transform — the reset is now instant.
+   This was the 292/329px bug.
+2. **A per-frame rect-diff watcher** in the measure effect replaces the
+   enumerate-the-movers approach. One `getBoundingClientRect` per frame on one
+   element; `recompute()` is now change-aware (0.5px epsilon) so it only
+   re-renders when the box actually moved. **Do not "optimise" this back into
+   a MutationObserver/transitionend scheme:** the lift transforms an ANCESTOR
+   (`closest("[data-walk]")`), so neither an attribute observer nor a bubbling
+   listener on the target ever sees it — that's why enumeration kept missing
+   cases. The lift's own bespoke tracking loop (and `liftGenerationRef`,
+   `liftDecidedRef`) were deleted as superseded.
+
+**The lift is no longer a one-shot, and that is safe — because it re-derives
+from the UN-LIFTED position.** The old comment warned that recomputing from an
+already-lifted rect oscillates forever; true, but the one-shot lost the moment
+the layout moved afterwards (on Confirm the review card reflows the sheet, so
+a target lifted to the top slid back down UNDER the callout). It now subtracts
+the transform the browser is **currently rendering** (`DOMMatrixReadOnly(...).m42`
+— which does accept `"none"`, returning 0; verified), so the input is constant
+even mid-transition: identical input ⇒ identical `targetLiftPx` ⇒ no write ⇒
+no oscillation. Only a real layout shift changes the answer. This closed the
+Confirm-callout-covers-Save issue the 2026-08-04 entry left open as "cosmetic":
+the Save button is now visible and correctly spotlighted below the callout.
+
+**Cleared, definitively: there is NO CSS-`zoom` boundary bug.** The six-item
+plan flagged it as plausible and it was never tested either way. Swept at
+`contentZoom` 1.25 and 0.85: **zero** geometry findings attributable to zoom.
+The overlay mounts as a SIBLING of each shell's zoomed content div, so
+`getBoundingClientRect` deltas and the overlay's own local px are both
+unzoomed viewport px. Don't re-investigate this.
+
+**Items 1 and 3 had never been verified at all** (the 2026-08-04 pass covered
+only 2/4/5/6) — both now proven live:
+- **Item 1 (Voice-Expressive)**, `scratchpad/voice-live.spec.ts`, 5/5. Headless
+  Chromium has `speechSynthesis` but no voices and never fires `onstart`/
+  `onend`, so a chain stalls at segment 0 and proves nothing — the spec
+  replaces the ENGINE with a recording stub (real `speech.ts` untouched).
+  Proven: 3-segment chain completes, "2.5 milligrams" is never split at the
+  decimal, per-segment pitch really varies, the 200ms gap is real, a
+  superseding `speak()` leaves no orphaned timer resuming the dead chain, the
+  idle popup's "Explain this step again" really speaks (`voiceKey`'s first
+  consumer), Read Aloud off hides the action entirely, and `zh` splits on the
+  full-width `。`.
+- **Item 3 (RiskClassifier)** — pytest proved the math; the server→client
+  thread was untested because `helpers.ts::startWalkthrough` injects `risk`
+  through the dev hook, bypassing real classification. Now proven on the wire
+  (`scratchpad/risk-thread.spec.ts`): a real turn returns
+  `risk:{flagged:true,signals:["dosage_jump"],reasons:["'20mg' is 4x the
+  existing on-file dose ('5mg')..."]}`, the browser receives it through the
+  real chat path, and a **veteran** (`completionCount` 5, manual mode off) is
+  held at Confirm — step 5 → 5 after 6s of zero interaction. Benign
+  `add_condition_auto` carries `flagged:false, signals:[]`.
+
+**Four harness traps worth not rediscovering** (all cost real time here):
+1. **`page.route("**/agent/turn")` does not match `/agent/turn/stream`**, and
+   the elder chat uses the STREAM endpoint (`ElderlyAIScreen` →
+   `agentTurnStream`). The first risk spec silently let every turn through to
+   the deployed demo backend (which predates the risk feature) and reported
+   "the browser got no risk" as if it were a product finding. Use
+   `**/agent/turn**`, answer the CORS preflight yourself (204 +
+   `Access-Control-Allow-Origin`), and scan `data:` lines for the SSE case.
+2. **"put my Lisinopril up to 20mg" routes to `update_medication_dosage`**, not
+   a walkthrough — so nothing is risk-assessed. Only an ADD (s01's
+   propose→confirm phrasing) queues `add_prescription_auto`.
+3. **`anonClient()` is UNAUTHENTICATED**, so flipping a throwaway account to
+   `role: caregiver` with it silently matches zero rows under RLS. All three
+   caregiver tours then reported target-absent — a fixture failure that looks
+   exactly like a product defect. Sign in on the client first, check `error`,
+   and assert the expected shell actually mounted.
+4. **`Promise.race` cannot cancel the loser**: a timed-out per-task budget
+   leaves the abandoned run driving the same page while the next task signs
+   in, so one timeout produced four consecutive bogus failures. Hard-navigate
+   after any task error. Also: resolve the overlay root FROM the live "Step X
+   of Y" counter, not the first `z-[200]` element — both shells can have
+   several such layers.
+
+**Two pre-existing spec failures, A/B-verified against the pre-fix file so they
+are NOT from this pass, and left open:** `confirmphase.spec.ts` 1/3 (the
+walkthrough overlay is gone after 3 taps — the page snapshot shows the sheet
+with no counter) and `item4visual.spec.ts` 1/3 step-4 (`cutout Y` off by 321px
+on its own bottom-field measurement, identical pre- and post-fix, while the
+settle-gated sweep reports that same step aligned). Both were previously
+MASKED by the idle-popup backdrop eating the click before the assertion was
+reached. `autoDismissIdlePopup` now lives in `e2e/helpers.ts` (it had been
+copy-pasted into two specs and missing from a third).
+
+**`confirmphase.spec.ts` 3/3 was a BUG-REPRODUCTION and is now inverted into a
+regression test** — it asserted the veteran silently advancing past a blocked
+Confirm; `f210e5a`'s `isBlankNow()` re-check fixed that, so the spec now
+asserts the hold (proven live: step 5 → 5 after `CONFIRM_MIN_MS + 4s`).
+Likewise `Walkthrough.test.tsx`'s "does NOT fire during an autonomous
+field-fill phase, even well past the timeout" was self-contradictory (the
+field phase is floored at 1.8s; you cannot be both mid-fill and past a 20s
+timeout) and only passed because nothing pumped the actor's timers that far —
+it now asserts silent mid-fill AND firing at the tap gate, in one run.
+
+**Three open items, recorded rather than quietly dropped:**
+- `add_prescription_auto` step 7 (`autoRx.verify`, the act-less verify/reveal
+  tail) reported `target-absent` once the sweep started performing the REAL
+  Save — its selector points at the just-written medication row, so this may
+  be a race with the async write/refetch or may be real. Not diagnosed.
+- `undo_dose` step 2 and `request_refill` step 1 report `target-absent`, both
+  fixture-shaped (no dose logged to undo; no low-stock medication seeded) —
+  geometry was clean on the steps that did mount.
+- ~~`pressPulse` might make the cutout pump~~ — **checked and CLOSED**
+  (`scratchpad/presspulse.spec.ts`, the one visual the settle-gated sweep is
+  structurally blind to): across 336 frames spanning a real click act, 17 of
+  them carrying a scale transform on the target, the cutout height amplitude
+  was **0.00px** and the worst cutout-vs-target dy (including mid-press) was
+  2.64px. The watcher does not turn `scale(0.94)` into a pumping box.
+
+**Known limitation, reported not fixed:** `language_voice_tour` step 2
+spotlights a 456px-tall section in a ~638px usable band; no callout placement
+clears a target that large, so `calloutTop`'s `else` branch anchors inside it.
+Needs a step-content decision (spotlight something smaller), not a geometry fix.
+> **WITHDRAWN 2026-08-07 — this was a harness artifact, not a limitation.** The
+> "~638px usable band" came from a sweep running at a clipped 1280x720 viewport
+> (see that date's entry: a project-level `use` in `pw.config.ts` silently
+> overrode the 460x940). At the real 940px frame the band is 746px and the
+> callout clears; the finding does not reproduce. Two genuine instances of this
+> shape do exist — `autoDoctorQ.verify` (688px target) and
+> `schedule.readTimeline` (657px) — but `language_voice_tour` is not one.
+
+## 2026-08-04 — Independent live verification of items 2/4/5/6: one CSS fix, one real ConfirmBack-Phase bug found (not fixed)
+
+Live-drove items 2 (TrustMode), 4 (SpotlightVisual), 5 (ConfirmBack-Phase), 6
+(IdleTimeout) against a scratch Hermes (:8901, killed after) + the standing
+:5173 dev server, via Playwright specs in `apps/web/scratchpad/`
+(`trustmode.spec.ts`, `confirmphase.spec.ts`, `item4visual.spec.ts`,
+`item6idle.spec.ts`). All 4 items' Phase C evidence requirements are met with
+real screenshots + phase-log timing; full offline gate green (hermes 382
+pytest/ruff, web tsc/210 vitest/build, `coverage.spec.ts` 33/33).
+
+**Fixed: `.walk-field-prehighlight`'s reduced-motion override was dead code.**
+`theme.css` had the `@media (prefers-reduced-motion: reduce)` override for
+this selector positioned BEFORE the unconditional base rule later in the same
+file — equal specificity means source order is the tiebreaker, so the later
+base rule always won regardless of the OS setting (confirmed live:
+`getComputedStyle` showed the full 220ms animation even under
+`prefers-reduced-motion: reduce` emulation). `.dw-gate-ready` has the correct
+order (base rule first, override after) — this one selector didn't. Fixed by
+moving the override to its own small `@media` block immediately after the
+base `.walk-field-prehighlight` rule.
+
+**Found, NOT fixed (real bug, needs a design-level fix, not a stale-selector
+patch) — item 5's "genuinely unclear forces a tap" guarantee doesn't hold for
+a veteran/non-risk instance if the field goes blank AFTER Confirm starts.**
+`orchestrate.ts::runActStep` decides ONCE, synchronously, at the instant the
+Confirm phase begins, whether to use `awaitNext("confirm")` (tap-gated) or
+`paced("confirm", CONFIRM_MIN_MS)` (timer-driven auto-elapse) — `const blank
+= hasBlankReviewField(step.review); if (requireExplicitAdvance || riskFlagged
+|| blank) awaitNext(); else paced();`. For `add_prescription_auto`, `purpose`
+can never be blank at that exact instant (the step builder's own fallback
+guarantees a non-empty fill), so the only realistic way a review field goes
+blank during Confirm is the "Change something" edit path — which necessarily
+happens AFTER this one-shot decision already locked in `paced()` for a
+veteran, non-risk-flagged instance (the "fully-earned fast path"). The RENDER
+layer (`WalkthroughReview`'s live `onBlankChange` → `confirmBlocked`/"not
+filled in"/"Continue without") reacts correctly and looks exactly like the
+genuinely-blocked first-timer case — but `paced()` resolves off a bare
+`setTimeout` and calls `h.onAdvance()` with zero reference to
+blankFields/confirmBlocked, so the walkthrough silently advances past the
+visibly-blocked Confirm step to the real Submit `waitFor` with ZERO taps.
+Live-reproduced twice with a reliable discriminator (step counter genuinely
+advancing 5→6 — first attempt used `rx-submit` visibility, which is a KNOWN
+bad signal since that button is in the DOM from step 1 onward regardless of
+walkthrough step, per `trustmode.spec.ts`'s own documented caveat; caught and
+corrected before trusting the result). Only the target form's OWN unrelated
+required-field validation (Save stays disabled) is left standing in this
+specific case — a task whose form has no such native validation would have
+nothing catching it at all. Fix would need the `awaitNext` vs `paced` choice
+(or `paced`'s own resolution) to re-check blank state live, not just at
+Confirm entry — left to a build pass, not attempted here (Phase C
+verification scope, not Phase B).
+
+**Minor, cosmetic, non-blocking: Confirm/review callout still visually
+overlaps `rx-submit` at the Confirm step** (item 4's own "Theory B" from the
+build plan) — even after `targetLiftPx`'s repositioning settles, the tall
+review card (270-697px vertical span) still covers the lifted Save button
+(317-368px) underneath it. Does NOT block anything functionally: the actual
+tap needed at Confirm is the callout's own Next button (clearly visible), and
+the REAL Submit step (one step later) is NOT covered — confirmed via
+screenshot comparison. Worth a design pass, not a safety issue.
+
+**Test-harness gotcha (not an app bug) worth remembering for future live
+Playwright drives of the walkthrough engine:** any spec that taps through
+multiple sequential steps with real assertions/logging between taps can now
+genuinely idle past `IDLE_TIMEOUT_MS` (20s) and get its next `.click()`
+intercepted by the new (2026-08-04) idle popup's full-screen backdrop — this
+is item 6 working as designed, not a regression. Fix in the SPEC, not the
+app: a small background watcher that dismisses the popup ("I'm still here,
+continue") the moment it appears, mirroring what a real person would do — see
+`autoDismissIdlePopup` in both `trustmode.spec.ts` and `item4visual.spec.ts`.
+Also found: `waitForVeteranSubmitReached` (trustmode.spec.ts) raced
+Walkthrough's own first mount — called right after `startWalkthrough`, "no
+Next/Done button" can be trivially true for the wrong reason (nothing has
+rendered yet). Fixed by waiting for the step counter to exist first.
+
+## 2026-08-04 — Phase B sweep: Confirm/Submit split on the remaining 4 *_auto files
+
+Adopted the Confirm-phase split (recap step + separate plain Submit `waitFor`
+step) proven on `add_prescription_auto.ts` onto the other four:
+`add_condition_auto.ts`, `travel_mode_auto.ts`, `edit_profile_auto.ts`,
+`add_doctor_question_auto.ts` (all `apps/web/src/app/lib/walkthrough/steps/`).
+**5/5 `*_auto` files now split** (4 this pass + `add_prescription_auto` from
+the earlier ConfirmBack-Phase pass) — no reinvention, same `confirm: {recap:
+true}` + trailing `waitFor` shape, same `instructionKey` pair
+(`walk.confirmSave` for the recap, `walk.confirmSubmit` for the real Submit).
+Explicitly excluded, and why: the spotlight-and-narrate tours (`check_schedule`,
+`log_dose`, `reminder_settings`, `text_size`, the six 2026-07-26 spotlight
+tours) and the two consent flows (`accept_caregiver_link`,
+`emergency_contact_tour`) have no Act/Submit to confirm — they narrate/navigate
+or are already always-human-tap end to end.
+
+**Two real gotchas, found only by reading the target screens, not assumed:**
+
+1. **`add_condition_auto` cannot carry a `review` field the way its siblings
+   do.** `TagList`'s own "Add" button (`GuidedSetupWizard.tsx`) calls
+   `onAdd(val); setValue("")` — the input is cleared the INSTANT the condition
+   becomes a chip, well before the Confirm step is ever reached. A `review`
+   entry pointing at that same input (`WalkthroughReview`'s `readValues` only
+   reads `.value`) would read blank on every single run, wrongly triggering
+   decision B's "blank field forces the tap path" clarifying-question state
+   for a condition that really was added. Fixed by omitting `review` there
+   entirely — and, since `walk.confirmSave`'s copy tells the person to "tap
+   Change" for a Change button that (with no review card) never renders, using
+   `walk.confirmSubmit` for BOTH the confirm and submit steps instead (the
+   cost is the same sentence shown twice in a row, cheaper than promising an
+   interaction that doesn't exist — same principle as `WalkthroughWaitPill`'s
+   "Waiting for you: " prefix and the "a tour must never claim an interaction
+   that didn't happen" rule).
+2. **`el.setSelectionRange()` throws `InvalidStateError` on `input[type=number]`
+   /`input[type=date]`** (the DOM selection APIs are spec'd for
+   text/search/URL/tel/password only) — a **latent shared-engine bug** in
+   `Walkthrough.tsx`'s `focusFirstReviewField` ("Change" tap handler),
+   invisible until now because every existing review field
+   (`add_prescription_auto`'s name/dose/purpose, `add_doctor_question_auto`'s
+   question) happens to be `type=text`. `edit_profile_auto`'s weight
+   (`type=number`) and `travel_mode_auto`'s two date fields (`type=date`) are
+   the first review fields to hit it — an untrapped throw would abort the
+   function before `setChangeRect` runs, silently breaking the Change-tap
+   mask cutout on exactly those two new files. Fixed with a narrow
+   `try { el.setSelectionRange?.(...) } catch {}` — `<select>` (the timezone
+   field) was already safe, since it has no such method at all and the
+   optional-chain no-ops.
+
+**Item 2 of this pass's brief ("tag each of the 5 tasks with a default risk
+level... add the TS-side mirror if expected") was already fully satisfied by
+the earlier RiskClassifier pass** — `RISK_ASSESSED_TASKS` (=
+`AUTONOMOUS_TASKS - {accept_caregiver_link}`) already tags all 5 as
+risk-assessed, and `IRREVERSIBLE_AUTO_TASKS` is already an empty `frozenset`
+— i.e. the same 5 are ALSO tagged, by absence, as "not irreversible" (correct:
+none of the five *_auto writes discontinue/delete/revoke anything) — with its
+own regex-parity test (`test_irreversible_auto_tasks_parity`,
+`test_walkthrough.py`) already in place, one-sided by that module's own
+explicit comment ("no TS-side mirror exists yet... only once such a task
+exists"). **Being empty means the `irreversible_task` signal cannot fire in
+production today** — it's a forward-compat hook for a future task, not an
+active signal; don't read "tagged" as "actively gated." **Deliberately did
+NOT add an empty TS mirror** — a table with nothing in it would be the same
+declared-and-unused shape as the deleted `skippable` field / the unused
+`WALKTHROUGH_TASK_LABELS` finding, both flagged elsewhere in this file as
+anti-patterns already paid for once.
+
+**New test closing a real gap an advisor review caught:** neither
+`orchestrate.test.ts` (mechanism-level, DOM-free `baseStep()` objects — never
+imports the real builders) nor any other vitest file ever called
+`addConditionAutoSteps()`/`travelModeAutoSteps()`/`editProfileAutoSteps()`/
+`addDoctorQuestionAutoSteps()`/`addPrescriptionAutoSteps()` directly — a wrong
+selector or a forgotten `confirm:{recap:true}` in any of the 5 builder files
+would type-check and pass every existing test. New
+`steps/autoConfirmSubmitSplit.test.ts` (12 tests) asserts the actual DATA
+shape across all 5: confirm step immediately followed by a plain-`waitFor`
+submit step on the SAME `selector`, no step carries both `act` and `waitFor`,
+`add_condition_auto`'s confirm has no `review` (documented gotcha above) while
+the other four do.
+
+**e2e specs updated to match (static fix, NOT live-verified this pass — no
+Supabase/scratch Hermes was driven):** `s02-add-condition`,
+`s14-travel-mode`, and both tests in `s15-edit-profile` drove the old single
+overloaded step directly (`getByText("tap Save yourself") → click the real
+Save button`); mirrored the exact fix TrustMode's own pass already made to
+`s01-add-medicine` for the identical reason (a fresh throwaway account is a
+genuine first-timer, so Confirm now holds its own tap-gate before Submit is
+reachable) — insert `tapWalkthroughNext(page)` between reaching the Confirm
+recap and clicking Save. `s33-walkthrough-rerun` needed no change (it never
+drives past the fill steps). `manifest.ts`'s header comment ("32 Phase-3
+scenario specs") was stale — the `SCENARIOS` array already had 33 rows and
+`coverage.spec.ts` already asserted/passed 33; only the comment was wrong,
+fixed. Gates run: hermes **382** pytest/ruff clean; web `tsc`/**210**
+vitest (198 pre-existing + 12 new)/build clean; `coverage.spec.ts` 5/5 green.
+`s02`/`s14`/`s15` (3 of the 4 files' UI drives) were fixed statically by
+analogy to `s01`'s own diff, NOT re-run live this pass — no Supabase/scratch
+Hermes was driven. **`add_doctor_question_auto` has NO e2e spec at all** —
+`s21` drives the direct `add_doctor_question` tool, not this walkthrough (its
+manifest row carries no `taskName`) — so that file's split has zero live
+coverage of any kind; the new `autoConfirmSubmitSplit.test.ts` builder-shape
+test is the only thing currently checking it.
+
+## 2026-08-04 — IdleTimeout (Item 6): a "still there?" popup, gated on real wait-state, not a phase allowlist
+
+Built decision D on top of TrustMode/ConfirmBack-Phase/RiskClassifier. New
+`IDLE_TIMEOUT_MS = 20_000` (`lib/walkthrough/pacing.ts`, sibling export next
+to `PACING`/`TRUST_MODE_THRESHOLD`, not inside `PACING` — it's a ceiling, not
+a floor). `Walkthrough.tsx` computes `waitingOnUser` from the SAME live
+signals TrustMode/ConfirmBack already compute (`step.waitFor`,
+`paceState.phase`, `requireExplicitAdvance`, `confirmTapRequiredRef`,
+`confirmBlocked`) rather than a phase-name allowlist — exactly the intent
+decision D states. A window-level effect (capture-phase `pointerdown`/
+`keydown`/`scroll`, matching the file's own existing scroll-listener
+pattern) arms/resets/disarms a `setTimeout` only while `waitingOnUser` is
+true; `requestNext()`'s two call sites and `focusFirstReviewField` also
+reset it explicitly via a ref (`resetIdleTimerRef`), on top of the generic
+listener. New `WalkthroughIdlePrompt.tsx` renders the popup with per-action
+optional props (`onExplain`/`onSkip`/`onTalkToMei`, `onContinue` always).
+
+**Two things the plan assumed were already built and weren't — found by
+grepping, not assumed:**
+1. **No walkthrough step narration is wired to actual TTS anywhere.**
+   `WalkthroughStep.voiceKey` was declared and never consumed (`grep
+   "speak("` across the walkthrough engine returns zero hits outside the two
+   chat screens). Item 1 (Voice-Expressive)'s own plan text claims
+   "Walkthrough narration is lib/speech.ts → browser speechSynthesis, full
+   stop" — that's true of Item 1's OWN scope (chat replies) but not of the
+   walkthrough engine specifically. "Explain this step again" is voiceKey's
+   first real consumer: `speakUtterance(t(language, step.voiceKey ??
+   step.instructionKey), speechLangFor(language))`, gated on the NEW
+   `voiceOutput` prop (threaded from `accessibility.tsx`, same pattern as
+   `requireExplicitAdvance`) AND `speechSupported()` (imported from
+   `speech.ts`, NOT a locally frozen `hasTTS` module const like the one both
+   chat screens use — see gotcha below for why that distinction mattered).
+2. **`WalkthroughStep.skippable` does not exist.** It was declared-and-read-
+   by-nothing on 15 steps and deleted 2026-08-02 (see that dated entry). The
+   plan's "check WalkthroughStep's existing skippable concept" was stale.
+   Resurrecting it would mean hand-tagging all 116 steps across 21 files for
+   one item — instead, "Skip this step" is rendered iff `!step.waitFor`
+   (i.e. only during the ready/confirm autonomous tap-gates, cases 2-4 of
+   `waitingOnUser`), computed from the SAME split every other safety
+   decision in this file already keys off. **This was verified, not assumed
+   safe**: `ElderlyApp.tsx::handleWalkthroughVerifyFailed` performs a REAL
+   WRITE with no human tap when `add_prescription_auto`'s Verify fails and
+   the med is genuinely absent — so a wider "skip a waitFor Submit step too"
+   rule would let IdleTimeout silently defeat the one sanctioned exception's
+   own safety net (skip the Submit tap → verify fails → direct-save fallback
+   fires with zero taps). waitFor steps are therefore NEVER skippable from
+   this popup, full stop.
+
+**Real bug caught only by testing, not by reasoning about the code:** the
+window-level `pointerdown` listener that resets the idle timer runs in the
+CAPTURE phase, which fires before the tapped element's own `onClick`. An
+early version let it fire unconditionally — which meant tapping ANY button
+inside the popup (including its own "Skip"/"Talk to Mei"/"Explain again")
+got dismissed by the capture-phase listener a tick before the button's own
+handler ran, turning every popup action into a no-op that just closed the
+popup. Fixed by gating the generic listener on `idlePopupOpenRef.current`
+(a ref, not the `idlePopupOpen` state — using the state as an effect
+dependency would tear down and rebuild the listeners on every open/close):
+while the popup is open, only its own buttons resolve it.
+
+**`IDLE_TIMEOUT_MS` collides exactly with two real steps' own `timeoutMs`.**
+`accept_caregiver_link.ts`'s consent tap and `emergency_contact_tour.ts`'s
+Call button both declare `timeoutMs: 20000` (the "give up, show
+`walk.timedOut`" budget) — the SAME value as the new idle popup's own
+20000ms default, on the exact two steps someone is most likely to sit still
+on. Two `setTimeout`s at an identical delay, registered in different
+effects on the same mount, have no defined winner — and the popup's whole
+purpose is to reach a stuck person BEFORE the honest dead-end, not lose the
+race to it by an accident of effect-registration order. Fixed by computing
+an effective arm delay that's always ≥1s ahead of a `waitFor` step's own
+`timeoutMs` when one is set and shorter than/equal to `IDLE_TIMEOUT_MS`
+(`Math.min(IDLE_TIMEOUT_MS, step.timeoutMs - 1000)`), with its own
+regression test. Found by advisor review, not by the offline gate — neither
+`tsc` nor a green test suite can see two independent `setTimeout(…, 20000)`
+calls racing.
+
+**Named forward risk, not fixed here (out of this pass's offline-gate
+scope):** the idle popup's own buttons ("Explain again"/"Talk to
+Mei"/"I'm still here, continue") are `rounded-xl` buttons rendered inside
+the walkthrough root — the EXACT selector `Walkthrough.test.tsx`'s "Mei can
+never advance a consent step" invariant test (and the live consent specs
+s10/s22/s24/s26, per this file's own 2026-08-02 entry) filters on to assert
+"only Exit exists here." The popup never lets anything ADVANCE a `waitFor`
+step (Skip is never offered there), so the safety invariant holds — but any
+live spec that happens to sit on a slow `waitFor` wait for 20s+ (e.g.
+`request_refill.ts`'s `agent-action-committed` wait, a real LLM round trip
+that routinely exceeds 20s) will now see 3-4 buttons where that assertion
+expects 1. Added `data-walk="walk-idle-popup"` on the popup's own root as a
+cheap scoping hook so fixing those specs' filters later is a one-line
+change, not a rediscovery. Also: the popup is a full-screen
+`pointer-events-auto` layer, so while it's open a real tap on the actual
+Save/Accept button underneath lands on the popup's backdrop instead
+(consumed as "I'm still here, continue") — standard modal behavior, costs
+one wasted tap, not a safety issue since nothing the backdrop tap does can
+advance a consent step either.
+
+**Test-infra gotcha, not an app bug:** `hasTTS`/`speechSupported`-style
+checks that are plain module-level `const`s (the pattern both chat screens
+already use) are evaluated ONCE at module import, before any test's
+`beforeEach` runs — so `vi.stubGlobal("speechSynthesis", …)` in a test
+`beforeEach` can never make a frozen `const hasTTS = "speechSynthesis" in
+window` become `true` retroactively. `speech.ts::speechSupported()` is a
+FUNCTION re-evaluated per call for exactly this reason; Walkthrough.tsx now
+calls it directly rather than copying the frozen-const pattern (a genuine
+correctness improvement, not just a test workaround — the frozen-const
+version is fine for production, where the browser's global surface never
+changes mid-session, but is untestable). Also needed `vi.useFakeTimers({
+shouldAdvanceTime: true })`, not plain fake timers: the initial callout's
+appearance depends on a real `requestAnimationFrame` loop, which plain fake
+timers never pump — every test hung at the first `await waitFor(...)`
+until this was found. Every POSITIVE assertion following an explicit
+`advanceTimersByTimeAsync` jump is itself wrapped in `await waitFor(...)`
+(never a bare synchronous `expect`), since `shouldAdvanceTime`'s background
+real-time ticking doesn't guarantee the resulting state update has already
+committed to the DOM the instant the advance promise resolves — an earlier
+version without this was flaky (~1 test in 22 failing, different one each
+run) across repeated full-suite runs.
+
+Verified both required directions, both via deterministic vitest (fake
+timers, not a live 20s+ wait): does NOT fire during an autonomous field-fill
+phase, nor for a veteran's auto-elapsing "ready" (`requireExplicitAdvance:
+false`) even 25s past the timeout; DOES fire for a first-timer's tap-gated
+"ready" gate and for a genuine `waitFor` step, with interaction (a real
+`pointerdown`+`click` sequence, not just `fireEvent.click`) proven to both
+reset the timer AND never get swallowed by the popup's own capture-phase
+listener, plus the timeoutMs-collision race above. 23 new/changed tests,
+`Walkthrough.test.tsx`; whole-suite **198** vitest / `tsc` / build all
+clean (the new tests do add ~8 stderr "not wrapped in act(...)" warnings
+per run from mixing fake timers + async state updates — stable across
+repeated runs, not flakiness, but worth knowing so it doesn't read as a
+regression next time `npm test`'s output is skimmed). New i18n keys
+(`walk.idle.*`) in all 6 language maps — same unreviewed-machine-
+translation situation as every other batch this file already flags, not
+independently reviewed. `language.test.ts` parity guard green. **Not live-
+driven in a real browser this pass** — the deterministic vitest suite was
+judged sufficient evidence per TrustMode's own precedent write-up on why a
+20s-plus-multi-minute-`*_auto`-completion Playwright spec is exactly the
+kind of thing that blows its timeout budget; a live Playwright pass would
+still be worth doing before this ships.
+
+## 2026-08-04 — TrustMode (Item 2): veteran auto-advance, threaded end-to-end, risk still overrides trust
+
+Built the new veteran auto-advance path (cross-cutting decision C) on top of
+ConfirmBack-Phase's already-built Confirm phase and RiskClassifier's `risk`
+threading — the terminal-gate stub (`REQUIRE_EXPLICIT_ADVANCE_STUB = false`,
+`Walkthrough.tsx`) that both of those had left in place got replaced with the
+real thing. `accessibility.tsx` gained `walkthroughManualMode`/
+`walkthroughCompletionCount` (exact `voiceOutput` pattern); `pacing.ts` gained
+`TRUST_MODE_THRESHOLD = 3` and `READY_AUTO_MS = 900`; `orchestrate.ts`'s
+terminal `awaitNext("ready")` now branches on `requireExplicitAdvance` to
+`paced("ready", READY_AUTO_MS)` for a veteran.
+
+**Two real gotchas, not obvious from the code alone:**
+
+1. **`markWalkthroughCompleted`'s own call site is the WRONG place to copy
+   literally.** It's gated on `!AUTONOMOUS_TASKS.has(taskName)` (deliberately
+   excludes the `*_auto` family, so they never pollute the "already shown"
+   list Hermes subtracts from). The new completion counter is a DIFFERENT
+   concept (decision E) and must NOT share that gate — it needs to count
+   `*_auto` completions too, or the counter could never reach the threshold
+   via the exact walkthroughs TrustMode exists to relax. Increment sits at
+   the same call SITE (right beside the old call, in both shells'
+   `handleWalkthroughAdvance`), deliberately ungated.
+2. **`App.tsx` (caregiver) cannot call `useAccessibility()` from its own
+   function body** — it owns/renders `AccessibilityProvider` itself, so it
+   sits ABOVE the provider in the component tree (same class of bug as the
+   2026-07-11 `LanguageProvider` gotcha, and the reason `ZoomContent` already
+   exists). Neither the trust computation nor the completion-count increment
+   can be read/called directly in `App()`. Fix: a sibling wrapper component
+   (`WalkthroughWithTrustMode`, mirroring `ZoomContent`) mounted INSIDE the
+   provider computes `requireExplicitAdvance` as a real prop and stashes
+   `incrementWalkthroughCompletionCount` on a ref that `handleWalkthroughAdvance`
+   (a plain closure) reads. `ElderlyApp.tsx` has no such problem — it's already
+   a child of its own fresh `AccessibilityProvider` in `App.tsx`'s elderly
+   branch, so it calls the hook directly, same as it already did for
+   `notifications`/`timeFormat`.
+
+**Terminal gate is per-STEP, not per-walkthrough.** `runActStep` runs once per
+autonomous `WalkthroughStep`, so a veteran's `*_auto` walkthrough auto-advances
+through EVERY fill/act step (not just a single "final" gate) — Mei fills name,
+dose, purpose etc. back-to-back with zero taps, pausing only `READY_AUTO_MS`
+between each, until the real Submit `waitFor` tap (untouched — waitFor steps
+never call `runActStep` at all) and the trailing verify/reveal tail (also
+auto-advances). This is the intended design, not scope creep, but it's a
+visible UX change from what a first-timer sees — worth knowing before someone
+"fixes" it back to one tap per field.
+
+**Regression this surfaced in an already-existing spec:** `e2e/scenarios/
+s01-add-medicine.spec.ts` was written against the hardcoded stub (always
+auto-elapsing) and asserted the Confirm recap "clears once it auto-resolves"
+with zero taps. A fresh throwaway account is a genuine first-timer
+(`walkthroughCompletionCount` 0 `< TRUST_MODE_THRESHOLD`), so `requireExplicitAdvance`
+is now really `true` there — fixed the spec to tap through Confirm like a
+first-timer actually would (and dropped its now-wrong `CONFIRM_MIN_MS` floor
+assertion on that phase). Re-verified live against a scratch Hermes on :8901 —
+a real turn genuinely flagged this exact instance too
+(`signals:["unknown_medication"]`, Lisinopril not on a fresh profile), so both
+signals (trust AND risk) independently forced the tap in that run.
+
+**Live verification (`apps/web/scratchpad/trustmode.spec.ts`, not part of the
+e2e gate — scratch config, matches `confirmphase.spec.ts`'s pattern):** split
+into two tests after a monolithic one kept blowing its own timeout budget (a
+real `add_prescription_auto` completion is 60-100s; the full required sequence
+is 7+ of them). Test 1: a fresh throwaway account runs 3 full completions
+(phase log confirms every terminal `ready` entry logs `minMs:0`, i.e.
+tap-gated) then a 4th auto-advances with zero taps to the real Submit button
+(phase log confirms `minMs:READY_AUTO_MS`) — passed 3 independent times across
+iterations. Test 2 seeds `localStorage["dosewise:accessibility"]` straight to
+`walkthroughCompletionCount: 3` via `page.addInitScript` (a deliberate
+shortcut — test 1 already proves the counter earns veteran status from real
+completions; this test's job is what happens once you're there) and covers:
+manual-mode toggle ON forces the tap gate again despite being past threshold,
+toggle OFF resumes auto-advance, and a risk-flagged instance (forced via a new
+optional 3rd arg on the `__dwStartWalkthrough` dev hook —
+`ElderlyApp.tsx`/`e2e/helpers.ts::startWalkthrough`) still forces an explicit
+tap on a veteran account (confirm phase log entry: `minMs:0`, i.e. resolved by
+the tap, not the floor). **Gotcha in the test itself, not the app:** after the
+manual-mode-forced completion's reveal step navigates to Home (the walkthrough's
+own reveal target), the Settings-screen toggle is no longer mounted — the
+second toggle interaction needs to re-navigate to Settings first, or Playwright
+just hangs waiting for a locator that will never reappear. `[data-walk="rx-
+submit"]` is also a bad "have we reached Submit" signal on its own — it's the
+same DOM button targeted by the Confirm step too, present (just disabled) from
+step 1 onward; the reliable signal is the ABSENCE of any Next/Done button
+(mirrors s01's own assertion).
+
+**Not independently re-verified this pass (pre-existing, documented gaps —
+not introduced here):** `walkthroughRisk` isn't part of `walkthroughState.ts`'s
+persisted session shape, so a same-tab restore mid-walkthrough loses the risk
+flag (ConfirmBack-Phase's own comment already flags this; TrustMode makes the
+consequence bigger — previously a lost flag still hit the unconditional tap
+gate, now a veteran with a lost flag gets zero taps). `App.tsx`'s own
+`<Walkthrough>` never receives a `risk` prop at all, but every Confirm-carrying
+`*_auto` task resolves to the elder shell (`walkthroughShellFor` — confirmed
+by inspection of all 5 step files), so this is currently dead code, not a live
+hole.
+
+## 2026-08-02 — 8 reported defects, 6 root causes. The headline one was a PROMPT rail, not the engine.
 
 **"Now even the guided walkthrough for adding medicine doesn't work — what's
 going on?"** The engine was fine. The previous pass's anti-nagging rail in
@@ -185,6 +1535,8 @@ used two different words for "refill" (`மறுநிரப்பு` vs `ம�
 new keys picked the majority one, so `walk.refill.tapRequest` and
 `home.refillNeeded` now disagree on one screen; and `walk.refused.noCaregiver`
 was hand-written after the batch rather than routed through the translators.
+The 6 new `walk.idle.*` keys (2026-08-04, IdleTimeout) are the same
+unreviewed-machine-translation situation, not a new exception.
 
 ## 2026-08-02 — Caregiver UI revamp: Ask Mei on the elder shape, weekly calendar, token cleanup
 

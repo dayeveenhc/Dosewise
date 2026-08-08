@@ -190,7 +190,7 @@ export function ElderlySettingsScreen({ patient, elderId, onUpdatePatient, onSig
   const {
     fontSize, setFontSize, contrast, setContrast, colourVision, setColourVision,
     colourBlind, voiceOutput, setVoiceOutput, notifications, setNotification,
-    timeFormat, setTimeFormat,
+    timeFormat, setTimeFormat, walkthroughManualMode, setWalkthroughManualMode,
   } = useAccessibility();
   const { language, setLanguage } = useLanguage();
   // Saved conditions/allergies are stored as canonical English. Render them in
@@ -373,6 +373,7 @@ export function ElderlySettingsScreen({ patient, elderId, onUpdatePatient, onSig
     ...notifOptions.map(o => ({ label: o.label, section: "reminders" as Anchor })),
     { label: t(language, "settings.language"), section: "voice" },
     { label: t(language, "settings.readAloud"), section: "voice" },
+    { label: t(language, "settings.walkthroughManual"), section: "voice" },
     { label: t(language, "settings.emergencyContact"), section: "emergency" },
     { label: t(language, "link.qrTitle"), section: "caregiver" },
     { label: t(language, "settings.about"), section: "about" },
@@ -517,6 +518,18 @@ export function ElderlySettingsScreen({ patient, elderId, onUpdatePatient, onSig
   const readAloudControl = (
     <SettingRow label={t(language, "settings.readAloud")} desc={t(language, "settings.readAloudDesc")}>
       <Toggle on={voiceOutput} onToggle={() => setVoiceOutput(!voiceOutput)} data-walk="elder-readaloud-toggle" />
+    </SettingRow>
+  );
+
+  // TrustMode (Item 2): the permanent opt-out — leaves the walkthrough's
+  // Next tap-gate mandatory no matter how many walkthroughs have completed.
+  const walkthroughManualControl = (
+    <SettingRow label={t(language, "settings.walkthroughManual")} desc={t(language, "settings.walkthroughManualDesc")}>
+      <Toggle
+        on={walkthroughManualMode}
+        onToggle={() => setWalkthroughManualMode(!walkthroughManualMode)}
+        data-walk="elder-walkthroughmanual-toggle"
+      />
     </SettingRow>
   );
 
@@ -855,7 +868,12 @@ export function ElderlySettingsScreen({ patient, elderId, onUpdatePatient, onSig
                       data-testid={`allergy-${slugify(a.name)}`}
                       className="inline-flex items-center gap-1.5 text-[calc(14px*var(--dw-text,1))] font-semibold bg-card text-destructive border border-destructive/30 rounded-full px-3 py-1"
                     >
-                      {a.name}
+                      {/* loc(), same as the conditions row above — these
+                          pills were the one place on this card still rendering
+                          the raw stored English. data-testid deliberately
+                          stays keyed on the CANONICAL a.name so the
+                          set_allergy_severity highlight can still find it. */}
+                      {loc(a.name)}
                       {a.severity && (
                         <em className="not-italic text-[calc(12px*var(--dw-text,1))] font-bold uppercase tracking-wide bg-destructive text-destructive-foreground rounded-full px-1.5 py-0.5">{localizeSeverity(language, a.severity)}</em>
                       )}
@@ -918,6 +936,7 @@ export function ElderlySettingsScreen({ patient, elderId, onUpdatePatient, onSig
             <div data-tour="elder-language">
               <SectionCard icon={Globe} title={SECTION_TITLES.voice} anchor="voice">
                 {readAloudControl}
+                {walkthroughManualControl}
                 {languageControl}
               </SectionCard>
             </div>

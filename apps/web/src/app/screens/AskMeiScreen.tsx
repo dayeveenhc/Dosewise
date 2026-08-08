@@ -4,7 +4,7 @@ import { Send, TrendingUp, Plane, Check, Sparkles, MessageCircle, Camera, FileTe
 import type { Patient, Screen } from "../types";
 import { ProfileAvatar } from "../components/shared";
 import { agentTurnStream, fileToBase64 } from "../lib/hermes";
-import type { AgentTurnEvent, AgentAction } from "../lib/hermes";
+import type { AgentTurnEvent, AgentAction, WalkthroughRisk } from "../lib/hermes";
 import { firstRoutableAction, ACTION_TARGETS } from "../lib/agentActions";
 import { firstHighlightable } from "../lib/changeHighlight";
 import { buttonsFor, lastInteractiveIndex } from "../lib/chatChoices";
@@ -17,7 +17,7 @@ import { TravelModeSheet } from "./TravelModeSheet";
 import { useLanguage } from "../lib/languageContext";
 import { useAccessibility } from "../accessibility.tsx";
 import { t, LANGUAGE_OPTIONS, speechLangFor } from "../lib/language";
-import { speak as speakUtterance } from "../lib/speech";
+import { speakReply as speakUtterance, stopSpeaking } from "../lib/speech";
 import { ConfirmDialog } from "../components/ConfirmDialog";
 import { PhotoSourceSheet } from "../components/PhotoSourceSheet";
 import { BottomSheet } from "../components/BottomSheet";
@@ -185,7 +185,7 @@ function PatientPicker({ patients, selectedIds, onChange }: {
   );
 }
 
-export function AskMeiScreen({ patient, patients, selectedPatient, onSelectPatient, elderId, onUpdatePatient, onNavigate, onSendReminder, onMedsChanged, onMedAdded, onHighlightChange, onWalkthroughStart }: {
+export function AskMeiScreen({ patient, patients, selectedPatient, onSelectPatient, elderId, onUpdatePatient, onNavigate, onSendReminder, onMedsChanged, onMedAdded, onHighlightChange, onWalkthroughStart, guidedViewActive, openChatView, onOpenChatViewConsumed }: {
   patient: Patient;
   // Everyone this caregiver looks after, so the chat can be scoped to one or
   // several of them. Falls back to just `patient` when a host doesn't pass it.
@@ -201,7 +201,27 @@ export function AskMeiScreen({ patient, patients, selectedPatient, onSelectPatie
   onHighlightChange?: (action: AgentAction) => void;
   // Returns null when the walkthrough started, or a translation key saying
   // why it could not — so this screen can say so instead of doing nothing.
-  onWalkthroughStart?: (taskName: WalkthroughTaskName, params?: WalkthroughParams) => string | null | void;
+  // `risk` (RiskClassifier, Item 5) rides along only on the real Hermes-turn
+  // path below — App.tsx's own handleWalkthroughStart currently intercepts
+  // add_prescription_auto before it ever reaches a Confirm phase here, so
+  // this is unused today but kept for parity with the elder screen's shape.
+  onWalkthroughStart?: (
+    taskName: WalkthroughTaskName,
+    params?: WalkthroughParams,
+    risk?: WalkthroughRisk,
+  ) => string | null | void;
+  // True while a guided overlay (the autonomous walkthrough or the passive
+  // product tour) is on screen — the tour's Ask-Mei step spotlights
+  // [data-tour="cg-askmei"], which only exists in the help view, so a live
+  // conversation used to leave it pointing at nothing. Mirrors the elder
+  // screen's prop of the same name; see it for why this is a live boolean and
+  // not the monotonic counter that shape started as.
+  guidedViewActive?: boolean;
+  // "Open on the conversation, not the help list" — see the elder screen's prop
+  // of the same name for the full reasoning. A nullable value the parent clears
+  // after consumption, never a monotonic counter.
+  openChatView?: boolean;
+  onOpenChatViewConsumed?: () => void;
 }) {
   const { language, setLanguage } = useLanguage();
   const { voiceOutput, setVoiceOutput } = useAccessibility();
@@ -219,9 +239,48 @@ export function AskMeiScreen({ patient, patients, selectedPatient, onSelectPatie
   // above it — the help list, or the conversation. Opens on "help" (mirroring
   // the elder screen); sending a message flips it to "chat", and the header
   // switch flips back.
-  const [mode, setMode] = useState<"help" | "chat">(restored?.messages?.length ? "chat" : "help");
+  // (guidedViewActive overrides this on mount too — see its effect below.)
+  // openChatView wins outright — it holds even for an empty conversation,
+  // which is the case "Talk to Mei" is usually reached from.
+  const [mode, setMode] = useState<"help" | "chat">(
+    openChatView ? "chat" : guidedViewActive ? "help" : restored?.messages?.length ? "chat" : "help",
+  );
   const [query, setQuery] = useState("");
   const [category, setCategory] = useState<CatId | null>(null);
+
+  // A guided overlay is on screen: show the help list it expects to spotlight.
+  // The conversation is untouched — the header switch returns to it, and once
+  // the overlay closes a remount restores it from the seed above.
+  useEffect(() => {
+    if (!guidedViewActive) return;
+    setMode("help");
+    setCategory(null);
+    setQuery("");
+  }, [guidedViewActive]);
+
+  // Consume the "open on the conversation" request — and SET the mode. Keyed on
+  // [openChatView], not mount-only: the seed above only runs on a real mount,
+  // and the host's handoff is `setScreen("ai")`, a no-op when the person is
+  // already on the ai screen. See the elder screen's copy for the full story.
+  useEffect(() => {
+    if (!openChatView) return;
+    setMode("chat");
+    setCategory(null);
+    setQuery("");
+    onOpenChatViewConsumed?.();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [openChatView]);
+
+  // Drop the saved thread once it has gone 30 idle minutes WITHOUT a remount.
+  // The elder screen has had this since its own restore work; without it a
+  // caregiver chat only ever expired on the next mount, so a tab left open all
+  // afternoon kept serving a stale conversation the TTL had already retired.
+  useEffect(() => {
+    const id = setInterval(() => {
+      if (Date.now() - startedAtRef.current > SESSION_TTL_MS) setMessages([]);
+    }, 60_000);
+    return () => clearInterval(id);
+  }, []);
 
   const roster = patients?.length ? patients : [patient];
   // Who the conversation is about — starts as whoever the app is currently on.
@@ -261,7 +320,11 @@ export function AskMeiScreen({ patient, patients, selectedPatient, onSelectPatie
   // network call — guard its post-await continuation so a turn they walked away
   // from can't navigate/highlight a screen they're no longer looking at.
   const mountedRef = useRef(true);
-  useEffect(() => () => { mountedRef.current = false; }, []);
+  // Also stop any reply mid-sentence. The neural voice plays a detached Audio
+  // element owned by lib/speech.ts, so speechSynthesis.cancel() cannot reach
+  // it — without this, walking away from the chat leaves Mei talking on a
+  // screen nobody is looking at.
+  useEffect(() => () => { mountedRef.current = false; stopSpeaking(); }, []);
 
   const uniqueMeds = [...new Set(patient.medications.map(m => m.name))];
   // Which message hosts the answer buttons this turn (see lib/chatChoices.ts).
@@ -293,6 +356,16 @@ export function AskMeiScreen({ patient, patients, selectedPatient, onSelectPatie
   const scrollToBottom = () => setTimeout(() => {
     if (scrollRef.current) scrollRef.current.scrollTop = scrollRef.current.scrollHeight;
   }, 60);
+
+  // Arrive at the BOTTOM of a restored thread — see the elder screen's copy.
+  // Every other call site here is an append path, so a conversation restored
+  // from sessionStorage opened at its oldest message. This one is already
+  // instant (a direct scrollTop, no smooth behaviour), so no flag is needed.
+  useEffect(() => {
+    if (mode !== "chat" || messages.length === 0) return;
+    scrollToBottom();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [mode]);
 
   // Grow the input with its content instead of staying pinned to one row —
   // without this, once text wraps to a second line the textarea's fixed
@@ -401,7 +474,7 @@ export function AskMeiScreen({ patient, patients, selectedPatient, onSelectPatie
     // view — the conversation would otherwise cover what's being spotlighted.
     if (walkthrough) {
       setMode("help");
-      const refusal = onWalkthroughStart?.(walkthrough.task_name as WalkthroughTaskName, walkthrough.params);
+      const refusal = onWalkthroughStart?.(walkthrough.task_name as WalkthroughTaskName, walkthrough.params, walkthrough.risk);
       if (refusal) {
         setMode("chat");
         setMessages(prev => [...prev, { id: Date.now() + 3, role: "agent", text: t(language, refusal), time: nowLabel(), isConfirmation: true }]);
@@ -467,7 +540,12 @@ export function AskMeiScreen({ patient, patients, selectedPatient, onSelectPatie
 
   const clearChat = () => {
     startedAtRef.current = Date.now();
-    setMessages([{ id: Date.now(), role: "agent", text: t(language, "ai.greeting", { name: patient.name }), time: nowLabel() }]);
+    // Genuinely EMPTY, matching the elder screen and this file's own "no canned
+    // greeting: the screen opens on what Mei can DO" stance a few lines up. It
+    // used to re-seed a greeting, which left messages.length > 0 — so with the
+    // now-bidirectional pill above, clearing the chat would have immediately
+    // offered "Back to chat" to a thread containing nothing but that greeting.
+    setMessages([]);
     setShowClearConfirm(false);
     setMode("help");
   };
@@ -595,17 +673,24 @@ export function AskMeiScreen({ patient, patients, selectedPatient, onSelectPatie
         )}
       </div>
 
-      {/* The switch back to the help list, as a full-width tab under the title —
-          a message having just been sent is exactly when it needs to be
-          obvious, and an icon in a crowded header row is not. */}
-      {mode === "chat" && !category && (
+      {/* The switch between the help list and the conversation, as a full-width
+          tab under the title — a message having just been sent is exactly when
+          it needs to be obvious, and an icon in a crowded header row is not.
+          BIDIRECTIONAL, mirroring the elder screen's own pill: it used to
+          render only in chat mode and only go chat -> help, so once a caregiver
+          was on the help list the ONLY way back into a live thread was to send
+          another message (every setMode("chat") in this file is a side effect
+          of sending/attaching, never a control). */}
+      {!category && (mode === "chat" || messages.length > 0) && (
         <button
-          onClick={() => { setMode("help"); setQuery(""); }}
-          data-walk="cg-ai-frequently-used"
+          onClick={() => { setMode(mode === "chat" ? "help" : "chat"); setQuery(""); scrollToBottom(); }}
+          data-walk={mode === "chat" ? "cg-ai-frequently-used" : "cg-ai-back-to-chat"}
           className="mx-4 mb-2 shrink-0 flex items-center justify-center gap-1.5 rounded-full dw-surface py-2 active:bg-muted transition-colors"
         >
           <Sparkles size={14} className="text-primary shrink-0" />
-          <span className="text-[calc(13px*var(--dw-text,1))] font-bold text-foreground">{t(language, "ai.frequentlyUsed")}</span>
+          <span className="text-[calc(13px*var(--dw-text,1))] font-bold text-foreground">
+            {t(language, mode === "chat" ? "ai.frequentlyUsed" : "ai.backToChat")}
+          </span>
         </button>
       )}
 
@@ -646,12 +731,15 @@ export function AskMeiScreen({ patient, patients, selectedPatient, onSelectPatie
                     synthesized Yes/No when a confirm is pending, anchored on the
                     last message that HAS buttons (see lib/chatChoices.ts). */}
                 {i === interactiveIndex && !sending && buttonsFor(msg, language).length > 0 && (
-                  <div className="flex flex-wrap gap-2 mt-1">
+                  // self-stretch inside this items-start column sizes each answer
+                  // to the bubble's own width — see ElderlyAIScreen for the same
+                  // treatment; the two chat surfaces stay visually identical.
+                  <div className="flex flex-col gap-2 mt-1 self-stretch">
                     {buttonsFor(msg, language).map((c, ci) => (
                       <button
                         key={ci}
                         onClick={() => send(c.value)}
-                        className="px-4 py-2 rounded-full bg-primary/10 border border-primary/30 text-primary text-[calc(14px*var(--dw-text,1))] font-semibold active:scale-95 transition-transform"
+                        className="w-full min-h-[44px] px-4 py-2.5 rounded-2xl bg-primary/10 border border-primary/30 text-primary text-[calc(14px*var(--dw-text,1))] font-semibold active:scale-[0.98] transition-transform"
                       >
                         {c.label}
                       </button>

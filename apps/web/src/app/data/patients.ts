@@ -53,28 +53,38 @@ export const PATIENTS: Patient[] = [
   },
 ];
 
+// Same key-prefix split as MESSAGES below: `i18nKey`'s `.title`/`.body`/`.time`
+// are what the screen renders; the literals here are the English source and the
+// fallback for anything real that arrives without a key.
 export const NOTIFICATIONS: Notification[] = [
-  { id: 1, type: "missed", title: "Missed dose — Celecoxib", body: "Mdm Tan did not take her 12:00 PM Celecoxib 200mg dose.", time: "12:45 PM", read: false, patientId: 1 },
-  { id: 2, type: "refill", title: "Refill needed soon — Metformin", body: "Metformin 500mg has ~4 days remaining. Order before Fri.", time: "10:00 AM", read: false, patientId: 1 },
-  { id: 3, type: "refill", title: "Refill needed — Latanoprost Eye Drops", body: "Mr Wong's eye drops have only 3 days left.", time: "9:30 AM", read: false, patientId: 2 },
-  { id: 4, type: "info", title: "Weekly adherence report ready", body: "AI summary for Mdm Tan's medication adherence this week is ready to view.", time: "8:00 AM", read: true, patientId: 1 },
-  { id: 5, type: "reminder", title: "Reminder sent to helper", body: "You sent a 6:00 PM dose reminder to Siti Nuraini.", time: "5:45 PM Yesterday", read: true, patientId: 1 },
+  { id: 1, type: "missed", title: "Missed dose — Celecoxib", body: "Mdm Tan did not take her 12:00 PM Celecoxib 200mg dose.", time: "12:45 PM", read: false, patientId: 1, i18nKey: "notifications.seed1" },
+  { id: 2, type: "refill", title: "Refill needed soon — Metformin", body: "Metformin 500mg has ~4 days remaining. Order before Fri.", time: "10:00 AM", read: false, patientId: 1, i18nKey: "notifications.seed2" },
+  { id: 3, type: "refill", title: "Refill needed — Latanoprost Eye Drops", body: "Mr Wong's eye drops have only 3 days left.", time: "9:30 AM", read: false, patientId: 2, i18nKey: "notifications.seed3" },
+  { id: 4, type: "info", title: "Weekly adherence report ready", body: "AI summary for Mdm Tan's medication adherence this week is ready to view.", time: "8:00 AM", read: true, patientId: 1, i18nKey: "notifications.seed4" },
+  { id: 5, type: "reminder", title: "Reminder sent to helper", body: "You sent a 6:00 PM dose reminder to Siti Nuraini.", time: "5:45 PM Yesterday", read: true, patientId: 1, i18nKey: "notifications.seed5" },
 ];
 
+// `i18nKey` is a key PREFIX whose `.role`/`.body` the screen renders instead of
+// the literals here (Message.i18nKey in types.ts explains why the seed can't be
+// localized at creation time). `author` is a person's name and is never
+// translated; "You" is resolved at render, not stored here.
 export const MESSAGES: Message[] = [
-  { id: 1, author: "Siti Nuraini", role: "Helper", body: "Good morning! Mdm Tan took her morning meds with breakfast. She seemed a bit tired today but ate well.", time: "7:22 AM", isMe: false },
-  { id: 2, author: "You", role: "Son", body: "Thanks Siti. Please remind her to do her foot exercises after lunch too.", time: "9:05 AM", isMe: true },
-  { id: 3, author: "Shu Fen", role: "Sister", body: "I'll be visiting on Saturday, can we check the celecoxib situation then? She keeps forgetting the midday one.", time: "11:30 AM", isMe: false },
-  { id: 4, author: "You", role: "Son", body: "Good idea. I'll leave a note with Siti. Maybe we should put the pill on the dining table at 11:30 as a visual reminder.", time: "11:45 AM", isMe: true },
-  { id: 5, author: "Siti Nuraini", role: "Helper", body: "Noted! I'll put it out with a small cup of water. She forgot again today at lunch — said she was watching TV.", time: "1:10 PM", isMe: false },
+  { id: 1, author: "Siti Nuraini", role: "Helper", body: "Good morning! Mdm Tan took her morning meds with breakfast. She seemed a bit tired today but ate well.", time: "7:22 AM", isMe: false, i18nKey: "messages.thread1" },
+  { id: 2, author: "You", role: "Son", body: "Thanks Siti. Please remind her to do her foot exercises after lunch too.", time: "9:05 AM", isMe: true, i18nKey: "messages.thread2" },
+  { id: 3, author: "Shu Fen", role: "Sister", body: "I'll be visiting on Saturday, can we check the celecoxib situation then? She keeps forgetting the midday one.", time: "11:30 AM", isMe: false, i18nKey: "messages.thread3" },
+  { id: 4, author: "You", role: "Son", body: "Good idea. I'll leave a note with Siti. Maybe we should put the pill on the dining table at 11:30 as a visual reminder.", time: "11:45 AM", isMe: true, i18nKey: "messages.thread4" },
+  { id: 5, author: "Siti Nuraini", role: "Helper", body: "Noted! I'll put it out with a small cup of water. She forgot again today at lunch — said she was watching TV.", time: "1:10 PM", isMe: false, i18nKey: "messages.thread5" },
 ];
 
+// `day` stays the stable English token (it is the React key and the chart's
+// series identity); `dayKey` is what gets rendered, resolved at paint time so
+// the axis follows the language setting. Same split as `i18nKey` above.
 export const WEEKLY_DATA = [
-  { day: "Mon", adherence: 100 },
-  { day: "Tue", adherence: 83 },
-  { day: "Wed", adherence: 100 },
-  { day: "Thu", adherence: 67 },
-  { day: "Fri", adherence: 83 },
-  { day: "Sat", adherence: 83 },
-  { day: "Sun", adherence: 75 },
+  { day: "Mon", dayKey: "common.dayShort.mon", adherence: 100 },
+  { day: "Tue", dayKey: "common.dayShort.tue", adherence: 83 },
+  { day: "Wed", dayKey: "common.dayShort.wed", adherence: 100 },
+  { day: "Thu", dayKey: "common.dayShort.thu", adherence: 67 },
+  { day: "Fri", dayKey: "common.dayShort.fri", adherence: 83 },
+  { day: "Sat", dayKey: "common.dayShort.sat", adherence: 83 },
+  { day: "Sun", dayKey: "common.dayShort.sun", adherence: 75 },
 ];

@@ -7,6 +7,8 @@ import type { HighlightEntity } from "../lib/changeHighlight";
 import { PACING } from "../lib/walkthrough/pacing";
 import { recordPhase } from "../lib/walkthrough/phaseLog";
 import { HighlightCaption } from "./HighlightCaption";
+import { useLanguage } from "../lib/languageContext";
+import { useAccessibility } from "../accessibility.tsx";
 
 // How long to keep polling for the target element(s) after a write. The list
 // refetch that surfaces the new/changed records is async (a chat turn just
@@ -51,6 +53,11 @@ export function ChangeHighlight({ change, mode, onNavigate, onDone }: {
   onNavigate: (target: ElderlyTab | Screen) => void;
   onDone: () => void;
 }) {
+  // The caption is built HERE, by the producer, so it can be handed the reader's
+  // language and 12h/24h setting — HighlightCaption only ever renders finished
+  // text (it's shared with the walkthrough Reveal, which builds its own).
+  const { language } = useLanguage();
+  const { timeFormat } = useAccessibility();
   const [phase, setPhase] = useState<Phase>("idle");
   const [rect, setRect] = useState<DOMRect | null>(null);
   // Every ringed element, in the order found. The FIRST found element is the
@@ -216,6 +223,6 @@ export function ChangeHighlight({ change, mode, onNavigate, onDone }: {
 
   if (phase !== "shown" || !rect || !change) return null;
 
-  const { verb, text } = describeBatch(change);
+  const { verb, text } = describeBatch(change, { language, timeFormat });
   return <HighlightCaption rect={rect} verb={verb} text={text} />;
 }

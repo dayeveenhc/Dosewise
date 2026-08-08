@@ -1,0 +1,19 @@
+{
+  "http": 200,
+  "reply": "I've started adding \"high blood pressure\" to your conditions — the app will take it from here and confirm when it's saved.",
+  "tools_used": [
+    "start_walkthrough"
+  ],
+  "actions": [],
+  "walkthrough": {
+    "task_name": "add_condition_auto",
+    "params": {
+      "condition": "high blood pressure"
+    },
+    "risk": {
+      "flagged": false,
+      "signals": [],
+      "reasons": []
+    }
+  }
+}

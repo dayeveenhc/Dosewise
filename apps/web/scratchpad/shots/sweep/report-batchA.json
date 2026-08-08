@@ -1,0 +1,136 @@
+{
+  "log": [
+    {
+      "task": "add_prescription_auto",
+      "shell": "elder",
+      "visited": 4,
+      "stoppedAt": "step 6 is user-driven (waitFor: click)"
+    },
+    {
+      "task": "add_condition_auto",
+      "shell": "elder",
+      "visited": 6,
+      "stoppedAt": "step 6 is user-driven (waitFor: click)"
+    },
+    {
+      "task": "travel_mode_auto",
+      "shell": "elder",
+      "visited": 0,
+      "stoppedAt": "ERRORED: travel_mode_auto (elder) exceeded 150000ms"
+    },
+    {
+      "task": "edit_profile_auto",
+      "shell": "elder",
+      "visited": 5,
+      "stoppedAt": "step 5 is user-driven (waitFor: click)"
+    },
+    {
+      "task": "add_doctor_question_auto",
+      "shell": "elder",
+      "visited": 6,
+      "stoppedAt": "step 6 is user-driven (waitFor: click)"
+    },
+    {
+      "task": "language_voice_tour",
+      "shell": "elder",
+      "visited": 3,
+      "stoppedAt": "reached the 12-step sweep cap"
+    },
+    {
+      "task": "notifications_tour",
+      "shell": "elder",
+      "visited": 3,
+      "stoppedAt": "reached the 12-step sweep cap"
+    }
+  ],
+  "findings": [
+    {
+      "task": "add_prescription_auto",
+      "shell": "elder",
+      "step": 2,
+      "stepId": "autoRx.name",
+      "kind": "cutout-misaligned",
+      "detail": "cutout {top:267.3 left:15.3 w:347.5 h:56.5} != target+6 {top:264.3 left:15.3 w:347.5 h:56.5} [dy=3.0 prehighlight=true transform=matrix(1, 0, 0, 1, 0, -3)]"
+    },
+    {
+      "task": "add_prescription_auto",
+      "shell": "elder",
+      "step": 5,
+      "stepId": "autoRx.confirm",
+      "kind": "cutout-misaligned",
+      "detail": "cutout {top:418.4 left:15.3 w:347.5 h:63.0} != target+6 {top:416.0 left:15.3 w:347.5 h:63.0} [dy=2.4 prehighlight=false transform=matrix(1, 0, 0, 1, 0, -342)]"
+    },
+    {
+      "task": "add_prescription_auto",
+      "shell": "elder",
+      "step": 5,
+      "stepId": "autoRx.confirm",
+      "kind": "callout-overlaps-target",
+      "detail": "callout {top:295.0 left:17.0 w:344.0 h:426.8} overlaps spotlighted target {top:422.0 left:21.3 w:335.5 h:51.0}"
+    },
+    {
+      "task": "add_condition_auto",
+      "shell": "elder",
+      "step": 1,
+      "stepId": "autoCond.expand",
+      "kind": "cutout-misaligned",
+      "detail": "cutout {top:165.0 left:11.0 w:356.0 h:191.7} != target+6 {top:165.0 left:11.0 w:356.0 h:108.0} [dy=0.0 prehighlight=false transform=none]"
+    },
+    {
+      "task": "add_condition_auto",
+      "shell": "elder",
+      "step": 2,
+      "stepId": "autoCond.edit",
+      "kind": "cutout-misaligned",
+      "detail": "cutout {top:34.4 left:225.1 w:146.1 h:54.5} != target+6 {top:31.4 left:225.1 w:146.1 h:54.5} [dy=3.0 prehighlight=true transform=matrix(1, 0, 0, 1, 0, -3)]"
+    },
+    {
+      "task": "edit_profile_auto",
+      "shell": "elder",
+      "step": 1,
+      "stepId": "autoProfile.expand",
+      "kind": "cutout-misaligned",
+      "detail": "cutout {top:165.0 left:11.0 w:356.0 h:191.7} != target+6 {top:165.0 left:11.0 w:356.0 h:108.0} [dy=0.0 prehighlight=false transform=none]"
+    },
+    {
+      "task": "edit_profile_auto",
+      "shell": "elder",
+      "step": 2,
+      "stepId": "autoProfile.edit",
+      "kind": "cutout-misaligned",
+      "detail": "cutout {top:34.4 left:225.1 w:146.1 h:54.5} != target+6 {top:31.4 left:225.1 w:146.1 h:54.5} [dy=3.0 prehighlight=true transform=matrix(1, 0, 0, 1, 0, -3)]"
+    },
+    {
+      "task": "edit_profile_auto",
+      "shell": "elder",
+      "step": 5,
+      "stepId": "autoProfile.submit",
+      "kind": "cutout-misaligned",
+      "detail": "cutout {top:379.9 left:11.0 w:356.0 h:67.3} != target+6 {top:671.9 left:11.0 w:356.0 h:67.3} [dy=-292.0 prehighlight=false transform=none]"
+    },
+    {
+      "task": "edit_profile_auto",
+      "shell": "elder",
+      "step": 5,
+      "stepId": "autoProfile.submit",
+      "kind": "callout-gap-too-small",
+      "detail": "only 0.5px between callout and target (GAP=16)"
+    },
+    {
+      "task": "language_voice_tour",
+      "shell": "elder",
+      "step": 2,
+      "stepId": "langvoice.section",
+      "kind": "callout-overlaps-target",
+      "detail": "callout {top:519.0 left:17.0 w:344.0 h:202.7} overlaps spotlighted target {top:100.2 left:17.0 w:344.0 h:456.1}"
+    },
+    {
+      "task": "language_voice_tour",
+      "shell": "elder",
+      "step": 3,
+      "stepId": "langvoice.pick-language",
+      "kind": "cutout-misaligned",
+      "detail": "cutout {top:379.0 left:29.0 w:320.0 h:67.3} != target+6 {top:377.0 left:29.0 w:320.0 h:67.3} [dy=2.0 prehighlight=true transform=matrix(1, 0, 0, 1, 0, -3)]"
+    }
+  ]
+}

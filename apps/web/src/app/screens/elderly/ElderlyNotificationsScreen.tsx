@@ -4,10 +4,11 @@ import type { Message } from "../../types";
 import type { DoctorQ } from "./types";
 import { useLanguage } from "../../lib/languageContext";
 import { t } from "../../lib/language";
-import { fetchPendingLinkRequests, respondToLinkRequest, type PendingLinkRequest } from "../../lib/careLinks";
+import { respondToLinkRequest, type PendingLinkRequest } from "../../lib/careLinks";
+import type { Alert } from "../../lib/alerts";
 import { emitWalkthroughEvent } from "../../lib/walkthrough/bus";
 
-export function ElderlyNotificationsScreen({ careMessages, elderId, doctorQuestions, onAddDoctorQ, onMarkAnswered, onDeleteQuestion, onDismissMessage, onReplyMessage, openQuestionsSignal, walkthroughResetSignal }: {
+export function ElderlyNotificationsScreen({ careMessages, elderId, doctorQuestions, onAddDoctorQ, onMarkAnswered, onDeleteQuestion, onDismissMessage, onReplyMessage, openQuestionsSignal, walkthroughResetSignal, alerts = [], onAcknowledgeAlert, onRequestRefill, linkRequests, onLinkRequestsChanged }: {
   careMessages: Message[];
   elderId?: string;
   // Questions for the doctor moved here from the Ask Mei screen: this tab is
@@ -28,18 +29,25 @@ export function ElderlyNotificationsScreen({ careMessages, elderId, doctorQuesti
   // to dead-end on its own previous run. Restore the row (and the Messages tab
   // the tour opens on) so it can be shown again.
   walkthroughResetSignal?: number;
+  // Everything outstanding, most severe first — computed ONCE by the host
+  // (lib/alerts.ts) and shared with the nav badge and the urgent popup, so the
+  // three surfaces cannot disagree or report the same thing three times.
+  alerts?: Alert[];
+  onAcknowledgeAlert?: (id: string) => void;
+  onRequestRefill?: (medName: string) => void;
+  // Pending link requests are fetched by the host now (the badge and popup need
+  // them while this tab is closed), so this screen renders what it is given.
+  linkRequests?: PendingLinkRequest[];
+  onLinkRequestsChanged?: () => void;
 }) {
   const { language } = useLanguage();
-  const [requests, setRequests] = useState<PendingLinkRequest[]>([]);
+  const requests = linkRequests ?? [];
   const [busy, setBusy] = useState<string | null>(null);
   const [showQInput, setShowQInput] = useState(false);
   const [newQ, setNewQ] = useState("");
   const [replyingTo, setReplyingTo] = useState<number | null>(null);
   const [replyText, setReplyText] = useState("");
   const [tab, setTab] = useState<"messages" | "questions">("messages");
-  // Demo low-stock alert (no live push infra) — dismissible locally. Carries
-  // the notifications_tour's stable anchors (notif-refill-row / notif-ack-btn).
-  const [refillMockDismissed, setRefillMockDismissed] = useState(false);
 
   useEffect(() => {
     if (openQuestionsSignal) setTab("questions");
@@ -47,10 +55,13 @@ export function ElderlyNotificationsScreen({ careMessages, elderId, doctorQuesti
 
   useEffect(() => {
     if (!walkthroughResetSignal) return;
-    // Restore the demo alert (notifications_tour's own step 3 dismisses it, so
-    // replaying the tour used to dead-end on its previous run) and close the
-    // question composer (add_doctor_question_auto opens it itself, and its step
-    // targets the Add button, which only exists while it is closed).
+    // Close the question composer (add_doctor_question_auto opens it itself,
+    // and its step targets the Add button, which only exists while it's shut).
+    // Deliberately does NOT restore a dismissed alert. These are real now, not
+    // a demo row: an alert the person acknowledged must not be resurrected by
+    // replaying a tour. Replaying with nothing outstanding is instead refused at
+    // dispatch by ElderlyApp (walk.refused.nothingToShow), which is an honest
+    // answer rather than a tour spotlighting a card that isn't there.
     //
     // Deliberately does NOT touch `tab`: a ChangeHighlight can navigate here and
     // open the Questions tab (openQuestionsSignal) in the same beat a
@@ -58,21 +69,28 @@ export function ElderlyNotificationsScreen({ careMessages, elderId, doctorQuesti
     // the highlight is trying to ring. The tour's own anchors don't need it —
     // the demo alert sits ABOVE the tab strip, and the doctor-question flow
     // clicks its tab itself.
-    setRefillMockDismissed(false);
     setShowQInput(false);
   }, [walkthroughResetSignal]);
 
-  useEffect(() => {
-    if (!elderId) return;
-    void fetchPendingLinkRequests(elderId).then(setRequests);
-  }, [elderId]);
+
+  // Link requests and caregiver messages already have their own dedicated
+  // sections below — rendering them again as generic cards would report the
+  // same thing twice on one screen. They stay in `alerts` for the badge and the
+  // popup, which have no such section.
+  const cardAlerts = alerts.filter(a => a.kind !== "care_link_request" && a.kind !== "care_message");
+  // notifications_tour's anchors ride the first SUPPLY alert (what it narrates),
+  // falling back to the first card of any kind — so they exist whenever any card
+  // does. The tour only ever touches notif-refill-row and notif-ack-btn, both of
+  // which every card renders; notif-request-refill-btn is supply-only and is
+  // spotlighted by nothing.
+  const anchorIndex = Math.max(0, cardAlerts.findIndex(a => a.kind === "low_supply" || a.kind === "out_of_supply"));
 
   const respond = async (id: string, accept: boolean) => {
     setBusy(id);
     const ok = await respondToLinkRequest(id, accept);
     setBusy(null);
     if (ok) {
-      setRequests(prev => prev.filter(r => r.id !== id));
+      onLinkRequestsChanged?.();
       // Gated on the real, RLS-enforced write actually succeeding — never the
       // Accept button's click, and never `busy` clearing (that happens on
       // both the accept and the failure branch). Per supabase/migrations/
@@ -169,42 +187,71 @@ export function ElderlyNotificationsScreen({ careMessages, elderId, doctorQuesti
           </div>
         )}
 
-        {/* Mock low-stock/refill alert — mirrors the caregiver demo toast; the
-            notifications_tour spotlights this row and its Got it button. Sits
-            above the tabs so the tour's anchors are on screen from the start. */}
-        {!refillMockDismissed && (
-          <div data-walk="notif-refill-row" className="rounded-2xl border border-warn-border bg-warn-bg p-4">
-            <div className="flex items-center gap-2 mb-1.5">
-              <div className="w-9 h-9 rounded-full bg-card flex items-center justify-center shrink-0">
-                <RefreshCw size={15} className="text-warn-fg" />
+        {/* Real, data-driven alerts — this used to be a hardcoded "Metformin,
+            4 days" literal. Sits above the tabs so nothing urgent can be hidden
+            behind one, and so notifications_tour's anchors are on screen from
+            its first step. Those anchors ride the FIRST supply alert (or the
+            first alert of any kind), rather than a fixed medicine, so the tour
+            still has something to point at whatever the person's real data is —
+            and the host refuses to start it at all when there is nothing here.
+
+            Severity is carried by border + icon + text as well as background:
+            under .contrast-max every *-bg token collapses to white, so a
+            tint-only tier would silently read as no tier at all. */}
+        {cardAlerts.map((alert, i) => {
+          const critical = alert.severity === "critical";
+          const supply = alert.kind === "low_supply" || alert.kind === "out_of_supply";
+          const isTourAnchor = i === anchorIndex;
+          return (
+            <div
+              key={alert.id}
+              data-walk={isTourAnchor ? "notif-refill-row" : undefined}
+              data-testid={alert.medicationId ? `alert-${alert.medicationId}` : undefined}
+              className={`rounded-2xl border-2 p-4 ${
+                critical ? "border-missed-border bg-missed-bg"
+                  : alert.severity === "urgent" ? "border-warn-border bg-warn-bg"
+                    : "border-border bg-card"
+              }`}
+            >
+              <div className="flex items-center gap-2 mb-1.5">
+                <div className="w-9 h-9 rounded-full bg-card flex items-center justify-center shrink-0">
+                  {critical
+                    ? <AlertTriangle size={15} className="text-missed-fg" strokeWidth={2.5} />
+                    : <RefreshCw size={15} className="text-warn-fg" />}
+                </div>
+                <p className={`text-[calc(15px*var(--dw-text,1))] font-bold flex-1 ${critical ? "text-missed-fg" : "text-warn-fg"}`}>
+                  {t(language, alert.titleKey, alert.params)}
+                </p>
               </div>
-              <p className="text-[calc(15px*var(--dw-text,1))] font-bold text-warn-fg flex-1">{t(language, "notifications.lowStockTitle", { med: "Metformin" })}</p>
+              <p className={`text-[calc(15px*var(--dw-text,1))] leading-relaxed mb-3 ${critical ? "text-missed-fg/90" : "text-warn-fg/90"}`}>
+                {t(language, alert.bodyKey, alert.params)}
+              </p>
+              <div className="flex gap-2">
+                <button
+                  onClick={() => onAcknowledgeAlert?.(alert.id)}
+                  data-walk={isTourAnchor ? "notif-ack-btn" : undefined}
+                  className="flex-1 bg-card border border-border text-foreground rounded-xl py-2.5 text-[calc(15px*var(--dw-text,1))] font-bold flex items-center justify-center gap-1.5 active:scale-[0.98] transition-transform"
+                >
+                  <Check size={16} />{t(language, "notifications.dismiss")}
+                </button>
+                {supply && (
+                  <button
+                    onClick={() => {
+                      const name = alert.medName ?? "";
+                      if (onRequestRefill) onRequestRefill(name);
+                      else onAddDoctorQ(t(language, "ai.refillRequestMsg", { name }));
+                      onAcknowledgeAlert?.(alert.id);
+                    }}
+                    data-walk={isTourAnchor ? "notif-request-refill-btn" : undefined}
+                    className={`flex-1 text-white rounded-xl py-2.5 text-[calc(15px*var(--dw-text,1))] font-bold flex items-center justify-center gap-1.5 active:scale-[0.98] transition-transform ${critical ? "bg-missed-fg" : "bg-warn-fg"}`}
+                  >
+                    <RefreshCw size={16} />{t(language, "prescription.requestRefill")}
+                  </button>
+                )}
+              </div>
             </div>
-            <p className="text-[calc(15px*var(--dw-text,1))] text-warn-fg/90 leading-relaxed mb-3">
-              {t(language, "notifications.lowStockBody", { med: "Metformin 500mg", days: 4 })}
-            </p>
-            <div className="flex gap-2">
-              <button
-                onClick={() => setRefillMockDismissed(true)}
-                data-walk="notif-ack-btn"
-                className="flex-1 bg-card border border-warn-border text-warn-fg rounded-xl py-2.5 text-[calc(15px*var(--dw-text,1))] font-bold flex items-center justify-center gap-1.5 active:scale-[0.98] transition-transform"
-              >
-                <Check size={16} />{t(language, "notifications.dismiss")}
-              </button>
-              <button
-                onClick={() => {
-                  onAddDoctorQ(t(language, "ai.refillRequestMsg", { name: "Metformin" }));
-                  setRefillMockDismissed(true);
-                  setTab("questions");
-                }}
-                data-walk="notif-request-refill-btn"
-                className="flex-1 bg-warn-fg text-white rounded-xl py-2.5 text-[calc(15px*var(--dw-text,1))] font-bold flex items-center justify-center gap-1.5 active:scale-[0.98] transition-transform"
-              >
-                <RefreshCw size={16} />{t(language, "prescription.requestRefill")}
-              </button>
-            </div>
-          </div>
-        )}
+          );
+        })}
 
         <div className="flex gap-1.5 bg-muted/70 rounded-2xl p-1.5">
           {([["messages", t(language, "notifications.tabMessages")], ["questions", t(language, "notifications.tabQuestions")]] as const).map(([id, label]) => (

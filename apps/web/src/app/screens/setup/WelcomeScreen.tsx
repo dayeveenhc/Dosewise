@@ -26,11 +26,13 @@ export function WelcomeScreen({ onSignIn, onGetStarted }: { onSignIn: () => void
             <Shield size={13} className="text-primary" />
           </div>
         </div>
-        <h1 className="font-['Fraunces'] text-2xl font-semibold text-foreground text-center leading-snug mb-2">
-          Your smart<br />prescription tracker
+        {/* No hard <br />: the line break belonged to the English wording and
+            split every other language mid-phrase. Width-balanced instead. */}
+        <h1 className="font-['Fraunces'] text-2xl font-semibold text-foreground text-center leading-snug mb-2 max-w-[260px]">
+          {t(language, "welcome.title")}
         </h1>
         <p className="text-sm text-muted-foreground text-center leading-relaxed max-w-[280px]">
-          Keep track of medications, get gentle reminders, and stay connected with the people who care for you.
+          {t(language, "welcome.subtitle")}
         </p>
       </div>
 

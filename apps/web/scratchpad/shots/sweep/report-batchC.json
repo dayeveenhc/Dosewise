@@ -1,0 +1,112 @@
+{
+  "log": [
+    {
+      "task": "caregiver_view_toggle_tour",
+      "shell": "caregiver",
+      "visited": 2,
+      "stoppedAt": "step 2 would not advance on Next"
+    },
+    {
+      "task": "patient_schedule_tour",
+      "shell": "caregiver",
+      "visited": 3,
+      "stoppedAt": "reached the 12-step sweep cap"
+    },
+    {
+      "task": "weekly_summary_tour",
+      "shell": "caregiver",
+      "visited": 0,
+      "stoppedAt": "ERRORED: weekly_summary_tour (caregiver) exceeded 240000ms"
+    },
+    {
+      "task": "undo_dose",
+      "shell": "elder",
+      "visited": 0,
+      "stoppedAt": "ERRORED: undo_dose (elder) exceeded 240000ms"
+    },
+    {
+      "task": "reminder_settings",
+      "shell": "elder",
+      "visited": 0,
+      "stoppedAt": "overlay unmounted after 0 step(s)"
+    },
+    {
+      "task": "text_size",
+      "shell": "elder",
+      "visited": 0,
+      "stoppedAt": "overlay unmounted after 0 step(s)"
+    },
+    {
+      "task": "travel_mode_setup",
+      "shell": "elder",
+      "visited": 0,
+      "stoppedAt": "overlay unmounted after 0 step(s)"
+    },
+    {
+      "task": "request_refill",
+      "shell": "elder",
+      "visited": 0,
+      "stoppedAt": "overlay unmounted after 0 step(s)"
+    },
+    {
+      "task": "accept_caregiver_link",
+      "shell": "elder",
+      "visited": 0,
+      "stoppedAt": "ERRORED: accept_caregiver_link (elder) exceeded 240000ms"
+    },
+    {
+      "task": "link_caregiver-elder",
+      "shell": "elder",
+      "visited": 1,
+      "stoppedAt": "step 1 is user-driven (waitFor: none)"
+    },
+    {
+      "task": "link_caregiver-caregiver",
+      "shell": "caregiver",
+      "visited": 0,
+      "stoppedAt": "ERRORED: link_caregiver-caregiver (caregiver) exceeded 240000ms"
+    }
+  ],
+  "findings": [
+    {
+      "task": "caregiver_view_toggle_tour",
+      "shell": "caregiver",
+      "step": 1,
+      "stepId": "viewtoggle.go-to-settings",
+      "kind": "callout-missing",
+      "detail": "no callout rendered (overlayPresent=true, scrim=false)"
+    },
+    {
+      "task": "patient_schedule_tour",
+      "shell": "caregiver",
+      "step": 1,
+      "stepId": "patsched.go-to-schedule",
+      "kind": "callout-missing",
+      "detail": "no callout rendered (overlayPresent=true, scrim=false)"
+    },
+    {
+      "task": "patient_schedule_tour",
+      "shell": "caregiver",
+      "step": 2,
+      "stepId": "patsched.patient-switcher",
+      "kind": "callout-missing",
+      "detail": "no callout rendered (overlayPresent=true, scrim=false)"
+    },
+    {
+      "task": "patient_schedule_tour",
+      "shell": "caregiver",
+      "step": 3,
+      "stepId": "patsched.week-strip",
+      "kind": "callout-missing",
+      "detail": "no callout rendered (overlayPresent=true, scrim=false)"
+    },
+    {
+      "task": "link_caregiver-elder",
+      "shell": "elder",
+      "step": 1,
+      "stepId": "link.elder.go-to-settings",
+      "kind": "callout-missing",
+      "detail": "no callout rendered (overlayPresent=true, scrim=false)"
+    }
+  ]
+}

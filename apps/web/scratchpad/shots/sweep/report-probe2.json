@@ -1,0 +1,52 @@
+{
+  "log": [
+    {
+      "task": "add_prescription_auto",
+      "shell": "elder",
+      "visited": 6,
+      "stoppedAt": "overlay unmounted after 6 step(s)"
+    },
+    {
+      "task": "patient_schedule_tour",
+      "shell": "caregiver",
+      "visited": 0,
+      "stoppedAt": "ERRORED: signInAfterReset: app never mounted (no __dwStartWalkthrough) — page.waitForFunction: Timeout 30000ms exceeded."
+    },
+    {
+      "task": "text_size",
+      "shell": "elder",
+      "visited": 2,
+      "stoppedAt": "step 2 is user-driven (waitFor: input)"
+    }
+  ],
+  "findings": [
+    {
+      "task": "text_size",
+      "shell": "elder",
+      "step": 1,
+      "stepId": "textSize.open",
+      "kind": "target-occluded",
+      "detail": "spotlight frames {top:755.5 left:294.8 w:70.5 h:51.0} but nothing (outside the viewport) is painted over it"
+    },
+    {
+      "task": "text_size",
+      "shell": "elder",
+      "step": 2,
+      "stepId": "textSize.slider",
+      "kind": "cutout-off-centre-vs-control",
+      "detail": "[textSize.slider] selector \"[data-tour=\"elder-fontsize\"]\" frames a wrapper: pad top/bottom 63.6/26.4 (Δ37.3), left/right 40.8/49.8 (Δ9.0); target {top:362.1 left:18.0 w:342.0 h:102.7} vs 1 focusable descendant(s) {top:425.7 left:58.8 w:251.5 h:12.8}"
+    },
+    {
+      "task": "text_size",
+      "shell": "elder",
+      "step": 2,
+      "stepId": "textSize.slider",
+      "kind": "cutout-oversized-vs-control",
+      "detail": "[textSize.slider] selector \"[data-tour=\"elder-fontsize\"]\" area ratio 10.96x (> 1.6): target {top:362.1 left:18.0 w:342.0 h:102.7} vs control union {top:425.7 left:58.8 w:251.5 h:12.8}"
+    }
+  ],
+  "pool": {
+    "minted": 3,
+    "reused": 0
+  }
+}

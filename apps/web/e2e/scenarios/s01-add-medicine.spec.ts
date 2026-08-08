@@ -88,11 +88,14 @@ test("s01 add-medicine: 'new medicine — Lisinopril, 10mg' -> propose→confirm
   // Form opens (Act: open), then the first field fills. The name value lands at
   // ~10 chars × FILL_MS_PER_CHAR, well under the FIELD_MIN_MS floor, so at this
   // instant the field phase minimum has NOT elapsed.
-  // Autonomous steps no longer advance on their own — each holds at its commit
-  // gate until the person taps Next — so commit step 1 (open the form) first.
+  //
+  // NO tap between the two: the opening click is a step whose next step fills a
+  // field on the same screen, so computeHoldGate (lib/walkthrough/gating.ts)
+  // lets it flow straight on after GROUPED_STEP_PAUSE_MS. Holding it was the
+  // 2026-08-07 defect — the spotlight sat on the "+ Add" pill that the sheet it
+  // had just opened was covering, which read as a misaligned highlight.
   const nextBtn = page.getByRole("button", { name: /^(Next|Done)$/ });
   await expect(nextBtn, "Next exists on autonomous steps").toBeVisible({ timeout: 15_000 });
-  await tapWalkthroughNext(page);
 
   // Probe (once): Next is DISABLED before the phase minimum (canAdvance stays
   // false until FIELD_MIN_MS), so it can't rush the fill. Probed at the START
@@ -117,16 +120,27 @@ test("s01 add-medicine: 'new medicine — Lisinopril, 10mg' -> propose→confirm
   // the Home timeline; the sheet closes on a proven save and the new dose shows
   // on Home with its "Just added" highlight.
   await advanceWalkthroughUntil(page, () => page.getByText("tap Save yourself", { exact: false }).isVisible());
-  await expect(page.getByText("tap Save yourself", { exact: false }), "manual-Save confirm step reached").toBeVisible({ timeout: 25_000 });
+  await expect(page.getByText("tap Save yourself", { exact: false }), "Confirm (recap) step reached").toBeVisible({ timeout: 25_000 });
 
   // The review card: what Mei typed, shown in the callout so the person can
-  // actually CHECK it before committing. It must render on this waitFor step.
+  // actually CHECK it before committing. It must render on this step (Item 5,
+  // "ConfirmBack-Phase" — split out of what used to be one overloaded step
+  // into a Confirm recap step followed by a plain Submit waitFor step below).
   await expect(page.getByText("Please check these details"), "review card on the confirm step").toBeVisible();
   await expect(page.getByRole("button", { name: "Change something" }), "Change affordance").toBeVisible();
-  await expect(nextBtn, "consent step still has NO Next").toHaveCount(0);
   await page.screenshot({ path: `${SHOTS}/1b-review-card.png`, fullPage: true });
 
+  // A brand-new throwaway account has walkthroughCompletionCount 0 — below
+  // TRUST_MODE_THRESHOLD (Item 2, TrustMode) — so requireExplicitAdvance is
+  // true regardless of risk, and the Confirm phase holds for an explicit tap
+  // rather than auto-elapsing (that fast path is reserved for a veteran past
+  // the threshold; see scratchpad/trustmode.spec.ts for that case).
+  await expect(page.getByText("Please check these details"), "still on the confirm step — first-timer default, no auto-elapse").toBeVisible();
+  await tapWalkthroughNext(page);
+  await expect(page.getByText("Please check these details"), "confirm recap clears once tapped").toBeHidden({ timeout: 10_000 });
+
   const submitBtn = page.locator('[data-walk="rx-submit"]');
+  await expect(nextBtn, "the real Submit step is a plain waitFor — still no Next").toHaveCount(0);
   await expect(submitBtn, "Save enabled once every field is filled").toBeEnabled();
   await submitBtn.click(); // the real user tap — the sanctioned end of a *_auto flow
   await expect(submitBtn, "sheet closes on a proven save").toBeHidden({ timeout: 25_000 });
@@ -147,13 +161,19 @@ test("s01 add-medicine: 'new medicine — Lisinopril, 10mg' -> propose→confirm
   const log = await readPhaseLog(page);
   const wt = log.filter(e => e.surface === "walkthrough");
   const lastOf = (phase: string) => [...wt].reverse().find(e => e.phase === phase);
-  for (const phase of ["navigate", "field", "between-fields", "click", "verify", "reveal"]) {
+  for (const phase of ["navigate", "field", "between-fields", "click", "confirm", "verify", "reveal"]) {
     const e = lastOf(phase);
     if (e) console.log(`[PACING] ${phase}: min=${e.minMs}ms measured=${(e.endedAt - e.startedAt).toFixed(0)}ms`);
   }
   console.log(`[PACING] field fills=${JSON.stringify(wt.filter(e => e.phase === "field").map(e => +(e.endedAt - e.startedAt).toFixed(0)))}`);
 
   // Standard minimums (assertPhaseMins uses the LAST entry per phase + jitter slack).
+  // NOTE: "confirm" is deliberately absent here — Item 2 (TrustMode) means a
+  // fresh throwaway account (walkthroughCompletionCount 0, below
+  // TRUST_MODE_THRESHOLD) takes the TAP-gated path above (awaitNext, logged
+  // minMs 0), not the CONFIRM_MIN_MS auto-elapsing floor a veteran gets —
+  // asserting a 3000ms floor against a phase that resolved on a fast tap
+  // would fail. See scratchpad/trustmode.spec.ts for the veteran/auto case.
   assertPhaseMins(log, [
     { surface: "walkthrough", phase: "field", min: PACING.FIELD_MIN_MS },
     { surface: "walkthrough", phase: "click", min: PACING.PRE_CLICK_MS },

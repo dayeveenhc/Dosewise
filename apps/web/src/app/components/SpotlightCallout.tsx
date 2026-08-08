@@ -23,6 +23,8 @@ export function SpotlightCallout({
   onHeight,
   panel,
   children,
+  animateIn = false,
+  animateTop = true,
 }: {
   stepIndex: number;
   stepCount: number;
@@ -39,7 +41,21 @@ export function SpotlightCallout({
   // ReactNode is a fresh object every render; the ResizeObserver is what keeps
   // onHeight honest when this grows or a value inside it changes.
   panel?: ReactNode;
-  children?: ReactNode; // action buttons (Exit, or Skip/Back/Next)
+  children?: ReactNode; // action buttons (Exit, Back, Replay, Next/Done)
+  // Play the shared dw-view-in entrance once on mount (theme.css — reduced-
+  // motion safe on its own). The caller keys this component so it only
+  // actually REMOUNTS (and thus replays) on steps that want it — see
+  // Walkthrough.tsx's Navigate-phase usage.
+  animateIn?: boolean;
+  // Whether `top` changes glide (the default) or land instantly.
+  //
+  // Gliding is right WITHIN a step, where the card is following a target that
+  // is itself moving. Across a STEP CHANGE it is wrong: the cutout jumps to the
+  // new target on the next frame while this card takes 300ms to catch up, and
+  // for that window it can sit across the very thing it is describing —
+  // measured live at 33-186ms per step change on add_prescription_auto. The
+  // host turns it off for the first frames of a new step.
+  animateTop?: boolean;
 }) {
   const { language } = useLanguage();
   const ref = useRef<HTMLDivElement>(null);
@@ -62,7 +78,7 @@ export function SpotlightCallout({
   return (
     <div
       ref={ref}
-      className="absolute left-4 right-4 bg-card rounded-2xl border border-border p-4 shadow-xl pointer-events-auto transition-[top] duration-300 ease-out"
+      className={`absolute left-4 right-4 bg-card rounded-2xl border border-border p-4 shadow-xl pointer-events-auto${animateTop ? " transition-[top] duration-300 ease-out" : ""}${animateIn ? " dw-view-in" : ""}`}
       style={{ top }}
     >
       {/* Header: Mei avatar + label, step counter on the right */}

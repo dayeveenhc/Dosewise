@@ -2,7 +2,7 @@ import { useState, useEffect } from "react";
 import { Plus, BookOpen, ChevronDown, History, Check, RefreshCw, ShieldAlert, X, Pencil } from "lucide-react";
 import { useAccessibility } from "../../accessibility.tsx";
 import type { Medication, Patient } from "../../types";
-import { to24h, formatClock, supplyDaysLeft, cadenceLabel, WEEKDAY_TOKENS, LOW_SUPPLY_DAYS, REFILL_PROMPT_DAYS } from "../../lib/medications";
+import { to24h, formatClock, supplyDaysLeft, cadenceLabel, courseDaysLeft, WEEKDAY_TOKENS, LOW_SUPPLY_DAYS, REFILL_PROMPT_DAYS } from "../../lib/medications";
 import { MED_PLAIN, MED_SIMPLE, MED_SHAPES, EYEDROP_STEPS, localizeCatalogValue } from "../../data/medications";
 import { MedAvatar } from "../../components/shared";
 import { useLanguage } from "../../lib/languageContext";
@@ -30,7 +30,7 @@ function groupByMedication(meds: Medication[]): GroupedMed[] {
   return out;
 }
 
-export function ElderlyPrescriptionScreen({ patient, onAddRx, onRequestRefill, onEditRx, justAddedMed, highlightIds }: {
+export function ElderlyPrescriptionScreen({ patient, onAddRx, onRequestRefill, onEditRx, onArchiveRx, justAddedMed, highlightIds }: {
   patient: Patient;
   onAddRx: () => void;
   // Opens Ask Mei with a refill message PRE-FILLED (never auto-sent — the
@@ -40,6 +40,11 @@ export function ElderlyPrescriptionScreen({ patient, onAddRx, onRequestRefill, o
   // Opens AddPrescriptionSheet pre-filled with this medication so the elder
   // can correct it, from the detail popup's Edit button.
   onEditRx: (med: GroupedMed) => void;
+  // Archives a medicine whose fixed course has run out. Deliberately a tap the
+  // person makes, never an automatic write: archiving is the same state
+  // discontinue_medication sets, so a medicine leaves the active list only when
+  // somebody says so.
+  onArchiveRx?: (med: GroupedMed) => void;
   justAddedMed?: string | null;
   // Entity ids ChangeHighlight is currently trying to ring. Stopped medicines
   // live behind a collapsed accordion, so a discontinue highlight had nothing
@@ -63,7 +68,9 @@ export function ElderlyPrescriptionScreen({ patient, onAddRx, onRequestRefill, o
   // `patient.medications` is one entry per (medication, time-slot) — right for the
   // schedule, wrong here: a twice-daily pill is one prescription, not two. Group
   // back by medication and keep its times for the schedule indicator.
-  const prescriptions = groupByMedication(patient.medications);
+  // Finished courses sort to the bottom: they are history, not today's regimen.
+  const prescriptions = groupByMedication(patient.medications)
+    .sort((a, b) => Number((courseDaysLeft(a) ?? 0) < 0) - Number((courseDaysLeft(b) ?? 0) < 0));
 
   // "Mon, Thu" / "Every 2 days" — undefined for a plain daily medicine.
   const cadenceFor = (m: Medication) => cadenceLabel(
@@ -121,6 +128,11 @@ export function ElderlyPrescriptionScreen({ patient, onAddRx, onRequestRefill, o
           // Offered a little before the red warning, so the action is there
           // before it becomes urgent. Ask Mei reads the same threshold.
           const needsRefill = daysLeft != null && daysLeft < REFILL_PROMPT_DAYS;
+          // null = ongoing (the common case); < 0 = the course has run out, so
+          // isDueOn already produces no doses and the card must say why rather
+          // than just quietly emptying.
+          const courseLeft  = courseDaysLeft(m);
+          const courseDone  = courseLeft !== null && courseLeft < 0;
           const isEyeDrop   = m.name === "Latanoprost Eye Drops";
           const isHelpOpen  = helpOpen === m.id;
           const justAdded   = !!justAddedMed && m.name === justAddedMed;
@@ -141,6 +153,7 @@ export function ElderlyPrescriptionScreen({ patient, onAddRx, onRequestRefill, o
               onKeyDown={e => { if (e.key === "Enter" || e.key === " ") setDetailMed(m); }}
               className={`rounded-2xl border overflow-hidden shadow-sm text-left active:opacity-90 transition-opacity ${
                 justAdded ? "bg-card border-2 border-taken ring-2 ring-taken/40"
+                : courseDone ? "bg-muted/40 border-border"
                 : lowRefill ? "bg-missed-bg border-missed-border"
                 : "bg-card border-border"
               }`}
@@ -167,7 +180,7 @@ export function ElderlyPrescriptionScreen({ patient, onAddRx, onRequestRefill, o
                         colour dot is gone. */}
                     <p className="text-[calc(14px*var(--dw-text,1))] font-semibold text-foreground leading-snug mt-1">{direction}</p>
                     <p className="text-[calc(13px*var(--dw-text,1))] text-muted-foreground leading-snug mt-0.5">
-                      {plain?.why ?? t(language, "prescription.forPurpose", { purpose: localizeCatalogValue(m.purpose, k => t(language, k)).toLowerCase() })}
+                      {plain ? t(language, plain.whyKey) : t(language, "prescription.forPurpose", { purpose: localizeCatalogValue(m.purpose, k => t(language, k)).toLowerCase() })}
                     </p>
                     {colourBlind && shape && (
                       <p className="text-[calc(13px*var(--dw-text,1))] text-muted-foreground mt-1">{shape.shape} · {shape.marking}</p>
@@ -188,9 +201,20 @@ export function ElderlyPrescriptionScreen({ patient, onAddRx, onRequestRefill, o
                       {cadenceFor(m)}
                     </span>
                   )}
+                  {courseLeft !== null && (
+                    <span className={`text-[calc(14px*var(--dw-text,1))] font-bold rounded-lg px-2.5 py-1 whitespace-nowrap ${
+                      courseDone ? "text-muted-foreground bg-muted"
+                        : courseLeft <= 3 ? "text-warn-fg bg-warn-bg border border-warn-border"
+                        : "text-foreground bg-muted"
+                    }`}>
+                      {courseDone ? t(language, "prescription.courseFinished")
+                        : courseLeft === 0 ? t(language, "prescription.courseEndsToday")
+                        : t(language, "prescription.courseEndsInDays", { days: courseLeft })}
+                    </span>
+                  )}
                 </div>
 
-                {daysLeft != null && (
+                {daysLeft != null && !courseDone && (
                   <div className="mt-3.5">
                     <div className="flex items-center justify-between mb-1.5">
                       <p className="text-[calc(13px*var(--dw-text,1))] text-muted-foreground">{t(language, "prescription.supply")}</p>
@@ -220,13 +244,27 @@ export function ElderlyPrescriptionScreen({ patient, onAddRx, onRequestRefill, o
                   </button>
                 )}
 
-                {needsRefill && (
+                {needsRefill && !courseDone && (
                   <button
                     onClick={e => { e.stopPropagation(); onRequestRefill(m.name); }}
                     data-walk="med-request-refill-btn"
                     className="mt-2.5 w-full flex items-center justify-center gap-2 h-11 rounded-xl border border-border text-[calc(14px*var(--dw-text,1))] font-bold text-foreground active:bg-muted transition-colors"
                   >
                     <RefreshCw size={17} className="shrink-0" />{t(language, "prescription.requestRefill")}
+                  </button>
+                )}
+
+                {/* The course is over and this medicine is producing no more
+                    doses. Offering the tidy-up here — rather than archiving it
+                    behind their back — is what keeps the disappearance
+                    explained and the decision theirs. */}
+                {courseDone && onArchiveRx && m.medicationId && (
+                  <button
+                    onClick={e => { e.stopPropagation(); onArchiveRx(m); }}
+                    data-walk="med-move-to-past-btn"
+                    className="mt-2.5 w-full flex items-center justify-center gap-2 h-11 rounded-xl bg-primary text-primary-foreground text-[calc(14px*var(--dw-text,1))] font-bold dw-press"
+                  >
+                    <History size={17} className="shrink-0" />{t(language, "prescription.moveToPast")}
                   </button>
                 )}
               </div>
@@ -241,7 +279,7 @@ export function ElderlyPrescriptionScreen({ patient, onAddRx, onRequestRefill, o
                         <span className="text-[calc(14px*var(--dw-text,1))] font-bold text-primary-foreground">{i + 1}</span>
                       </div>
                       <p className="text-[calc(14px*var(--dw-text,1))] text-foreground leading-snug pt-0.5">
-                        <span className="mr-1.5">{step.icon}</span>{step.text}
+                        <span className="mr-1.5">{step.icon}</span>{t(language, step.textKey)}
                       </p>
                     </div>
                   ))}

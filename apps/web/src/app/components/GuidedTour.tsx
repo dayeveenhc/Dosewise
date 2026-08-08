@@ -20,6 +20,14 @@ interface Rect { top: number; left: number; width: number; height: number }
 // Steps can switch tabs themselves (onEnter), so this measures its target
 // fresh on every step change, retrying a few frames in case the new tab's
 // content hasn't mounted yet.
+// How long to keep looking for a step's target before admitting we can't find
+// it. Matches components/Walkthrough.tsx's own budget (and actor.ts's waitForEl)
+// on purpose: the old 20-frame cap was ~330ms at 60fps, which loses the race
+// against any screen that mounts behind a fetch — and losing it left the person
+// staring at a dark scrim over a callout pointing at nothing, with no hint that
+// anything had gone wrong.
+const MEASURE_TIMEOUT_MS = 4000;
+
 export function GuidedTour({ steps, onFinish }: { steps: TourStep[]; onFinish: () => void }) {
   const { language } = useLanguage();
   const [index, setIndex] = useState(0);
@@ -27,6 +35,11 @@ export function GuidedTour({ steps, onFinish }: { steps: TourStep[]; onFinish: (
   const [navRect, setNavRect] = useState<Rect | null>(null);
   const [containerHeight, setContainerHeight] = useState(0);
   const [calloutHeight, setCalloutHeight] = useState(165);
+  // This step's target could not be found at all. Surfaced as honest copy in
+  // the callout instead of an unexplained dark screen — the same decision
+  // Walkthrough.tsx's `stalled` makes. Skip/Back/Next stay reachable, so it is
+  // an explanation, never a dead end.
+  const [stalled, setStalled] = useState(false);
   const rootRef = useRef<HTMLDivElement>(null);
   const step = steps[index];
 
@@ -34,7 +47,8 @@ export function GuidedTour({ steps, onFinish }: { steps: TourStep[]; onFinish: (
     step.onEnter?.();
     setRect(null);
     setNavRect(null);
-    let attempts = 0;
+    setStalled(false);
+    const startedAt = Date.now();
     let raf = 0;
     const measure = () => {
       // Measure THIS element's own box, not its parentElement's — the parent
@@ -64,9 +78,10 @@ export function GuidedTour({ steps, onFinish }: { steps: TourStep[]; onFinish: (
           const n = navEl.getBoundingClientRect();
           setNavRect({ top: n.top - origin.top, left: n.left - origin.left, width: n.width, height: n.height });
         }
-      } else if (attempts < 20) {
-        attempts++;
+      } else if (Date.now() - startedAt < MEASURE_TIMEOUT_MS) {
         raf = requestAnimationFrame(measure);
+      } else {
+        setStalled(true);
       }
     };
     raf = requestAnimationFrame(measure);
@@ -143,7 +158,8 @@ export function GuidedTour({ steps, onFinish }: { steps: TourStep[]; onFinish: (
         stepIndex={index}
         stepCount={steps.length}
         title={step.title}
-        body={step.body}
+        body={stalled ? t(language, "tour.cannotFind") : step.body}
+        error={stalled}
         top={top}
         counterKey="tour.stepCounter"
         labelKey="tour.meiLabel"

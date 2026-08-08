@@ -17,6 +17,7 @@ def test_all_tools_registered():
     names = {t["name"] for t in tool_schemas()}
     assert names == {
         "list_medications",
+        "raise_alert",
         "add_prescription",
         "set_medication_reminder",
         "update_medication_dosage",

@@ -1,0 +1,11 @@
+{
+  "log": [
+    {
+      "task": "text_size",
+      "shell": "elder",
+      "visited": 1,
+      "stoppedAt": "step 1 is user-driven (waitFor: click)"
+    }
+  ],
+  "findings": []
+}

@@ -69,19 +69,46 @@ async function preHighlight(el: HTMLElement, ms: number, ctx: ActContext): Promi
   if (!ctx.shouldFastForward?.()) await sleep(ms);
 }
 
+// Only the scale token this pulse owns, so it can be layered onto and peeled
+// back off whatever else is on `transform` without disturbing it.
+const SCALE_TOKEN = /\s*scale\([^)]*\)/g;
+
 // A deliberate press so a programmatic tap reads as a real, watchable action —
 // a clear press-in, a beat, then release. The 280/180 micro-animation is
 // engine-local (not pacing); the pre-click highlight window is PACING-driven.
+//
+// COMPOSES onto the live inline transform rather than replacing it. Walkthrough
+// .tsx's lift effect writes `translateY(-Npx)` to `targetEl.closest("[data-walk]")`,
+// and step selectors ARE [data-walk] nodes in most step files (elder-profile-save,
+// rx-submit, elder-travelmode-tile, ...) — so `closest` returns the target
+// itself and the old `transform = "scale(0.94)"` silently threw the lift away
+// for the ~460ms of the press, dropping the spotlighted control several hundred
+// px mid-click.
+//
+// Snapshot-and-restore is NOT the fix: the lift effect may write a NEW
+// translateY during the press, and restoring a snapshot afterwards would revert
+// it. Token surgery on the live value leaves any such write standing.
+//
+// Order matters — translateY stays FIRST. `translateY(-340px) scale(0.94)`
+// composes to matrix(0.94,0,0,0.94,0,-340), so the lift effect's own
+// `DOMMatrixReadOnly(...).m42` still reads -340 and its un-lifted derivation
+// stays correct. Reversed, m42 becomes -320 and the lift oscillates.
 async function pressPulse(el: HTMLElement, shouldCancel: () => boolean): Promise<void> {
   const prevTransition = el.style.transition;
-  const prevTransform = el.style.transform;
-  el.style.transition = "transform 200ms ease";
-  el.style.transform = "scale(0.94)";
-  await sleep(280);
-  if (shouldCancel()) return;
-  el.style.transform = prevTransform;
-  await sleep(180);
-  el.style.transition = prevTransition;
+  try {
+    el.style.transition = "transform 200ms ease";
+    el.style.transform = `${el.style.transform.replace(SCALE_TOKEN, "")} scale(0.94)`.trim();
+    await sleep(280);
+    if (shouldCancel()) return;
+    el.style.transform = el.style.transform.replace(SCALE_TOKEN, "").trim();
+    await sleep(180);
+  } finally {
+    // In a finally because the cancel path above used to return with
+    // `transform 200ms ease` still declared on the element — every later
+    // transform write on that node then animated when it should have been
+    // instant, including the lift's own.
+    el.style.transition = prevTransition;
+  }
 }
 
 async function driveUpload(input: HTMLInputElement, asset: string): Promise<void> {

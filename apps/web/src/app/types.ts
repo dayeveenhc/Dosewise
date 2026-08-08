@@ -25,6 +25,21 @@ export interface Medication {
   days?: string[];
   intervalDays?: number;
   startDate?: string;
+  // A fixed course ("take this for 2 weeks"), read back from
+  // medications.schedule.end_date. YYYY-MM-DD, and the LAST day a dose is due —
+  // INCLUSIVE. Absent means an ongoing/repeat prescription, which is the
+  // default and what every medication created before this reads back as.
+  // Inclusive is pinned here because dosing.py::scheduled_today implements the
+  // same rule server-side; an off-by-one between the two engines is exactly the
+  // app/scheduler divergence lib/medications.ts already documents for
+  // intervalDays.
+  endDate?: string;
+  // medications.priority (the med_priority enum). The Hermes reminder scheduler
+  // already escalates a missed CRITICAL dose to the caregiver
+  // (channels/scheduler.py); this is what lets the app agree with it instead of
+  // inventing a second severity concept. Nothing in the UI writes it yet, so
+  // app-created rows read back undefined — treat absent as "standard".
+  priority?: "critical" | "standard" | "vitamin";
 }
 
 export interface Contact {
@@ -76,6 +91,12 @@ export interface Notification {
   time: string;
   read: boolean;
   patientId: number;
+  /** Demo/seed notifications only: a translation-key PREFIX
+   *  ("notifications.seed1") whose `.title`/`.body`/`.time` keys the caregiver
+   *  Notifications screen renders instead of the literals above. Same reasoning
+   *  as Message.i18nKey below — the seed is created above LanguageProvider, so
+   *  it cannot be localized at creation time. */
+  i18nKey?: string;
 }
 
 export interface Message {

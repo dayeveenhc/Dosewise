@@ -188,3 +188,24 @@ async def test_cors_preflight_allows_configured_web_origin(monkeypatch):
         )
     assert resp.status_code == 200
     assert resp.headers.get("access-control-allow-origin") == origin
+
+
+async def test_final_body_key_set_matches_the_response_model(monkeypatch):
+    """The /agent/turn half of the two-sided contract — the other half is
+    test_api_agent_turn_stream.py::test_final_event_key_set_matches_the_response_model.
+
+    /agent/turn and /agent/turn/stream must hand the client the SAME field set:
+    the stream builds its `final` dict BY HAND while this route returns the
+    pydantic model, so a field added to AgentTurnResponse reaches one caller and
+    not the other unless someone remembers. They already drifted once on
+    `choices` (the stream's error branch omitted it, and the client only survived
+    it by defaulting a missing key). Both sides derive from `model_fields` rather
+    than a hardcoded literal — a hardcoded list is how it drifted the first time.
+    """
+    async def fake_turn(client, ctx, message, *, image_bytes=None, history=None, **_):
+        return "ok", [], history or []
+
+    app = _make_app(monkeypatch, fake_turn)
+    async with _client(app) as c:
+        resp = await c.post("/agent/turn", json={"message": "hi", "elder_id": ELDER})
+    assert set(resp.json()) == set(routes.AgentTurnResponse.model_fields)

@@ -1,6 +1,9 @@
 import type { Screen } from "../types";
 import type { ElderlyTab } from "../screens/elderly/types";
 import type { AgentAction, ChangedField } from "./hermes";
+import { localizeCatalogValue } from "../data/medications";
+import { t } from "./language";
+import type { AppLanguage } from "./language";
 
 // Where a committed change lives, per interface. ChangeHighlight navigates here,
 // then finds the exact record on-screen by data-testid="{entity_type}-{entity_id}".
@@ -133,36 +136,64 @@ export function findEntityElement(a: EntityRef): HTMLElement | null {
   return candidates.length ? candidates[0] : null;
 }
 
-const FIELD_LABELS: Record<string, string> = {
-  times: "dose time",
-  days: "days",
-  pills_remaining: "supply",
-  medical_profile: "medical profile",
-  schedule: "schedule",
-  question: "question",
-  message: "message",
-  reason: "reason",
-  status: "status",
-  name: "name",
-  dosage: "dose",
-  frequency: "frequency",
-  reminder_at: "reminder time",
-  travel_start: "travel start",
-  travel_end: "travel end",
-  purpose: "purpose",
+// How a caption is rendered FOR A PARTICULAR READER: their app language plus
+// the 12h/24h clock preference (accessibility.tsx's `timeFormat`). Threaded in
+// rather than read here, because this module is React-free and its React caller
+// (ChangeHighlight.tsx) already holds both. Omitting it yields the English, 12h
+// strings this module has always produced — which is what the unit tests and any
+// non-UI caller expect.
+export interface CaptionOptions {
+  language?: AppLanguage;
+  timeFormat?: "12h" | "24h";
+}
+
+function phrase(opts: CaptionOptions | undefined, key: string, params?: Record<string, string | number>): string {
+  return t(opts?.language ?? "en", key, params);
+}
+
+// The caption's own vocabulary lives in language.ts like every other piece of
+// user-facing copy; these maps only say WHICH key a backend field/unit uses.
+const FIELD_LABEL_KEYS: Record<string, string> = {
+  times: "caption.field.times",
+  days: "caption.field.days",
+  pills_remaining: "caption.field.pillsRemaining",
+  medical_profile: "caption.field.medicalProfile",
+  schedule: "caption.field.schedule",
+  question: "caption.field.question",
+  message: "caption.field.message",
+  reason: "caption.field.reason",
+  status: "caption.field.status",
+  name: "caption.field.name",
+  dosage: "caption.field.dosage",
+  frequency: "caption.field.frequency",
+  reminder_at: "caption.field.reminderAt",
+  travel_start: "caption.field.travelStart",
+  travel_end: "caption.field.travelEnd",
+  purpose: "caption.field.purpose",
+  // Client-walkthrough profile fields (orchestrate.captionFromVerify).
+  weightKg: "caption.field.weight",
+  heightCm: "caption.field.height",
+  dob: "caption.field.dob",
+  gender: "caption.field.gender",
 };
 
 // Count fields that read better with a unit than a bare number. Kept tiny — most
-// fields are self-describing via their label.
-const FIELD_UNITS: Record<string, string> = {
-  pills_remaining: "pill",
+// fields are self-describing via their label. The `.one`/`.other` suffix is
+// appended to the key, so a language pluralizes (or doesn't) in its own map.
+const FIELD_UNIT_KEYS: Record<string, string> = {
+  pills_remaining: "caption.unit.pill",
 };
 
-// Turn a raw backend key (snake_case OR camelCase) into a human phrase so a
-// field that isn't in FIELD_LABELS can NEVER surface its raw key in the caption
-// (e.g. "reminder_at" → "Reminder at", "weightKg" → "Weight kg"). Exported so the
-// client walkthrough caption (orchestrate.captionFromVerify) shares one rule.
-export function humanizeField(field: string): string {
+// The label for a changed field: a translated phrase when we know the field, and
+// otherwise a human-readable rendering of the raw backend key (snake_case OR
+// camelCase) so it can NEVER surface as "snooze_minutes" in a caption. That
+// fallback stays ENGLISH on purpose — the key is arbitrary backend vocabulary,
+// and guessing a translation for it is the same mistake as guessing a catalog
+// match for free text. Exported so the client walkthrough caption
+// (orchestrate.captionFromVerify) shares one rule.
+export function humanizeField(field: string, opts?: CaptionOptions): string {
+  const key = FIELD_LABEL_KEYS[field];
+  if (key) return phrase(opts, key);
   const words = field
     .replace(/([a-z0-9])([A-Z])/g, "$1 $2") // camelCase → words
     .replace(/[_-]+/g, " ")
@@ -171,34 +202,42 @@ export function humanizeField(field: string): string {
   return words ? words.charAt(0).toUpperCase() + words.slice(1) : field;
 }
 
-// Format an HH:MM (24h) string as a 12h clock ("18:00" → "6:00 PM"). SAFELY
-// no-ops on anything that isn't a valid HH:MM in range, so free text / already-
-// formatted values pass through untouched. Local (not medications.to12h) because
-// that module pulls in the Supabase client at import time and would break here.
-export function hhmmTo12h(s: string): string {
+// Format an HH:MM (24h) string as a clock the reader can read: their 12h/24h
+// setting, and — in 12h — the AM/PM word and its position from their language
+// ("18:00" → "6:00 PM" / "下午6:00"). SAFELY no-ops on anything that isn't a
+// valid HH:MM in range, so free text / already-formatted values pass through
+// untouched. Local (not medications.to12h) because that module pulls in the
+// Supabase client at import time and would break here.
+//
+// NEVER call this point-free inside `Array.map` — map hands a callback the
+// index, which would land in `opts`. Use `xs.map(x => hhmmTo12h(x))`, and pass
+// options only where a PERSON reads the result: comparisons against the app's
+// own stored 12h labels (walkthrough/verify.ts) must stay unlocalized.
+export function hhmmTo12h(s: string, opts?: CaptionOptions): string {
   const m = /^(\d{1,2}):(\d{2})$/.exec(s.trim());
   if (!m) return s;
   const h = Number(m[1]);
   const mm = Number(m[2]);
   if (h > 23 || mm > 59) return s;
-  const period = h >= 12 ? "PM" : "AM";
+  if (opts?.timeFormat === "24h") return `${String(h).padStart(2, "0")}:${m[2]}`;
+  const period = phrase(opts, h >= 12 ? "caption.pm" : "caption.am");
   const h12 = h % 12 === 0 ? 12 : h % 12;
-  return `${h12}:${m[2]} ${period}`;
+  return phrase(opts, "caption.clock12h", { time: `${h12}:${m[2]}`, period });
 }
 
-function fmt(v: unknown): string {
+function fmt(v: unknown, opts?: CaptionOptions): string {
   if (v == null) return "";
-  if (Array.isArray(v)) return v.map(fmt).join(", ");
-  if (typeof v === "string") return hhmmTo12h(v);
+  if (Array.isArray(v)) return v.map(x => fmt(x, opts)).join(", ");
+  if (typeof v === "string") return hhmmTo12h(v, opts);
   return String(v);
 }
 
 // Render a changed value with its field's unit (+ pluralization) when it has one,
 // e.g. pills_remaining 1 → "1 pill", 30 → "30 pills". Falls back to plain fmt.
-function fmtValue(field: string, v: unknown): string {
-  const unit = FIELD_UNITS[field];
-  if (unit && typeof v === "number") return `${v} ${v === 1 ? unit : `${unit}s`}`;
-  return fmt(v);
+function fmtValue(field: string, v: unknown, opts?: CaptionOptions): string {
+  const unit = FIELD_UNIT_KEYS[field];
+  if (unit && typeof v === "number") return phrase(opts, `${unit}.${v === 1 ? "one" : "other"}`, { count: v });
+  return fmt(v, opts);
 }
 
 // Cap on how many changed fields we spell out before collapsing the tail to
@@ -209,60 +248,63 @@ const MAX_FIELDS = 3;
 // actually changed — never a generic "success". Returns a verb + detail, e.g.
 // {verb: "Added", text: "Metformin 500mg — 08:00 (daily)"} or
 // {verb: "Updated", text: "dose time 6:00 PM → 8:00 PM"}.
-export function describeChange(a: AgentAction): { verb: string; text: string } {
+export function describeChange(a: AgentAction, opts?: CaptionOptions): { verb: string; text: string } {
+  const p = (key: string, params?: Record<string, string | number>) => phrase(opts, key, params);
+  const verb = (name: string) => p(`caption.verb.${name}`);
   const entries = Object.entries(a.changed_fields ?? {});
   // A logged dose reads as "Taken: Metformin", not the raw "status pending → taken"
   // field diff — the verb IS the change.
   if (a.tool === "log_dose" || a.changed_fields?.status?.after === "taken") {
-    return { verb: "Taken", text: a.summary || a.name || "dose" };
+    return { verb: verb("taken"), text: a.summary || a.name || p("caption.dose") };
   }
   // Undo: a mistaken tick flipped back — the verb IS the change.
   if (a.changed_fields?.status?.before === "taken" && a.changed_fields?.status?.after === "pending") {
-    return { verb: "Unmarked", text: a.name || a.summary || "dose" };
+    return { verb: verb("unmarked"), text: a.name || a.summary || p("caption.dose") };
   }
   // Discontinue: archived, never deleted — reads as "Stopped: <name>".
   if (a.changed_fields?.status?.after === "discontinued") {
-    return { verb: "Stopped", text: a.name || a.summary || "medication" };
+    return { verb: verb("stopped"), text: a.name || a.summary || p("caption.medication") };
   }
   // Snooze: today's reminder moved (schedule unchanged). Before the all-new
   // branch — a first snooze has before == null and must not read as "Added".
   const snoozed = a.changed_fields?.snoozed_until;
   if (snoozed) {
-    return { verb: "Snoozed", text: `reminder to ${hhmmTo12h(String(snoozed.after ?? ""))} today` };
+    return { verb: verb("snoozed"), text: p("caption.snoozedTo", { time: hhmmTo12h(String(snoozed.after ?? ""), opts) }) };
   }
   // Allergy severity grade — "Updated: Penicillin allergy — unset → severe".
+  // The grade words themselves are backend vocabulary and pass through as sent.
   const severity = a.changed_fields?.severity;
   if (severity) {
     const name = a.name?.trim();
-    const before = severity.before == null ? "unset" : String(severity.before);
+    const before = severity.before == null ? p("caption.severityUnset") : String(severity.before);
     return {
-      verb: "Updated",
-      text: `${name ? `${name} allergy` : "allergy"} — ${before} → ${String(severity.after ?? "")}`,
+      verb: verb("updated"),
+      text: `${name ? p("caption.allergyOf", { name }) : p("caption.allergy")} — ${before} → ${String(severity.after ?? "")}`,
     };
   }
   // Symptom report — "Noted: dizzy after lunch"; also before the all-new branch
   // (a new report is all-new by shape but must not read as a bare "Added").
   const symptom = a.changed_fields?.symptom;
   if (symptom || a.tool === "add_symptom") {
-    return { verb: "Noted", text: String(symptom?.after ?? "") || a.summary || "symptom" };
+    return { verb: verb("noted"), text: String(symptom?.after ?? "") || a.summary || p("caption.symptom") };
   }
   const allNew = entries.length > 0 && entries.every(([, f]) => f.before == null);
   if (allNew || a.tool === "add_prescription") {
-    return { verb: "Added", text: a.summary || a.name || "new item" };
+    return { verb: verb("added"), text: a.summary || a.name || p("caption.newItem") };
   }
   const changed = entries.filter(([, f]) => JSON.stringify(f.before) !== JSON.stringify(f.after));
   // Nothing visibly changed: use the summary (or name) — never a dangling
   // "Updated:" with empty text.
   if (changed.length === 0) {
-    return { verb: "Updated", text: a.summary?.trim() || a.name?.trim() || "no changes" };
+    return { verb: verb("updated"), text: a.summary?.trim() || a.name?.trim() || p("caption.noChanges") };
   }
   const lone = changed.length === 1;
   const shown = changed.slice(0, MAX_FIELDS);
   const overflow = changed.length - shown.length;
   const parts = shown.map(([field, f]) => {
-    const label = FIELD_LABELS[field] ?? humanizeField(field);
-    const before = fmtValue(field, f.before);
-    const after = fmtValue(field, f.after);
+    const label = humanizeField(field, opts);
+    const before = fmtValue(field, f.before, opts);
+    const after = fmtValue(field, f.after, opts);
     // Long free-text (e.g. the medical-profile blob) reads badly as "a → b";
     // show just the field label — the caption still says WHICH field changed.
     if (before.length > 40 || after.length > 40) return label;
@@ -273,8 +315,8 @@ export function describeChange(a: AgentAction): { verb: string; text: string } {
     if (after) return `${prefix}${after}`;
     return label;
   });
-  const text = overflow > 0 ? `${parts.join("; ")}; +${overflow} more` : parts.join("; ");
-  return { verb: "Updated", text };
+  const text = overflow > 0 ? `${parts.join("; ")}; ${p("caption.andMore", { count: overflow })}` : parts.join("; ");
+  return { verb: verb("updated"), text };
 }
 
 // Caption for an action that may be BULK. Non-bulk actions (and a 1-entity bulk,
@@ -284,9 +326,11 @@ export function describeChange(a: AgentAction): { verb: string; text: string } {
 // text preferring the backend summary (already human, e.g. "3 missed doses
 // marked taken"). Never leaks raw field names: the fallback texts are counts,
 // and the single path reuses describeChange's humanize/format helpers.
-export function describeBatch(a: AgentAction): { verb: string; text: string } {
+export function describeBatch(a: AgentAction, opts?: CaptionOptions): { verb: string; text: string } {
+  const p = (key: string, params?: Record<string, string | number>) => phrase(opts, key, params);
+  const verb = (name: string) => p(`caption.verb.${name}`);
   const ents = highlightableEntities(a);
-  if (!a.entities || ents.length === 0) return describeChange(a);
+  if (!a.entities || ents.length === 0) return describeChange(a, opts);
   if (ents.length === 1) {
     const e = ents[0];
     return describeChange({
@@ -295,18 +339,65 @@ export function describeBatch(a: AgentAction): { verb: string; text: string } {
       entity_id: e.entity_id,
       changed_fields: e.changed_fields ?? a.changed_fields,
       name: typeof e.name === "string" ? e.name : a.name,
-    });
+    }, opts);
   }
   const n = ents.length;
   const summary = a.summary?.trim();
   const allTaken = ents.every(e => e.changed_fields?.status?.after === "taken");
   if (a.tool === "resolve_missed_doses" || allTaken) {
-    return { verb: "Taken", text: summary || `${n} doses marked taken` };
+    return { verb: verb("taken"), text: summary || p("caption.dosesTaken", { count: n }) };
   }
   const allNew = ents.every(e => {
     const fields = Object.values(e.changed_fields ?? {});
     return fields.length > 0 && fields.every(f => f.before == null);
   });
-  if (allNew) return { verb: "Added", text: summary || `${n} items added` };
-  return { verb: "Updated", text: summary || `${n} items updated` };
+  if (allNew) return { verb: verb("added"), text: summary || p("caption.itemsAdded", { count: n }) };
+  return { verb: verb("updated"), text: summary || p("caption.itemsUpdated", { count: n }) };
+}
+
+// The caption vocabulary a NON-REACT caption producer needs: the client
+// walkthrough's `orchestrate.captionFromVerify` builds its captions outside any
+// provider, so it resolves the reader's settings from the very keys
+// LanguageProvider (lib/languageContext.tsx) and AccessibilityProvider
+// (app/accessibility.tsx) persist on every change. React callers never use this
+// — they pass their own CaptionOptions (see components/ChangeHighlight.tsx).
+const LANGUAGE_STORAGE_KEY = "dosewise-language";
+const ACCESSIBILITY_STORAGE_KEY = "dosewise:accessibility";
+
+function storedCaptionOptions(): CaptionOptions {
+  if (typeof window === "undefined") return {};
+  const read = (key: string) => {
+    try {
+      return window.localStorage.getItem(key);
+    } catch {
+      return null;
+    }
+  };
+  const language = read(LANGUAGE_STORAGE_KEY) as AppLanguage | null;
+  let timeFormat: CaptionOptions["timeFormat"];
+  try {
+    timeFormat = JSON.parse(read(ACCESSIBILITY_STORAGE_KEY) ?? "{}")?.timeFormat;
+  } catch {
+    timeFormat = undefined;
+  }
+  return { language: language ?? undefined, timeFormat: timeFormat === "24h" ? "24h" : "12h" };
+}
+
+export interface ReaderCaption {
+  options: CaptionOptions;
+  verb: (name: string) => string;
+  phrase: (key: string, params?: Record<string, string | number>) => string;
+  /** A stored catalog value (condition/allergy/purpose) in the reader's language. */
+  value: (value: string) => string;
+}
+
+export function readerCaption(): ReaderCaption {
+  const options = storedCaptionOptions();
+  const say = (key: string, params?: Record<string, string | number>) => phrase(options, key, params);
+  return {
+    options,
+    phrase: say,
+    verb: name => say(`caption.verb.${name}`),
+    value: value => localizeCatalogValue(value, key => say(key)),
+  };
 }

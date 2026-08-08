@@ -1,0 +1,18 @@
+{
+  "task_name": "add_prescription_auto",
+  "params": {
+    "name": "Lisinopril",
+    "dose": "20mg",
+    "purpose": "blood pressure",
+    "frequency": "once daily in the morning"
+  },
+  "risk": {
+    "flagged": true,
+    "signals": [
+      "dosage_jump"
+    ],
+    "reasons": [
+      "'20mg' is 4x the existing on-file dose ('5mg') for 'Lisinopril'."
+    ]
+  }
+}

@@ -1,0 +1,92 @@
+{
+  "log": [
+    {
+      "task": "add_condition_auto",
+      "shell": "elder",
+      "visited": 5,
+      "stoppedAt": "overlay unmounted after 5 step(s)"
+    },
+    {
+      "task": "edit_profile_auto",
+      "shell": "elder",
+      "visited": 4,
+      "stoppedAt": "overlay unmounted after 4 step(s)"
+    },
+    {
+      "task": "add_doctor_question_auto",
+      "shell": "elder",
+      "visited": 5,
+      "stoppedAt": "walked all 7 defined step(s)"
+    },
+    {
+      "task": "link_caregiver-elder",
+      "shell": "elder",
+      "visited": 4,
+      "stoppedAt": "step 5 is user-driven (waitFor: write-committed)"
+    },
+    {
+      "task": "zoom-xxlarge",
+      "shell": "elder",
+      "visited": 3,
+      "stoppedAt": "content zoom 1.25 via Text size \"xxlarge\"; measured zooms [1.25,1,1]"
+    },
+    {
+      "task": "zoom-small",
+      "shell": "elder",
+      "visited": 3,
+      "stoppedAt": "content zoom 0.85 via Text size \"small\"; measured zooms [0.85,1,1]"
+    },
+    {
+      "task": "zoom-caregiver-xxlarge",
+      "shell": "caregiver",
+      "visited": 3,
+      "stoppedAt": "content zoom 1.25 via Text size \"xxlarge\"; measured zooms [1,1,1.25]"
+    }
+  ],
+  "findings": [
+    {
+      "task": "add_condition_auto",
+      "shell": "elder",
+      "step": 7,
+      "stepId": "autoCond.verify",
+      "kind": "cutout-off-centre-vs-control",
+      "detail": "[autoCond.verify] selector \"[data-walk=\"elder-conditions\"]\" frames a wrapper: pad top/bottom 41.8/0.0 (Δ41.8), left/right -1.0/0.0 (Δ1.0); target {top:405.3 left:35.0 w:390.0 h:133.6} vs 5 focusable descendant(s) {top:447.0 left:34.0 w:391.0 h:91.9}"
+    },
+    {
+      "task": "add_doctor_question_auto",
+      "shell": "elder",
+      "step": 7,
+      "stepId": "autoDoctorQ.verify",
+      "kind": "callout-could-not-clear",
+      "detail": "overlay reports data-walk-callout-cleared=\"0\" — no placement clears this target (callout h=178.5, target h=688.0, container h=940.0, usable band 730.0)"
+    },
+    {
+      "task": "add_doctor_question_auto",
+      "shell": "elder",
+      "step": 7,
+      "stepId": "autoDoctorQ.verify",
+      "kind": "cutout-off-centre-vs-control",
+      "detail": "[autoDoctorQ.verify] selector \"[data-walk=\"elder-doctor-questions\"]\" frames a wrapper: pad top/bottom 171.0/0.0 (Δ171.0), left/right 0.0/0.0 (Δ0.0); target {top:115.8 left:17.0 w:426.0 h:688.0} vs 7 focusable descendant(s) {top:286.7 left:17.0 w:426.0 h:517.1}"
+    },
+    {
+      "task": "add_doctor_question_auto",
+      "shell": "elder",
+      "step": 7,
+      "stepId": "autoDoctorQ.verify",
+      "kind": "callout-overlaps-target",
+      "detail": "callout {top:651.0 left:17.0 w:426.0 h:178.5} overlaps spotlighted target {top:115.8 left:17.0 w:426.0 h:688.0}"
+    },
+    {
+      "task": "link_caregiver-elder",
+      "shell": "elder",
+      "step": 5,
+      "stepId": "link.elder.accept",
+      "kind": "target-absent",
+      "detail": "step selector matched nothing (fallbackScrim=true, cutouts=0)"
+    }
+  ],
+  "pool": {
+    "minted": 0,
+    "reused": 3
+  }
+}

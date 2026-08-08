@@ -1,6 +1,6 @@
 import { expect, test } from "@playwright/test";
 import { mkdirSync } from "node:fs";
-import { anonClient, createThrowawayElder, signIn, startWalkthrough } from "./helpers";
+import { anonClient, createThrowawayElder, signIn, startWalkthroughAuto } from "./helpers";
 
 // Phase 2 flagship — drive the AUTONOMOUS add-prescription walkthrough end to end
 // against REAL Supabase, with a throwaway elder. Proves all five phases:
@@ -20,7 +20,7 @@ test("autonomous add-prescription: act → submit → verify → reveal", async 
 
   // Drive with the patient's REAL values (params) — proves parameterization, not
   // the hardcoded default.
-  await startWalkthrough(page, "add_prescription_auto", { name: "Lisinopril", dose: "10mg", purpose: "Blood pressure" });
+  await startWalkthroughAuto(page, "add_prescription_auto", { name: "Lisinopril", dose: "10mg", purpose: "Blood pressure" });
 
   // Phase: Act (open) — the Add Prescription form appears.
   await expect(page.locator('[data-walk="rx-name"] input')).toBeVisible({ timeout: 15_000 });
@@ -58,7 +58,7 @@ test("failure path: a blocked write is CAUGHT by Verify — no false success", a
   });
 
   await signIn(page, creds);
-  await startWalkthrough(page, "add_prescription_auto");
+  await startWalkthroughAuto(page, "add_prescription_auto");
 
   // It still fills and taps Save (Act/Submit), but Verify re-queries, finds
   // nothing, and STOPS with the honest error — never a success claim.

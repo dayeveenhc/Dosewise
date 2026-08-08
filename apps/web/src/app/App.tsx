@@ -6,7 +6,7 @@ import { PATIENTS, NOTIFICATIONS } from "./data/patients";
 import { BottomNav } from "./components/BottomNav";
 import { LiveStatusBar, PatientSwitcher } from "./components/shared";
 import { supabase } from "./lib/supabase";
-import { ensureProfile, fetchElderMedications, fetchArchivedMedications, addMedication, archiveMedication, to24h } from "./lib/medications";
+import { ensureProfile, fetchElderMedications, fetchArchivedMedications, addMedication, archiveMedication, to24h, isoDate } from "./lib/medications";
 import { fetchProfileRole, fetchProfile, saveProfile, calculateAge } from "./lib/profile";
 import type { WizardPrefill } from "./lib/profile";
 import { normalizeAllergies } from "./lib/changeHighlight";
@@ -29,7 +29,7 @@ import { EditCaregiverAccountSheet } from "./screens/EditCaregiverAccountSheet";
 import { ElderlyApp } from "./screens/elderly/ElderlyApp";
 import { ChangeHighlight } from "./components/ChangeHighlight";
 import type { AgentAction } from "./lib/hermes";
-import { AccessibilityProvider, useContentZoom } from "./accessibility.tsx";
+import { AccessibilityProvider, useContentZoom, useAccessibility } from "./accessibility.tsx";
 import { GuidedTour } from "./components/GuidedTour";
 import type { TourStep } from "./components/GuidedTour";
 import { ConfirmDialog } from "./components/ConfirmDialog";
@@ -37,13 +37,14 @@ import { ToastStack } from "./components/Toast";
 import type { ToastItem } from "./components/Toast";
 import { SendReminderSheet } from "./screens/SendReminderSheet";
 import { ScanLinkSheet } from "./components/ScanLinkSheet";
-import { LanguageProvider, readStoredLanguage } from "./lib/languageContext";
+import { LanguageProvider, readStoredLanguage, useLanguage, useStoredLanguage } from "./lib/languageContext";
 import { t } from "./lib/language";
+import type { AppLanguage } from "./lib/language";
 import { Walkthrough } from "./components/Walkthrough";
 import { resolveWalkthroughSteps, walkthroughShellFor } from "./lib/walkthrough/steps";
 import { AUTONOMOUS_TASKS } from "./lib/walkthrough/types";
 import { buildVerifyRunner } from "./lib/walkthrough/verify";
-import { PACING } from "./lib/walkthrough/pacing";
+import { PACING, TRUST_MODE_THRESHOLD } from "./lib/walkthrough/pacing";
 import type { WalkthroughScreen, WalkthroughTaskName, WalkthroughParams, VerifyDirective, RevealDirective } from "./lib/walkthrough/types";
 import { defaultDoseTime } from "./components/TimesPicker";
 import { MED_COLOURS } from "./data/medications";
@@ -56,12 +57,57 @@ import { markWalkthroughCompleted } from "./lib/profile";
 // nothing clips. Without this the caregiver Text-size slider barely moved,
 // because the app's text is nearly all absolute-px utilities that ignore the
 // html --font-size var.
+// Resolves the caregiver product tour's copy against the LIVE language, from
+// inside LanguageProvider. Same structural problem ZoomContent above solves for
+// the zoom: App renders the provider, so it sits above it and cannot call
+// useLanguage() in its own body — and a readStoredLanguage() snapshot taken
+// there is captured for the tour's entire lifetime, so switching language
+// mid-tour left every caption in the old one.
+function CaregiverTour({ build, onFinish }: { build: (lang: AppLanguage) => TourStep[]; onFinish: () => void }) {
+  const { language } = useLanguage();
+  return <GuidedTour steps={build(language)} onFinish={onFinish} />;
+}
+
 function ZoomContent({ className, children }: { className?: string; children: ReactNode }) {
   const zoom = useContentZoom();
   return (
     <div className={className} style={{ zoom } as CSSProperties}>
       {children}
     </div>
+  );
+}
+
+type WalkthroughOwnProps = Parameters<typeof Walkthrough>[0];
+
+// TrustMode (Item 2, decision C) — the counterpart to ZoomContent above: App()
+// owns AccessibilityProvider itself, so (same reason ZoomContent exists) it
+// can't call useAccessibility() from its own body to compute
+// requireExplicitAdvance or reach incrementWalkthroughCompletionCount for
+// handleWalkthroughAdvance. This wrapper mounts INSIDE the provider and does
+// both: computes the trust signal as a real prop into <Walkthrough>, and
+// stashes the live increment function on a ref so App()'s own
+// handleWalkthroughAdvance (a plain closure, not a hook) can call it at the
+// same call site markWalkthroughCompleted already uses. Assigning the ref
+// during render (not in an effect) is safe here — it never triggers a
+// re-render and this component only mounts while a walkthrough is actually
+// running, i.e. exactly when handleWalkthroughAdvance can fire.
+function WalkthroughWithTrustMode({
+  incrementRef,
+  ...props
+}: Omit<WalkthroughOwnProps, "requireExplicitAdvance" | "autoNavDefault"> & { incrementRef: { current: () => void } }) {
+  const { walkthroughManualMode, walkthroughCompletionCount, incrementWalkthroughCompletionCount } = useAccessibility();
+  incrementRef.current = incrementWalkthroughCompletionCount;
+  const requireExplicitAdvance = walkthroughManualMode || walkthroughCompletionCount < TRUST_MODE_THRESHOLD;
+  return (
+    <Walkthrough
+      {...props}
+      requireExplicitAdvance={requireExplicitAdvance}
+      // AutoNav starts on unless the person explicitly asked to be walked
+      // through step by step. Deliberately NOT the trust signal above: that
+      // one still decides the Confirm recap's tap, but where the callout's own
+      // switch starts is a stated preference, not an inferred one.
+      autoNavDefault={!walkthroughManualMode}
+    />
   );
 }
 
@@ -100,6 +146,9 @@ export default function App() {
   // later mode-switch remount doesn't auto-start it again.
   const [justOnboarded, setJustOnboarded] = useState(false);
   const [showCaregiverTour, setShowCaregiverTour] = useState(false);
+  // "Open Ask Mei on the conversation, not the help list" — consumed and
+  // cleared by AskMeiScreen. Mirrors ElderlyApp's pendingChatView exactly.
+  const [pendingChatView, setPendingChatView] = useState(false);
   const [showCaregiverTourConfirm, setShowCaregiverTourConfirm] = useState(false);
   const [toasts, setToasts] = useState<ToastItem[]>([]);
   const [elderToasts, setElderToasts] = useState<ToastItem[]>([]);
@@ -165,12 +214,23 @@ export default function App() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [justOnboarded, appMode]);
 
-  // Not reactive to a live language toggle (App.tsx sits above LanguageProvider,
-  // so it can't use the useLanguage() hook) — a point-in-time read is fine here
-  // since these are demo tour/toast strings the provider's own localStorage
-  // write keeps in sync on the next natural re-render.
-  const uiLang = readStoredLanguage();
-  const caregiverTourSteps: TourStep[] = [
+  // App renders LanguageProvider, so it sits ABOVE it and cannot call
+  // useLanguage(). A bare readStoredLanguage() here (what this used to be) is a
+  // SNAPSHOT that setLanguage can never invalidate — the old comment claimed
+  // the provider's localStorage write "keeps it in sync on the next natural
+  // re-render", which never happens for a component that nothing else
+  // re-renders. The caregiver header, its confirm dialogs and the product tour
+  // all stayed in the previous language after a switch.
+  //
+  // useStoredLanguage subscribes to the change instead. Everything INSIDE the
+  // provider should still use useLanguage(); this is the escape hatch for the
+  // one component that structurally cannot.
+  const uiLang = useStoredLanguage();
+
+  // Still a BUILDER rather than a captured array: once handed to <GuidedTour>
+  // the strings live for the tour's whole lifetime, so <CaregiverTour> resolves
+  // them from inside the provider at the moment it renders.
+  const caregiverTourSteps = (uiLang: AppLanguage): TourStep[] => [
     {
       target: '[data-tour="cg-dashboard"]', navTarget: '[data-tour="nav-dashboard"]', onEnter: () => setScreen("dashboard"),
       title: t(uiLang, "tour.cgDashboardTitle"), body: t(uiLang, "tour.cgDashboardBody"),
@@ -373,6 +433,15 @@ export default function App() {
     // is fulfilled by a direct save from the same params, then we land on the
     // patient's med list (the caregiver view that shows the "Just added" highlight).
     if (taskName === "add_prescription_auto") {
+      // A fixed course arrives as a string ("14"); the direct save has no form
+      // to click through, so derive the same inclusive end date the sheet does.
+      const courseDays = Number.parseInt(params.duration_days ?? "", 10);
+      let endDate: string | undefined;
+      if (Number.isFinite(courseDays) && courseDays > 0) {
+        const d = new Date();
+        d.setDate(d.getDate() + courseDays - 1);
+        endDate = isoDate(d);
+      }
       void handleAddPrescription({
         name: params.name || "",
         dose: params.dose || "",
@@ -380,6 +449,7 @@ export default function App() {
         colour: MED_COLOURS[0].hex,
         time: defaultDoseTime({ ...patient.mealTimes, sleepTime: patient.sleepTime }),
         times: [],
+        endDate,
       });
       setScreen("patient");
       flagJustAdded(params.name);
@@ -438,6 +508,13 @@ export default function App() {
     if (target.mode === "caregiver") setScreen(target.screen);
   };
 
+  // TrustMode (Item 2): populated by WalkthroughWithTrustMode, which mounts
+  // inside AccessibilityProvider and can therefore actually call
+  // useAccessibility() — see that component's own comment for why App()
+  // itself can't. Defaults to a no-op so calling it before any walkthrough
+  // has ever mounted here is harmless.
+  const incrementWalkthroughCompletionCountRef = useRef<() => void>(() => {});
+
   const handleWalkthroughAdvance = () => {
     if (!walkthroughTask) return;
     if (walkthroughStepIndex >= walkthroughSteps.length - 1) {
@@ -448,6 +525,10 @@ export default function App() {
       // stored list with entries that mean nothing and hand the same category
       // error to the next reader of this column.
       if (elderId && !AUTONOMOUS_TASKS.has(walkthroughTask)) void markWalkthroughCompleted(elderId, "caregiver", walkthroughTask);
+      // TrustMode (Item 2, decision E): a DIFFERENT "completed" concept from
+      // markWalkthroughCompleted above — see ElderlyApp's matching call site —
+      // so it deliberately is NOT gated on AUTONOMOUS_TASKS the way that is.
+      incrementWalkthroughCompletionCountRef.current();
       clearWalkthroughSession("caregiver", elderId);
       setWalkthroughTask(null);
       setWalkthroughStepIndex(0);
@@ -460,12 +541,35 @@ export default function App() {
     saveWalkthroughSession("caregiver", elderId, { taskName: walkthroughTask, stepIndex: next, startedAt: Date.now(), params: walkthroughParams });
   };
 
+  // Step back one. The overlay only ever calls this where gating.ts::canGoBack
+  // agrees, so this side just moves the index — and persists it exactly as the
+  // advance path does, params included, so a remount lands on the same step.
+  const handleWalkthroughBack = () => {
+    if (!walkthroughTask || walkthroughStepIndex <= 0) return;
+    const prev = walkthroughStepIndex - 1;
+    setWalkthroughStepIndex(prev);
+    saveWalkthroughSession("caregiver", elderId, { taskName: walkthroughTask, stepIndex: prev, startedAt: Date.now(), params: walkthroughParams });
+  };
+
   // Exiting/skipping clears client state only — never written back for an
   // abandoned walkthrough, only genuine completion (above).
   const handleWalkthroughExit = () => {
     clearWalkthroughSession("caregiver", elderId);
     setWalkthroughTask(null);
     setWalkthroughStepIndex(0);
+  };
+
+  // IdleTimeout (Item 6) "Talk to Mei": exit first (mirrors ElderlyApp — the
+  // overlay would otherwise sit on top of the chat screen it hands off to),
+  // then land on Ask Mei's CONVERSATION. pendingChatView is what makes it the
+  // conversation rather than the help list: Ask Mei seeds its view from the
+  // restored thread, and someone who launched the walkthrough from that help
+  // list has no thread to restore. Same nullable-value-the-child-clears shape
+  // as ElderlyApp's, deliberately not a monotonic counter.
+  const handleWalkthroughTalkToMei = () => {
+    handleWalkthroughExit();
+    setPendingChatView(true);
+    setScreen("ai");
   };
 
   // Caregiver-shell Verify: real re-queries for checks the signed-in
@@ -541,7 +645,7 @@ export default function App() {
     const medicationId = await addMedication(elderId, {
       name: med.name, dosage: med.dose, purpose: med.purpose,
       timeHHMMs, refillDays: med.refillDaysLeft,
-      days: med.days, intervalDays: med.intervalDays,
+      days: med.days, intervalDays: med.intervalDays, endDate: med.endDate,
     });
     setPatients(prev => prev.map((p, i) => i !== selectedPatient ? p : {
       ...p,
@@ -847,7 +951,7 @@ export default function App() {
                 onDismiss={id => setNotifications(prev => prev.filter(n => n.id !== id))}
               />
             )}
-            {screen === "ai" && <AskMeiScreen patient={patient} elderId={elderId} onUpdatePatient={handleUpdatePatient} onNavigate={setScreen} onSendReminder={() => handleSendReminder()} onMedsChanged={refreshMedications} onMedAdded={flagJustAdded} onHighlightChange={setHighlightChange} onWalkthroughStart={handleWalkthroughStart} />}
+            {screen === "ai" && <AskMeiScreen patient={patient} elderId={elderId} onUpdatePatient={handleUpdatePatient} onNavigate={setScreen} onSendReminder={() => handleSendReminder()} onMedsChanged={refreshMedications} onMedAdded={flagJustAdded} onHighlightChange={setHighlightChange} onWalkthroughStart={handleWalkthroughStart} guidedViewActive={walkthroughTask !== null || showCaregiverTour} openChatView={pendingChatView} onOpenChatViewConsumed={() => setPendingChatView(false)} />}
             {screen === "messages" && <MessagesScreen elderId={elderId} />}
             {screen === "settings" && <SettingsScreen patient={patient} caregiverAccount={caregiverAccount} onSwitchMode={openModeSwitch} onSignOut={handleSignOut} onEditProfile={() => setShowEditProfile(true)} onEditAccount={() => setShowEditAccount(true)} />}
           </ZoomContent>
@@ -903,17 +1007,20 @@ export default function App() {
             onNavigate={target => setScreen(target as Screen)}
             onDone={() => setHighlightChange(null)}
           />
-          {showCaregiverTour && <GuidedTour steps={caregiverTourSteps} onFinish={() => setShowCaregiverTour(false)} />}
+          {showCaregiverTour && <CaregiverTour build={caregiverTourSteps} onFinish={() => setShowCaregiverTour(false)} />}
           {walkthroughTask && walkthroughSteps.length > 0 && (
-            <Walkthrough
+            <WalkthroughWithTrustMode
+              incrementRef={incrementWalkthroughCompletionCountRef}
               steps={walkthroughSteps}
               stepIndex={Math.min(walkthroughStepIndex, walkthroughSteps.length - 1)}
               currentScreen={{ mode: "caregiver", screen }}
               onNavigate={handleWalkthroughNavigate}
               onAdvance={handleWalkthroughAdvance}
+              onBack={handleWalkthroughBack}
               onExit={handleWalkthroughExit}
               onVerify={handleWalkthroughVerify}
               onReveal={handleWalkthroughReveal}
+              onTalkToMei={handleWalkthroughTalkToMei}
             />
           )}
           {showCaregiverTourConfirm && (

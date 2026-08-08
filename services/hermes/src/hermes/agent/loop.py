@@ -23,6 +23,7 @@ from collections.abc import Awaitable, Callable
 from ..config import get_settings
 from ..tools import ToolContext, get_handler, tool_schemas
 from . import llm
+from .answers import suggest_answers
 from .prompts import system_prompt_for
 
 log = logging.getLogger("hermes.agent")
@@ -117,10 +118,26 @@ async def run_agent_turn(
             on_event=on_event,
         )
 
+    # Answer buttons for a question the model asked WITHOUT calling
+    # offer_choices. Not a nudge — a forced structured call (agent/answers.py),
+    # because a model that has committed to a text reply routinely skips a tool
+    # whose only effect is a side effect: measured 0/6 on real conversational
+    # yes/no turns with the prompt and tool-description rails already in place.
+    # No-op when the model DID attach options, when the reply asks nothing, or
+    # when anything at all goes wrong.
+    if not getattr(ctx, "choices", None):
+        options = await suggest_answers(client, reply)
+        if options:
+            # label == value: choices.py echoes the value back verbatim as the
+            # person's next message, so it has to read as their own words.
+            ctx.choices = [{"label": o, "value": o} for o in options]
     await _persist(ctx, user_text, reply, tools_used)
     return reply, tools_used, messages
 
 
+# ---------------------------------------------------------------------------
+# Yes/no answer-button backstop — HEURISTIC, off by default
+# ---------------------------------------------------------------------------
 def record_exchange(history: list | None, user_text: str, reply: str) -> list:
     """Append a plain user/assistant exchange to a provider-native history.
 

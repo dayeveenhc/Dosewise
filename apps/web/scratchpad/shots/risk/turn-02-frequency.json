@@ -1,0 +1,9 @@
+{
+  "http": 200,
+  "reply": "You mentioned starting Lisinopril 20mg, once daily in the morning at 8:00 AM for blood pressure.\n\n⚠️ This dosage is a big increase if you've been taking Lisinopril before. Please confirm this with your doctor before starting the higher dose.\n\nWould you like me to contact your doctor with this concern, or is it okay to proceed with adding this now?",
+  "tools_used": [
+    "add_prescription"
+  ],
+  "actions": [],
+  "walkthrough": null
+}

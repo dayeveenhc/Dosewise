@@ -1,0 +1,54 @@
+{
+  "log": [
+    {
+      "task": "add_prescription_auto",
+      "shell": "elder",
+      "visited": 6,
+      "stoppedAt": "overlay unmounted after 6 step(s)"
+    },
+    {
+      "task": "patient_schedule_tour",
+      "shell": "caregiver",
+      "visited": 3,
+      "stoppedAt": "reached the 12-step sweep cap"
+    }
+  ],
+  "findings": [
+    {
+      "task": "add_prescription_auto",
+      "shell": "elder",
+      "step": 7,
+      "stepId": "autoRx.verify",
+      "kind": "target-absent",
+      "detail": "step selector matched nothing (fallbackScrim=false, cutouts=1)"
+    },
+    {
+      "task": "patient_schedule_tour",
+      "shell": "caregiver",
+      "step": 1,
+      "stepId": "patsched.go-to-schedule",
+      "kind": "target-occluded",
+      "detail": "spotlight frames {top:752.5 left:83.3 w:70.5 h:51.0} but nothing (outside the viewport) is painted over it"
+    },
+    {
+      "task": "patient_schedule_tour",
+      "shell": "caregiver",
+      "step": 2,
+      "stepId": "patsched.patient-switcher",
+      "kind": "target-occluded",
+      "detail": "spotlight frames {top:97.7 left:17.0 w:344.0 h:51.9} but nothing (outside the viewport) is painted over it"
+    },
+    {
+      "task": "patient_schedule_tour",
+      "shell": "caregiver",
+      "step": 3,
+      "stepId": "patsched.week-strip",
+      "kind": "target-occluded",
+      "detail": "spotlight frames {top:184.7 left:17.0 w:344.0 h:137.9} but <div class=\"text-[calc(10px*var(--dw-text,1))] text-muted-foreground\"> is painted over it"
+    }
+  ],
+  "pool": {
+    "minted": 2,
+    "reused": 0
+  }
+}

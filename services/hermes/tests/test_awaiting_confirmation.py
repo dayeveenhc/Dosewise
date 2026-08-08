@@ -70,6 +70,40 @@ async def test_plain_turn_does_not(monkeypatch):
     assert resp.json()["awaiting_confirmation"] is False
 
 
+async def _conversational_yesno_turn(client, ctx, message, *, history=None, **_):
+    """The gap. Mei asks a real yes/no, but it is not a tool PROPOSE, so nothing
+    sets `awaiting_confirmation`; and she didn't call `offer_choices`, so nothing
+    sets `ctx.choices` either."""
+    return "Shall I look that up for you?", [], history or []
+
+
+async def test_a_conversational_yes_no_carries_no_answer_affordance(monkeypatch):
+    """PINS THE GAP the ANSWER BUTTONS prompt block and the strengthened
+    offer_choices description exist to close.
+
+    The web client (apps/web/src/app/lib/chatChoices.ts::buttonsFor) renders
+    answer buttons from exactly two signals: `choices` (the model electing to
+    call offer_choices) or `awaiting_confirmation` (set ONLY by a tool's PROPOSE
+    branch). A purely conversational yes/no is neither, so the person's only way
+    to answer "Shall I look that up for you?" is to type it — the one thing this
+    app is supposed to spare them. Nothing tested this: every case above drives a
+    PROPOSING turn.
+
+    This asserts the CURRENT contract, not the desired outcome — the fix is
+    probabilistic (prompt + tool description steering the model toward calling
+    offer_choices itself), so it belongs in prompt tests, not here. If this test
+    ever fails because both fields are populated, a DETERMINISTIC server-side
+    affordance was added and this comment is the record of what changed.
+    """
+    app = _make_app(monkeypatch, _conversational_yesno_turn)
+    async with _client(app) as c:
+        resp = await c.post("/agent/turn", json={"message": "whats in it", "elder_id": ELDER})
+    body = resp.json()
+    assert body["reply"].endswith("?")  # it really is a question
+    assert body["choices"] is None
+    assert body["awaiting_confirmation"] is False
+
+
 async def test_the_flag_does_not_stick_to_the_next_turn(monkeypatch):
     """THE regression this reset exists for. SessionState persists per elder in
     app.http_sessions and nothing on the web path ever clears the flag

@@ -4,6 +4,7 @@ import {
   agentTurn8901, anonClient, assertPhaseMins, createThrowawayElder,
   readPhaseLog, recheckAccessibility, resetPhaseLog, saveTurnArtifact, signIn,
   startWalkthrough, advanceWalkthroughUntil, advanceWalkthroughToStep, finishWalkthrough,
+  tapWalkthroughNext,
 } from "../helpers";
 import { PACING } from "../../src/app/lib/walkthrough/pacing";
 
@@ -85,13 +86,20 @@ test("s15 edit-profile: 'update my weight to 64 kilos' -> edit_profile_auto fill
   await expect(weight).toBeVisible({ timeout: 15_000 });
   await expect(weight).toHaveValue(WEIGHT, { timeout: 15_000 });
 
-  // Fill done → the run PAUSES at the manual-Save confirm step (waitFor on
-  // elder-profile-save, no Next) — nothing commits on autopilot (2026-07-28). The
-  // person taps Save themselves; the act-less verify/reveal tail then runs.
+  // Fill done → the run PAUSES at the Confirm recap step (Item 5,
+  // "ConfirmBack-Phase" — split into a separate recap step + the real Submit
+  // waitFor step below, the exact mechanism proven on add_prescription_auto.ts).
+  // startWalkthrough() puts the callout's AutoNav switch on "Step by step"
+  // (helpers.ts::useStepByStepNav) and a brand-new throwaway account is below
+  // TRUST_MODE_THRESHOLD anyway, so Confirm holds for an explicit tap rather
+  // than auto-elapsing. Then
+  // the person taps Save themselves on the real Submit step; the act-less
+  // verify/reveal tail runs after that.
   // Each autonomous step now holds at its commit gate until the person taps
-  // Next, so tap through the fills to reach the manual-Save confirm step.
+  // Next, so tap through the fills to reach the Confirm recap step.
   await advanceWalkthroughUntil(page, () => page.getByText("tap Save yourself", { exact: false }).isVisible());
-  await expect(page.getByText("tap Save yourself", { exact: false }), "manual-Save confirm step reached").toBeVisible({ timeout: 20_000 });
+  await expect(page.getByText("tap Save yourself", { exact: false }), "Confirm (recap) step reached").toBeVisible({ timeout: 20_000 });
+  await tapWalkthroughNext(page); // onto the real Submit waitFor step
   await page.locator('[data-walk="elder-profile-save"]').click();
 
   // Reveal: wait for the reveal phase (its Replay button is unique to it), then
@@ -118,6 +126,10 @@ test("s15 edit-profile: 'update my weight to 64 kilos' -> edit_profile_auto fill
   await expect(nextBtn, "walkthrough completed after the commit tap").toHaveCount(0, { timeout: 10_000 });
 
   const log = await readPhaseLog(page);
+  // "confirm" is deliberately absent here — this run is on "Step by step"
+  // (and the throwaway account is below TRUST_MODE_THRESHOLD), so it takes the
+  // TAP-gated path above (awaitNext, logged minMs 0), not the CONFIRM_MIN_MS
+  // auto-elapsing floor.
   // Pacing floors held on every phase that ran to its natural minimum.
   assertPhaseMins(log, [
     { surface: "walkthrough", phase: "field", min: PACING.FIELD_MIN_MS },
@@ -172,13 +184,15 @@ test("s15 edit-profile: a blocked profile write is CAUGHT by Verify — honest e
   await resetPhaseLog(page);
   await startWalkthrough(page, "edit_profile_auto", { value: WEIGHT });
 
-  // It fills, then the person taps Save (the manual confirm step), but the write
-  // is blocked (mocked 500) so Verify re-queries, finds the old value, and STOPS
-  // with the honest error — never a false success, never a reveal.
+  // It fills, then the person taps through the Confirm recap and taps Save on
+  // the real Submit step, but the write is blocked (mocked 500) so Verify
+  // re-queries, finds the old value, and STOPS with the honest error — never a
+  // false success, never a reveal.
   await advanceWalkthroughToStep(page, 3);
   await expect(page.locator('[data-walk="elder-profile-weight"]')).toHaveValue(WEIGHT, { timeout: 15_000 });
   await advanceWalkthroughUntil(page, () => page.getByText("tap Save yourself", { exact: false }).isVisible());
-  await expect(page.getByText("tap Save yourself", { exact: false }), "manual-Save confirm step reached").toBeVisible({ timeout: 20_000 });
+  await expect(page.getByText("tap Save yourself", { exact: false }), "Confirm (recap) step reached").toBeVisible({ timeout: 20_000 });
+  await tapWalkthroughNext(page); // onto the real Submit waitFor step
   await page.locator('[data-walk="elder-profile-save"]').click();
   await expect(page.getByText("I couldn't confirm that saved", { exact: false }), "honest walk.verifyFailed shown").toBeVisible({ timeout: 25_000 });
   // No success is ever claimed: the "Saved!" confirmation must not appear.

@@ -55,18 +55,33 @@ export function addDoctorQuestionAutoSteps(p: WalkthroughParams = {}): Walkthrou
       act: { kind: "fill", selector: Q_INPUT, value: question },
     },
     {
-      // MANUAL CONFIRM: Mei filled the question in, but the person taps Save
-      // THEMSELVES — nothing is committed on autopilot. This used to be an
-      // `act: click` on the real Save button with verify/reveal riding the same
-      // step, so the doctor_questions row was written before the person had any
-      // say; the terminal gate opened AFTER the write, far too late to be
-      // consent. Now matches the shape its four *_auto siblings all document.
+      // Confirm phase (Item 5, "ConfirmBack-Phase", decision B): a brief recap
+      // of the question Mei typed, gated on trust/risk at RUNTIME by
+      // Walkthrough.tsx/orchestrate.ts (not here). Keeps `selector` on the real
+      // Save button so the spotlight/placement geometry stays unchanged. The
+      // review field (moved here from what used to be the overloaded
+      // confirm/waitFor step below) is safe to read live: Q_INPUT is a plain
+      // controlled field with no intermediate "add to list" click that would
+      // clear it before this step is reached.
       id: "autoDoctorQ.confirm",
       screen: ON_REMINDERS,
       selector: '[data-walk="elder-doctor-q-save"]',
       instructionKey: "walk.confirmSave",
-      waitFor: { type: "click", source: "dom" },
+      confirm: { recap: true },
       review: [{ labelKey: "walk.review.question", selector: Q_INPUT }],
+    },
+    {
+      // MANUAL SUBMIT: the person has reviewed the recap above and now taps
+      // Save THEMSELVES — nothing is committed on autopilot. This used to be an
+      // `act: click` on the real Save button with verify/reveal riding the same
+      // step, so the doctor_questions row was written before the person had any
+      // say; the terminal gate opened AFTER the write, far too late to be
+      // consent. Now matches the shape its four *_auto siblings all document.
+      id: "autoDoctorQ.submit",
+      screen: ON_REMINDERS,
+      selector: '[data-walk="elder-doctor-q-save"]',
+      instructionKey: "walk.confirmSubmit",
+      waitFor: { type: "click", source: "dom" },
     },
     {
       // Act-less Verify tail: re-query doctor_questions before claiming success.

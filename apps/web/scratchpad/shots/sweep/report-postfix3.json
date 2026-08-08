@@ -1,0 +1,70 @@
+{
+  "log": [
+    {
+      "task": "undo_dose",
+      "shell": "elder",
+      "visited": 2,
+      "stoppedAt": "step 2 did not advance on a real click of [data-walk=\"elder-undo-dose\"]"
+    },
+    {
+      "task": "reminder_settings",
+      "shell": "elder",
+      "visited": 2,
+      "stoppedAt": "reached the 12-step sweep cap"
+    },
+    {
+      "task": "text_size",
+      "shell": "elder",
+      "visited": 0,
+      "stoppedAt": "ERRORED: text_size (elder) exceeded 240000ms"
+    },
+    {
+      "task": "travel_mode_setup",
+      "shell": "elder",
+      "visited": 0,
+      "stoppedAt": "ERRORED: travel_mode_setup (elder) exceeded 240000ms"
+    },
+    {
+      "task": "request_refill",
+      "shell": "elder",
+      "visited": 1,
+      "stoppedAt": "step 1 did not advance on a real click of [data-walk=\"med-request-refill-btn\"]"
+    },
+    {
+      "task": "accept_caregiver_link",
+      "shell": "elder",
+      "visited": 0,
+      "stoppedAt": "ERRORED: accept_caregiver_link (elder) exceeded 240000ms"
+    },
+    {
+      "task": "link_caregiver-elder",
+      "shell": "elder",
+      "visited": 0,
+      "stoppedAt": "ERRORED: link_caregiver-elder (elder) exceeded 240000ms"
+    },
+    {
+      "task": "link_caregiver-caregiver",
+      "shell": "caregiver",
+      "visited": 0,
+      "stoppedAt": "ERRORED: link_caregiver-caregiver (caregiver) exceeded 240000ms"
+    }
+  ],
+  "findings": [
+    {
+      "task": "undo_dose",
+      "shell": "elder",
+      "step": 2,
+      "stepId": "undoDose.tapUndo",
+      "kind": "target-absent",
+      "detail": "step selector matched nothing (fallbackScrim=true, cutouts=0)"
+    },
+    {
+      "task": "request_refill",
+      "shell": "elder",
+      "step": 1,
+      "stepId": "refill.tap-request",
+      "kind": "target-absent",
+      "detail": "step selector matched nothing (fallbackScrim=false, cutouts=1)"
+    }
+  ]
+}

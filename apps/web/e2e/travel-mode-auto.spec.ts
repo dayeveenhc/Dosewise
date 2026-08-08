@@ -1,6 +1,6 @@
 import { expect, test } from "@playwright/test";
 import { mkdirSync } from "node:fs";
-import { anonClient, createThrowawayElder, signIn, startWalkthrough } from "./helpers";
+import { anonClient, createThrowawayElder, signIn, startWalkthroughAuto } from "./helpers";
 
 // Phase 2 (B7) — autonomous Travel Mode setup, end to end against REAL Supabase.
 // Mei opens Quick Help → Travel Mode, turns it on, fills the dates + timezone,
@@ -14,7 +14,7 @@ test("autonomous travel mode: fill dates → save → verify persisted", async (
   const creds = await createThrowawayElder();
 
   await signIn(page, creds);
-  await startWalkthrough(page, "travel_mode_auto");
+  await startWalkthroughAuto(page, "travel_mode_auto");
 
   // Act: the sheet opens and Mei turns Travel Mode on → date fields appear.
   await expect(page.locator('[data-walk="travel-start-date"]')).toBeVisible({ timeout: 15_000 });

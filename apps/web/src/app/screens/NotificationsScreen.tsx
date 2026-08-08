@@ -19,6 +19,12 @@ export function NotificationsScreen({ notifications, patient, onMarkAllRead, onD
   const markAllRead = onMarkAllRead;
   const dismiss = onDismiss;
 
+  // Seeded notifications carry a key prefix so their copy follows the language
+  // setting; a real one (raised by Mei or the backend) has none and renders
+  // exactly as written. Same pattern the elder Reminders screen uses.
+  const localized = (n: Notification, field: "title" | "body" | "time") =>
+    n.i18nKey ? t(language, `${n.i18nKey}.${field}`) : n[field];
+
   const iconFor = (type: Notification["type"]) => {
     if (type === "missed") return <AlertTriangle size={16} className="text-missed-fg" />;
     if (type === "refill") return <RefreshCw size={16} className="text-warn" />;
@@ -56,9 +62,9 @@ export function NotificationsScreen({ notifications, patient, onMarkAllRead, onD
                 {iconFor(n.type)}
               </div>
               <div className="flex-1 min-w-0 pr-4">
-                <p className="text-sm font-semibold text-foreground">{n.title}</p>
-                <p className="text-xs text-muted-foreground mt-0.5 leading-snug">{n.body}</p>
-                <p className="text-[calc(10px*var(--dw-text,1))] font-mono text-muted-foreground mt-1.5">{n.time}</p>
+                <p className="text-sm font-semibold text-foreground">{localized(n, "title")}</p>
+                <p className="text-xs text-muted-foreground mt-0.5 leading-snug">{localized(n, "body")}</p>
+                <p className="text-[calc(10px*var(--dw-text,1))] font-mono text-muted-foreground mt-1.5">{localized(n, "time")}</p>
               </div>
             </div>
             <div className="flex gap-2 mt-3">

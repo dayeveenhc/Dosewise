@@ -68,14 +68,32 @@ export function travelModeAutoSteps(p: WalkthroughParams = {}): WalkthroughStep[
     act: { kind: "select", selector: '[data-walk="travel-timezone-select"]', value: timezone },
   },
   {
-    // MANUAL CONFIRM: the person taps Save themselves. TravelModeSheet emits the
-    // real "travel-plan-saved" write-committed event on a successful save, so we
-    // wait on that (a truer success signal than the raw click). No act/Next —
-    // nothing is written on autopilot. Mirrors accept_caregiver_link.ts.
+    // Confirm phase (Item 5, "ConfirmBack-Phase", decision B): a brief recap of
+    // the dates + destination, gated on trust/risk at RUNTIME by
+    // Walkthrough.tsx/orchestrate.ts (not here). Keeps `selector` on the real
+    // Save button so the spotlight/placement geometry stays unchanged.
     id: "autoTravel.confirm",
     screen: ON_AI,
     selector: '[data-walk="travel-save-button"]',
     instructionKey: "walk.confirmSave",
+    confirm: { recap: true },
+    // All three fields stay populated in the real, controlled sheet inputs
+    // (no chip-list clearing behaviour like add_condition_auto's TagList).
+    review: [
+      { labelKey: "travel.from", selector: '[data-walk="travel-start-date"]' },
+      { labelKey: "travel.to", selector: '[data-walk="travel-end-date"]' },
+      { labelKey: "travel.destinationTimezone", selector: '[data-walk="travel-timezone-select"]' },
+    ],
+  },
+  {
+    // MANUAL SUBMIT: the person taps Save themselves. TravelModeSheet emits the
+    // real "travel-plan-saved" write-committed event on a successful save, so we
+    // wait on that (a truer success signal than the raw click). No act/Next —
+    // nothing is written on autopilot. Mirrors accept_caregiver_link.ts.
+    id: "autoTravel.submit",
+    screen: ON_AI,
+    selector: '[data-walk="travel-save-button"]',
+    instructionKey: "walk.confirmSubmit",
     waitFor: { type: "write-committed", source: "app-event", event: "travel-plan-saved" },
     timeoutMs: 20000, // a signal that never arrives must surface, not hang
   },

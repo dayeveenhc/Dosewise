@@ -3,7 +3,7 @@ import { mkdirSync } from "node:fs";
 import {
   agentTurn8901, anonClient, assertPhaseMins, createThrowawayElder,
   readPhaseLog, recheckAccessibility, resetPhaseLog, saveTurnArtifact, signIn, startWalkthrough,
-  advanceWalkthroughUntil, advanceWalkthroughToStep, finishWalkthrough,
+  advanceWalkthroughUntil, advanceWalkthroughToStep, finishWalkthrough, tapWalkthroughNext,
 } from "../helpers";
 import { PACING } from "../../src/app/lib/walkthrough/pacing";
 
@@ -79,30 +79,51 @@ test("s14 travel-mode: 'set up travel mode' -> travel_mode_auto walkthrough save
   // must not depend on the LLM's param choices).
   await startWalkthrough(page, "travel_mode_auto", { start_date: START_DATE, end_date: END_DATE, timezone: TIMEZONE });
 
-  // Steps 1-3 (open the category, the Travel Mode tile, the enable toggle) each
-  // hold at their commit gate until the person taps Next, so tap through to the
-  // start-date fill before waiting on its animation.
-  await advanceWalkthroughToStep(page, 4);
+  // Steps 1-4 now flow with NO tap at all. computeHoldGate's case 2 was widened
+  // on 2026-08-08 from "the next step FILLS" to "the next step ACTS": step 2
+  // clicks the Travel Mode tile and the sheet slides up OVER it, so holding
+  // there parked the spotlight on a tile behind the sheet's own backdrop — the
+  // geometry sweep measured it as `travel_mode_auto#2 target-occluded`. Steps 1
+  // and 2 are clicks whose next step also acts, so both now carry themselves.
+  //
+  // The mid-fill watcher is therefore ARMED FIRST and awaited after: the run
+  // reaches the start-date fill unaided, and arming after the advance would look
+  // for a pre-highlight ring that has already come and gone.
+  const midFill = page.waitForSelector(
+    '[data-walk="travel-start-date"].walk-field-prehighlight',
+    { state: "attached", timeout: 30_000 },
+  );
+  // A no-op once the run has already carried itself past 3.
+  await advanceWalkthroughToStep(page, 3);
 
   // Screenshot 1 — date mid-fill: the start-date field is spotlighted + being
   // filled (its pre-highlight ring is present through the whole fill window).
-  await page.waitForSelector('[data-walk="travel-start-date"].walk-field-prehighlight', { state: "attached", timeout: 30_000 });
+  await midFill;
   await page.screenshot({ path: `${SHOTS}/1-date-mid-fill.png`, fullPage: true });
 
-  // Fills + timezone select done → the run PAUSES at the manual-Save confirm step
-  // (waitFor on the real "travel-plan-saved" write event, no Next) — nothing
-  // commits on autopilot (2026-07-28 contract). The person taps Save THEMSELVES;
-  // that save emits the event and advances to Verify. Wait for the confirm
-  // callout, then tap Save.
+  // Fills + timezone select done → the run PAUSES at the Confirm recap step
+  // (Item 5, "ConfirmBack-Phase" — split into a separate recap step + the real
+  // Submit waitFor step below, the exact mechanism proven on
+  // add_prescription_auto.ts). A brand-new throwaway account has
+  // walkthroughCompletionCount 0, below TRUST_MODE_THRESHOLD (Item 2,
+  // TrustMode), so requireExplicitAdvance is true and Confirm holds for an
+  // explicit tap rather than auto-elapsing.
   // Each autonomous step now holds at its commit gate until the person taps
-  // Next, so tap through the fills + timezone select to reach the confirm step.
+  // Next, so tap through the fills + timezone select to reach the Confirm
+  // recap step.
   await advanceWalkthroughUntil(page, () => page.getByText("tap Save yourself", { exact: false }).isVisible());
-  await expect(page.getByText("tap Save yourself", { exact: false }), "manual-Save confirm step reached").toBeVisible({ timeout: 40_000 });
+  await expect(page.getByText("tap Save yourself", { exact: false }), "Confirm (recap) step reached").toBeVisible({ timeout: 40_000 });
 
   // The timezone really landed on a real option — a value matching no <option>
   // used to blank the field, and the old Verify (startDate only) called that a
   // success. performAct now refuses such a value outright.
   await expect(page.locator('[data-walk="travel-timezone-select"]'), "timezone resolved to a real option").toHaveValue(TIMEZONE);
+
+  // Advance onto the real Submit waitFor step — the save that emits
+  // "travel-plan-saved" and advances to Verify still happens on the person's
+  // OWN tap of the real Save button, unchanged; only the recap now sits in
+  // front of it as its own step.
+  await tapWalkthroughNext(page);
 
   await page.locator('[data-walk="travel-save-button"]').click();
 
@@ -132,6 +153,10 @@ test("s14 travel-mode: 'set up travel mode' -> travel_mode_auto walkthrough save
   }, null, { timeout: 30_000 });
 
   const log = await readPhaseLog(page);
+  // "confirm" is deliberately absent here — Item 2 (TrustMode) means a fresh
+  // throwaway account (walkthroughCompletionCount 0, below
+  // TRUST_MODE_THRESHOLD) takes the TAP-gated path above (awaitNext, logged
+  // minMs 0), not the CONFIRM_MIN_MS auto-elapsing floor a veteran gets.
   assertPhaseMins(log, [
     { surface: "walkthrough", phase: "field", min: PACING.FIELD_MIN_MS },
     { surface: "walkthrough", phase: "click", min: PACING.PRE_CLICK_MS },

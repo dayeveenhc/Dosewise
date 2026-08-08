@@ -65,6 +65,7 @@ async def test_tool_events_stream_before_the_final_event(monkeypatch):
             "actions": [{"tool": "add_prescription", "summary": "Metformin 500mg"}],
             "walkthrough": None,
             "choices": None,
+            "alert": None,
             "awaiting_confirmation": False,
         },
     ]
@@ -88,6 +89,7 @@ async def test_no_tool_calls_still_ends_with_a_final_event(monkeypatch):
             "actions": [],
             "walkthrough": None,
             "choices": None,
+            "alert": None,
             "awaiting_confirmation": False,
         }
     ]
@@ -132,3 +134,25 @@ async def test_jwt_required_in_strict_mode_rejects_before_streaming_starts(monke
     async with _client(app) as c:
         resp = await c.post("/agent/turn/stream", json={"message": "hi"})
     assert resp.status_code == 401
+
+
+async def test_final_event_key_set_matches_the_response_model(monkeypatch):
+    """The streaming half of the two-sided contract — see the twin in
+    test_api_agent_turn.py::test_final_body_key_set_matches_the_response_model.
+
+    `final` is assembled as a literal dict here, not from AgentTurnResponse, so
+    nothing but this test stops it drifting from the non-streaming route. It
+    already did once, on `choices`. `type` is the one legitimate extra: it is the
+    SSE event tag, not part of the payload contract.
+    """
+    async def fake_turn(
+        client, ctx, message, *, image_bytes=None, history=None, on_event=None, **_
+    ):
+        return "ok", [], history or []
+
+    app = _make_app(monkeypatch, fake_turn)
+    async with _client(app) as c:
+        resp = await c.post("/agent/turn/stream", json={"message": "hi", "elder_id": ELDER})
+    final = _parse_events(resp.text)[-1]
+    assert final["type"] == "final"
+    assert set(final) - {"type"} == set(routes.AgentTurnResponse.model_fields)

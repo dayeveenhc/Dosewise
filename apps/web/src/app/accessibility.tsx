@@ -37,6 +37,17 @@ interface AccessibilitySettings {
   // CONTEXT.md's notification-tier note), so a second provider would be
   // ceremony around the same localStorage blob.
   notifications: NotificationPrefs;
+  // TrustMode (Item 2): permanent override that forces the walkthrough's
+  // manual tap-gate regardless of walkthroughCompletionCount below.
+  walkthroughManualMode: boolean;
+  // TrustMode (Item 2): device-local count of COMPLETED walkthroughs, any
+  // task (not per-task). Distinct from lib/profile.ts's server-synced
+  // ProfileDetails.completedWalkthroughs — that string SET exists only to
+  // suppress Mei's proactive re-offers of a specific task and has no
+  // counting concept; this is a plain tally compared against
+  // TRUST_MODE_THRESHOLD (lib/walkthrough/pacing.ts) to decide
+  // requireExplicitAdvance.
+  walkthroughCompletionCount: number;
 }
 
 interface AccessibilityContextValue extends AccessibilitySettings {
@@ -49,6 +60,8 @@ interface AccessibilityContextValue extends AccessibilitySettings {
   setTimeFormat: (format: TimeFormat) => void;
   setVoiceOutput: (on: boolean) => void;
   setNotification: (key: keyof NotificationPrefs, on: boolean) => void;
+  setWalkthroughManualMode: (on: boolean) => void;
+  incrementWalkthroughCompletionCount: () => void;
 }
 
 const STORAGE_KEY = "dosewise:accessibility";
@@ -125,6 +138,8 @@ const DEFAULTS: AccessibilitySettings = {
   timeFormat: "12h",
   voiceOutput: true,
   notifications: DEFAULT_NOTIFICATIONS,
+  walkthroughManualMode: false,
+  walkthroughCompletionCount: 0,
 };
 
 function loadInitial(): AccessibilitySettings {
@@ -180,6 +195,8 @@ export function AccessibilityProvider({ children }: { children: ReactNode }) {
     setTimeFormat: (timeFormat) => setSettings(s => ({ ...s, timeFormat })),
     setVoiceOutput: (voiceOutput) => setSettings(s => ({ ...s, voiceOutput })),
     setNotification: (key, on) => setSettings(s => ({ ...s, notifications: { ...s.notifications, [key]: on } })),
+    setWalkthroughManualMode: (walkthroughManualMode) => setSettings(s => ({ ...s, walkthroughManualMode })),
+    incrementWalkthroughCompletionCount: () => setSettings(s => ({ ...s, walkthroughCompletionCount: s.walkthroughCompletionCount + 1 })),
   };
 
   return <AccessibilityContext.Provider value={value}>{children}</AccessibilityContext.Provider>;

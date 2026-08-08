@@ -13,6 +13,8 @@ from hermes.tools.base import ToolContext
 from hermes.tools.walkthrough import (
     AUTONOMOUS_TASKS,
     CAREGIVER_ONLY_TASKS,
+    IRREVERSIBLE_AUTO_TASKS,
+    RISK_ASSESSED_TASKS,
     TASK_NAMES,
     TRAVEL_TIMEZONES,
     tasks_for_role,
@@ -42,8 +44,17 @@ async def test_start_walkthrough_forwards_params_for_autonomous_task():
     await tool(ctx, task_name="add_prescription_auto", params=params)
     # VALUES (never selectors) pass through to the client, which injects them into
     # the walkthrough's fill/verify steps.
-    assert ctx.walkthrough == {"task_name": "add_prescription_auto", "params": params}
+    assert ctx.walkthrough["task_name"] == "add_prescription_auto"
+    assert ctx.walkthrough["params"] == params
     assert ctx.committed_actions == []
+    # add_prescription_auto is risk-assessed (RISK_ASSESSED_TASKS) — this only
+    # proves the "risk" key is wired through with the right shape. Whether
+    # THIS instance flags (and why) is a RiskClassifier behaviour question,
+    # not a wiring one — see test_risk_classifier.py, which owns every
+    # flagged/not-flagged assertion as a named, findable test.
+    risk = ctx.walkthrough["risk"]
+    assert set(risk.keys()) == {"flagged", "signals", "reasons"}
+    assert isinstance(risk["flagged"], bool)
 
 
 async def test_start_walkthrough_unknown_task_name_does_not_queue():
@@ -281,6 +292,40 @@ async def test_start_walkthrough_refuses_an_elder_task_in_the_caregiver_shell():
     out = await tool(ctx, task_name="log_dose")
     assert ctx.walkthrough is None
     assert "patient app" in out
+
+
+def test_risk_assessed_tasks_is_autonomous_minus_the_consent_flow():
+    """RISK_ASSESSED_TASKS must never drift from AUTONOMOUS_TASKS by anything
+    other than the one deliberate exclusion (accept_caregiver_link is already
+    always-human-tap end to end, so RiskClassifier has nothing to gate there)."""
+    assert RISK_ASSESSED_TASKS == AUTONOMOUS_TASKS - {"accept_caregiver_link"}
+    assert "accept_caregiver_link" not in RISK_ASSESSED_TASKS
+
+
+def test_irreversible_auto_tasks_parity():
+    """IRREVERSIBLE_AUTO_TASKS is a new source-of-truth table (cross-cutting
+    decision A). No TS-side mirror exists yet (Phase B builds one later), so
+    this only proves the raw-text-extraction pattern the eventual two-sided
+    test will use resolves the SAME set the import exposes — following
+    TASK_NAMES/AUTONOMOUS_TASKS/TRAVEL_TIMEZONES's established convention
+    above, just one-sided until a TS table exists to compare against."""
+    repo = Path(__file__).resolve().parents[3]
+    tools_py = (
+        repo / "services" / "hermes" / "src" / "hermes" / "tools" / "walkthrough.py"
+    ).read_text(encoding="utf-8")
+    # Annotation is optional in the regex on purpose: a future edit dropping
+    # the ": frozenset[str]" type hint (e.g. to match the unannotated sibling
+    # tables AUTONOMOUS_TASKS/CAREGIVER_ONLY_TASKS just above it) must not
+    # make this test claim the table is MISSING when it's only unannotated.
+    m = re.search(
+        r"IRREVERSIBLE_AUTO_TASKS(?:\s*:\s*frozenset\[str\])?\s*=\s*frozenset\((.*?)\)",
+        tools_py,
+        re.S,
+    )
+    assert m, "IRREVERSIBLE_AUTO_TASKS not found in tools/walkthrough.py"
+    extracted = set(re.findall(r'"([a-z0-9_]+)"', m.group(1)))
+    assert extracted == set(IRREVERSIBLE_AUTO_TASKS)
+    assert IRREVERSIBLE_AUTO_TASKS <= set(TASK_NAMES)
 
 
 def test_autonomous_tasks_match_the_web_client():

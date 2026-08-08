@@ -19,6 +19,7 @@ Only meaningful in the app channel — there are no spotlightable screens on Tel
 from __future__ import annotations
 
 from .base import ToolContext, register
+from .risk import assess_risk
 
 # Keep in sync with the task names the web client's step library actually defines
 # (apps/web/src/app/lib/walkthrough/steps/*.ts).
@@ -85,6 +86,30 @@ AUTONOMOUS_TASKS = frozenset({
     "accept_caregiver_link",
 })
 
+# The RiskClassifier (cross-cutting decision A) only ever matters for a task
+# that could otherwise commit with zero human tap at high trust — that's the
+# *_auto family MINUS accept_caregiver_link, which is a consent flow that's
+# already always-human-tap end to end (soul.md) regardless of trust level, so
+# there is nothing here for a risk flag to gate. Deliberately NOT keyed off
+# AUTONOMOUS_TASKS membership alone (that set is a "Mei drives the screen"
+# mechanism axis, not a risk axis) — this is its own, independently-scoped
+# subset, even though today it happens to equal AUTONOMOUS_TASKS minus one.
+RISK_ASSESSED_TASKS = AUTONOMOUS_TASKS - {"accept_caregiver_link"}
+
+# Tasks whose underlying write DISCONTINUES/DELETES/REVOKES something already
+# on file. A genuinely different axis from AUTONOMOUS_TASKS (mechanism, not
+# risk) and CAREGIVER_ONLY_TASKS (which shell renders it) — risk.py's
+# classifier always flags a task in this set, regardless of its other
+# signals. Empty today ON PURPOSE: none of the five *_auto tasks above write
+# destructively (they add/edit — reversible via a later, separate edit or an
+# explicit discontinue_medication call); this table exists so a FUTURE *_auto
+# task whose write discontinues/deletes/revokes something (e.g. an eventual
+# "discontinue_medication_auto") is flagged the moment it's added, without
+# anyone having to remember to touch risk.py by hand. Mirror this table
+# TS-side once such a task exists — see test_irreversible_auto_tasks_parity
+# in test_walkthrough.py for the raw-text-extraction half already in place.
+IRREVERSIBLE_AUTO_TASKS: frozenset[str] = frozenset()
+
 
 def tasks_for_role(role: str) -> list[str]:
     """The walkthroughs that can actually run in this person's app shell."""
@@ -134,7 +159,10 @@ _SCHEMA = {
                 "type": "object",
                 "description": (
                     "The real values to fill in for an autonomous walkthrough. "
-                    "add_prescription_auto: {name, dose, purpose}. "
+                    "add_prescription_auto: {name, dose, purpose, duration_days?} "
+                    "— include duration_days ONLY for a fixed course ('for 2 "
+                    "weeks', 'a 5-day course'), counted inclusively from today, "
+                    "and pass the SAME value you gave add_prescription. "
                     "add_condition_auto: {condition}. "
                     "edit_profile_auto: {value} (the new weight in kg). "
                     "add_doctor_question_auto: {question}. "
@@ -184,6 +212,14 @@ async def start_walkthrough(
     # every builder. Booleans/None are stringified too; nothing is dropped.
     clean = {k: ("" if v is None else str(v)) for k, v in (params or {}).items()}
     ctx.walkthrough = {"task_name": task_name, "params": clean}
+    # RiskClassifier (cross-cutting decision A): only RISK_ASSESSED_TASKS can
+    # ever commit with zero human tap at high trust, so only those get a
+    # "risk" key at all — every other task_name's ctx.walkthrough is
+    # unchanged from before this pass.
+    if task_name in RISK_ASSESSED_TASKS:
+        ctx.walkthrough["risk"] = await assess_risk(
+            ctx, task_name, clean, irreversible_tasks=IRREVERSIBLE_AUTO_TASKS
+        )
     return (
         f"Queued the '{task_name}' walkthrough. Tell the patient in one short, warm "
         "line that you'll do it now and show them, then stop — the app takes over "

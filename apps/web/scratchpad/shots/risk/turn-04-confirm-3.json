@@ -1,0 +1,36 @@
+{
+  "http": 200,
+  "reply": "✅ Your Lisinopril dose has been updated to 20mg, once daily in the morning.\n\nI've also queued your question for the doctor to review the dosage increase. They'll see it during their next review.\n\nFeel free to let me know if there's anything else you need!",
+  "tools_used": [
+    "update_medication_dosage",
+    "add_doctor_question"
+  ],
+  "actions": [
+    {
+      "tool": "update_medication_dosage",
+      "summary": "Lisinopril: 20mg",
+      "entity_type": "medication",
+      "entity_id": "c184fdc7-6f78-4e55-bacf-ea5ed6ecc68a",
+      "changed_fields": {
+        "dosage": {
+          "before": "5mg",
+          "after": "20mg"
+        }
+      },
+      "name": "Lisinopril"
+    },
+    {
+      "tool": "add_doctor_question",
+      "summary": "Please review the Lisinopril dosage increase to 20mg from 5mg. Concerned due to risk of major increase. Confirmed?",
+      "entity_type": "doctor_message",
+      "entity_id": "b8e7453a-e1fd-4835-91e5-c246ade1d680",
+      "changed_fields": {
+        "question": {
+          "before": null,
+          "after": "Please review the Lisinopril dosage increase to 20mg from 5mg. Concerned due to risk of major increase. Confirmed?"
+        }
+      }
+    }
+  ],
+  "walkthrough": null
+}

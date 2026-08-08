@@ -27,8 +27,21 @@ test("s19 low-stock-reorder: mock low-stock tour (AI-auto-advanced) + real 'reor
   await page.setViewportSize({ width: 1280, height: 900 });
 
   // ── 1 FIXTURE ─────────────────────────────────────────────────────────────
-  // Throwaway elder + one Metformin med. The low-stock alert is a static mock so
-  // it needs no seeding; the med is the target of the real reorder tail.
+  // Throwaway elder + the Metformin the reorder tail acts on, PLUS a second
+  // medicine that stays low for the whole run.
+  //
+  // Both are load-bearing as of 2026-08-08: the Reminders low-stock card used to
+  // be a hardcoded "Metformin, 4 days" literal that rendered for everyone, and
+  // is now derived from real supply data (lib/alerts.ts).
+  //
+  // The SECOND medicine is the subtle part. Seeding a low count on Metformin
+  // alone does not survive this spec's own flow: step 2's real `log_refill`
+  // turn RAISES pills_remaining (that is the whole point of a reorder), so by
+  // the time the UI runs Metformin is comfortably stocked and there is no
+  // low-stock card left for notifications_tour to spotlight. Atorvastatin is
+  // never touched by the turn, so the tour always has a real target — and
+  // because the tour's anchors ride the first SUPPLY alert by severity, the
+  // lower-stocked one carries them.
   const creds = await createThrowawayElder();
   const supa = anonClient();
   const { data: signInData, error: sErr } = await supa.auth.signInWithPassword({
@@ -44,7 +57,25 @@ test("s19 low-stock-reorder: mock low-stock tour (AI-auto-advanced) + real 'reor
     .single();
   expect(mErr, mErr?.message).toBeNull();
   const medId: string = med!.id;
-  console.log(`[SEED] elder=${creds.userId} med=${medId}`);
+
+  const { data: lowMed, error: lErr } = await supa
+    .from("medications")
+    .insert({ elder_id: creds.userId, name: "Atorvastatin", dosage: "20mg",
+              purpose: "cholesterol", schedule: { times: ["21:00"], frequency: "daily" } })
+    .select("id")
+    .single();
+  expect(lErr, lErr?.message).toBeNull();
+  // 3 pills at one dose a day — stays under LOW_SUPPLY_DAYS for the whole run.
+  const { error: lrErr } = await supa.from("refills").insert({
+    medication_id: lowMed!.id, elder_id: creds.userId, pills_remaining: 3, threshold: 10,
+  });
+  expect(lrErr, lrErr?.message).toBeNull();
+  // 4 pills at one dose a day = 4 days left, under LOW_SUPPLY_DAYS (10).
+  const { error: rErr } = await supa.from("refills").insert({
+    medication_id: medId, elder_id: creds.userId, pills_remaining: 4, threshold: 10,
+  });
+  expect(rErr, rErr?.message).toBeNull();
+  console.log(`[SEED] elder=${creds.userId} med=${medId} pills_remaining=4`);
 
   // ── 2 TRIGGER (the ONE real thing: the reorder tail) ──────────────────────
   // Verbatim realistic phrase; ≤3 recorded attempts for LLM-routing variance.
@@ -98,11 +129,12 @@ test("s19 low-stock-reorder: mock low-stock tour (AI-auto-advanced) + real 'reor
   await advanceWalkthroughToStep(page, 2);
   await page.screenshot({ path: `${SHOTS}/walkthrough-step2-refill-row.png`, fullPage: true });
 
-  // Tapping through the rest completes it: the final step's Got it tap dismisses
-  // the mock card (purely local — no backend), and the overlay unmounts.
+  // Tapping through the rest completes it: the final step's Got it tap
+  // acknowledges the alert (host state, no backend write), and the overlay
+  // unmounts.
   await finishWalkthrough(page);
   await expect(page.getByRole("button", { name: "Exit walkthrough" }), "tour completes once tapped through").toHaveCount(0, { timeout: 20_000 });
-  await expect(page.locator(REFILL_ROW), "mock alert dismissed by the Got-it tap").toHaveCount(0);
+  await expect(page.locator(REFILL_ROW), "low-stock alert dismissed by the Got-it tap").toHaveCount(0);
 
   // Phase-log shape for an autonomous tour: PACED walkthrough phases (the inverse
   // of the old user-driven zero). Three act:click steps (steps 2-3 carry onEnter →
@@ -123,11 +155,13 @@ test("s19 low-stock-reorder: mock low-stock tour (AI-auto-advanced) + real 'reor
   // rings a single, deterministic target.
   await page.locator('[data-tour="nav-prescriptions"]').click();
   await expect(page.locator(`[data-testid="medication-${medId}"]`), "real med card").toBeVisible({ timeout: 20_000 });
-  // Count the medication CARDS, not the Request-refill button. That button is
-  // gated on isRunningLow (lib/medications.ts), and this fixture seeds no
-  // `refills` row — which defaults to 30/30, so the button correctly never
-  // renders and this could not have been asserting what it claimed.
-  await expect(page.locator('[data-testid^="medication-"]'), "med list settled to the one real med").toHaveCount(1, { timeout: 20_000 });
+  // Count the medication CARDS, not the Request-refill button — the card count
+  // is the deterministic signal that the real fetch has replaced the demo
+  // patient.
+  // TWO now: the reorder target plus the medicine seeded to stay low so the
+  // tour has something to spotlight. The count is what proves the real fetch
+  // has replaced the demo patient.
+  await expect(page.locator('[data-testid^="medication-"]'), "med list settled to the two real meds").toHaveCount(2, { timeout: 20_000 });
 
   // Fire the REAL committed action from the AI tab (never Prescriptions — firing
   // where medication-* testids already render latches the first sync poll onto

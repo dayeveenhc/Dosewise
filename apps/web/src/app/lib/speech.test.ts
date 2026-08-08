@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
-import { isFemaleVoice, speak, speechSupported } from "./speech";
+import { isFemaleVoice, speak, speechSupported, splitForSpeech } from "./speech";
 
 // speechSynthesis / SpeechSynthesisUtterance do not exist in jsdom, so we stub
 // them. pickVoice() is not exported, so per-language voice selection is verified
@@ -12,6 +12,7 @@ class FakeUtterance {
   text: string;
   lang = "";
   rate = 1;
+  pitch = 1;
   voice: FakeVoice | null = null;
   onstart: (() => void) | null = null;
   onend: (() => void) | null = null;
@@ -262,5 +263,188 @@ describe("speak — cancel→speak race fix", () => {
     // Falls back on a timer so a browser that never fires voiceschanged still speaks.
     vi.runAllTimers();
     expect(speakSpy).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe("splitForSpeech — sentence/clause segmentation", () => {
+  it("splits on . ! ? and keeps the delimiter with its segment", () => {
+    expect(splitForSpeech("Hello. How are you? Great!")).toEqual([
+      "Hello.",
+      "How are you?",
+      "Great!",
+    ]);
+  });
+
+  it("splits on full-width CJK punctuation, including the clause comma ，", () => {
+    expect(splitForSpeech("你好，你吃饭了吗？该吃药了。")).toEqual([
+      "你好，",
+      "你吃饭了吗？",
+      "该吃药了。",
+    ]);
+  });
+
+  it("does NOT split on an ASCII comma -- would over-fragment ordinary English replies", () => {
+    expect(splitForSpeech("Take 500 milligrams with 2 milliliters, ask Doctor Tan")).toEqual([
+      "Take 500 milligrams with 2 milliliters, ask Doctor Tan",
+    ]);
+  });
+
+  it("returns exactly one segment for text with no boundary punctuation at all", () => {
+    expect(splitForSpeech("hello")).toEqual(["hello"]);
+    expect(splitForSpeech("你好 你好吗")).toEqual(["你好 你好吗"]);
+  });
+
+  it("collapses a run of trailing punctuation instead of emitting a content-less segment", () => {
+    // A lone "." or ".." dangling after real content must not become its own
+    // utterance -- some engines never fire onend for silence, which would
+    // stall the whole chain (isSpeaking stuck true forever).
+    expect(splitForSpeech("Hello.. ")).toEqual(["Hello.."]);
+  });
+
+  it("does NOT split a decimal point inside a dose, even mid-sentence", () => {
+    // Regression: cleanTextForSpeech expands "2.5mg" to "2.5 milligrams",
+    // and a naive sentence-boundary "." would fracture the number itself
+    // ("...dose to 2." / "5 milligrams...") across a pause with its own
+    // pitch/rate offset -- reproducible with the app's own seed data
+    // (Bisoprolol 2.5mg). The "." must survive intact in the output segment.
+    expect(
+      splitForSpeech("Your doctor increased your dose to 2.5 milligrams once daily. Take it with food.")
+    ).toEqual([
+      "Your doctor increased your dose to 2.5 milligrams once daily.",
+      "Take it with food.",
+    ]);
+  });
+
+  it("does not let the decimal-dot placeholder leak into unrelated text", () => {
+    // The masking approach must not corrupt ordinary spaces or produce a
+    // stray "." anywhere the source text didn't have a digit.digit dot.
+    expect(splitForSpeech("Take 1.5 tablets twice daily with 10.25 milliliters of water.")).toEqual([
+      "Take 1.5 tablets twice daily with 10.25 milliliters of water.",
+    ]);
+  });
+});
+
+describe("speak — multi-utterance chaining for expressiveness", () => {
+  it("chains sentences as separate utterances, advancing only on onend after a short pause", () => {
+    const utter1 = speakAndFlush("Hello. How are you?", "en-SG");
+    expect(utter1?.text).toBe("Hello.");
+    expect(speakSpy).toHaveBeenCalledTimes(1);
+
+    utter1?.onstart?.();
+    utter1?.onend?.();
+    expect(speakSpy).toHaveBeenCalledTimes(1); // not yet -- pause hasn't elapsed
+    // advanceTimersByTime, not runAllTimers: onstart armed the 12s keepalive
+    // interval (still running mid-chain), which runAllTimers would spin on
+    // forever -- same reason the keepalive tests above use it.
+    vi.advanceTimersByTime(200);
+    expect(speakSpy).toHaveBeenCalledTimes(2);
+    expect((speakSpy.mock.calls[1][0] as FakeUtterance).text).toBe("How are you?");
+  });
+
+  it("a single-segment reply is untouched: rate 0.9, pitch 1, exactly one utterance", () => {
+    const utter = speakAndFlush("hello", "en-SG");
+    expect(utter?.rate).toBe(0.9);
+    expect(utter?.pitch).toBe(1);
+    expect(speakSpy).toHaveBeenCalledTimes(1);
+  });
+
+  it("applies small deterministic rate/pitch variance across segments, centered on the base", () => {
+    const utter1 = speakAndFlush("One. Two. Three.", "en-SG");
+    utter1?.onstart?.();
+    utter1?.onend?.();
+    vi.advanceTimersByTime(200); // keepalive interval is running mid-chain -- see above
+    const utter2 = speakSpy.mock.calls[1][0] as FakeUtterance;
+    utter2.onstart?.();
+    utter2.onend?.();
+    vi.advanceTimersByTime(200);
+    const utter3 = speakSpy.mock.calls[2][0] as FakeUtterance;
+
+    expect(utter1?.rate).toBe(0.9);
+    expect(utter1?.pitch).toBe(1);
+    // Every segment stays within the documented +/-0.03 rate / +/-0.04 pitch
+    // band -- expressiveness must never swing wildly.
+    for (const u of [utter1, utter2, utter3]) {
+      expect(u?.rate).toBeGreaterThanOrEqual(0.9 - 0.03);
+      expect(u?.rate).toBeLessThanOrEqual(0.9 + 0.03);
+      expect(u?.pitch).toBeGreaterThanOrEqual(1 - 0.04);
+      expect(u?.pitch).toBeLessThanOrEqual(1 + 0.04);
+    }
+    // Not all three identical -- there IS a cadence, not a flat repeat.
+    const rates = new Set([utter1?.rate, utter2.rate, utter3.rate]);
+    expect(rates.size).toBeGreaterThan(1);
+  });
+
+  it("fires onStart/onEnd exactly once per speak() call, never once per segment", () => {
+    const onStart = vi.fn();
+    const onEnd = vi.fn();
+    speak("Hello. How are you? Great!", "en-SG", { onStart, onEnd });
+    vi.runAllTimers();
+
+    const utter1 = speakSpy.mock.calls[0][0] as FakeUtterance;
+    utter1.onstart?.();
+    expect(onStart).toHaveBeenCalledTimes(1);
+    utter1.onend?.();
+    vi.advanceTimersByTime(200); // keepalive interval is running mid-chain -- see above
+
+    const utter2 = speakSpy.mock.calls[1][0] as FakeUtterance;
+    utter2.onstart?.();
+    expect(onStart).toHaveBeenCalledTimes(1); // still once, not per-segment
+    expect(onEnd).not.toHaveBeenCalled();
+    utter2.onend?.();
+    vi.advanceTimersByTime(200);
+
+    const utter3 = speakSpy.mock.calls[2][0] as FakeUtterance;
+    utter3.onstart?.();
+    utter3.onend?.(); // final segment
+    expect(onStart).toHaveBeenCalledTimes(1);
+    expect(onEnd).toHaveBeenCalledTimes(1);
+  });
+
+  it("keeps the SAME voice on every segment of a chain -- expressiveness never re-picks or drifts gender", () => {
+    const utter1 = speakAndFlush("Hello. How are you? Great!", "zh-CN");
+    expect(utter1?.voice?.name).toBe("Ting-Ting"); // the female voice, per existing priority
+
+    utter1?.onstart?.();
+    utter1?.onend?.();
+    vi.advanceTimersByTime(200); // keepalive interval is running mid-chain -- see above
+    const utter2 = speakSpy.mock.calls[1][0] as FakeUtterance;
+    utter2.onstart?.();
+    utter2.onend?.();
+    vi.advanceTimersByTime(200);
+    const utter3 = speakSpy.mock.calls[2][0] as FakeUtterance;
+
+    expect(utter2.voice?.name).toBe("Ting-Ting");
+    expect(utter3.voice?.name).toBe("Ting-Ting");
+  });
+
+  it("a NEW speak() call mid-chain kills the old chain instead of interleaving with it", () => {
+    speakAndFlush("First sentence. Second sentence.", "en-SG");
+    const firstUtter1 = speakSpy.mock.calls[0][0] as FakeUtterance;
+    expect(firstUtter1.text).toBe("First sentence.");
+
+    firstUtter1.onstart?.();
+    firstUtter1.onend?.(); // queues "Second sentence." after the inter-segment pause
+
+    // A NEW reply supersedes the old chain before that pause timer fires.
+    speak("Replacement message.", "en-SG");
+    vi.runAllTimers();
+
+    // Exactly one more speak() call happened, and it's the NEW message --
+    // the old chain's "Second sentence." must never have been spoken.
+    expect(speakSpy).toHaveBeenCalledTimes(2);
+    expect((speakSpy.mock.calls[1][0] as FakeUtterance).text).toBe("Replacement message.");
+  });
+
+  it("an error mid-chain aborts the whole reply (fires onEnd once) rather than continuing to the next segment", () => {
+    const onEnd = vi.fn();
+    speak("First. Second.", "en-SG", { onEnd });
+    vi.runAllTimers();
+    const utter1 = speakSpy.mock.calls[0][0] as FakeUtterance;
+    utter1.onstart?.();
+    utter1.onerror?.();
+
+    vi.runAllTimers();
+    expect(speakSpy).toHaveBeenCalledTimes(1); // no second segment spoken
+    expect(onEnd).toHaveBeenCalledTimes(1);
   });
 });

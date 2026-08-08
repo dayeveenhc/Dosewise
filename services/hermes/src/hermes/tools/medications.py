@@ -6,23 +6,39 @@ discontinue_medication (propose -> confirm archiving a med — never a delete)."
 from __future__ import annotations
 
 import logging
-from datetime import UTC, datetime
+from datetime import UTC, date, datetime, timedelta
 from uuid import uuid4
+from zoneinfo import ZoneInfo
 
+from ..config import get_settings
 from ..dosing import WEEKDAY_NAMES, WEEKDAYS
 from .base import (
+    DOSAGE_INCREASE_MULTIPLIER,
     ToolContext,
+    dosage_ratio,
     find_medications,
     first_id,
     match_pending,
     match_pending_bulk,
-    parse_dosage,
     record_action,
     register,
 )
 from .drug_info import interaction_text, label_mentions
 
 log = logging.getLogger("hermes.tools.medications")
+
+
+def _course_end_date(duration_days: int) -> date:
+    """Last day of an N-day course, INCLUSIVE of today.
+
+    ``duration_days=14`` -> today + 13, matching what the web sheet writes and
+    what ``dosing.py::scheduled_today`` reads back. Uses the configured local
+    timezone rather than naive ``date.today()`` — the rest of this service
+    stores UTC, and a course boundary computed in the wrong zone is off by a
+    whole day of doses for half of each day.
+    """
+    local_today = datetime.now(UTC).astimezone(ZoneInfo(get_settings().hermes_tz)).date()
+    return local_today + timedelta(days=duration_days - 1)
 
 _LIST_SCHEMA = {
     "name": "list_medications",
@@ -50,9 +66,29 @@ async def list_medications(ctx: ToolContext) -> str:
         when = ", ".join(times) if times else "as directed"
         days = schedule.get("days") or []
         cadence = f" {_days_phrase(days)}" if days else ""
+        # A fixed course that has run out still has an un-archived row, but it
+        # produces no more doses — say so rather than listing it as if it were
+        # still being taken.
+        course = ""
+        end = schedule.get("end_date")
+        if end:
+            local_today = (
+                datetime.now(UTC).astimezone(ZoneInfo(get_settings().hermes_tz)).date()
+            )
+            try:
+                end_date = date.fromisoformat(str(end))
+            except (ValueError, TypeError):
+                end_date = None
+            if end_date is not None:
+                course = (
+                    f" COURSE ENDED {end} — no more doses are scheduled; offer to "
+                    "move it to past medicines"
+                    if local_today > end_date
+                    else f" (a fixed course, last day {end})"
+                )
         lines.append(
             f"- {m['name']} ({m.get('dosage') or 'dose n/a'}) — "
-            f"{m.get('purpose') or 'purpose n/a'}; take at {when}{cadence}. "
+            f"{m.get('purpose') or 'purpose n/a'}; take at {when}{cadence}.{course} "
             f"{m.get('instructions') or ''}".strip()
         )
     return "\n".join(lines)
@@ -91,6 +127,16 @@ _ADD_SCHEMA = {
                 "actually schedules the doses; this is the human label shown "
                 "alongside them.",
             },
+            "duration_days": {
+                "type": "integer",
+                "description": "How many days the course runs, when the "
+                "prescription is for a FIXED period ('take for 2 weeks', 'a "
+                "5-day course'). Counted INCLUSIVELY from today, so 14 means "
+                "today plus the next 13 days; reminders stop on their own after "
+                "the last day. OMIT for an ongoing or repeat prescription — "
+                "most maintenance medicines have no end date, and guessing one "
+                "would stop their reminders early.",
+            },
             "confirmed": {
                 "type": "boolean",
                 "description": "false = propose only (no write); true = commit "
@@ -111,6 +157,7 @@ async def add_prescription(
     instructions: str | None = None,
     times: list[str] | None = None,
     frequency: str | None = None,
+    duration_days: int | None = None,
 ) -> str:
     proposal = {
         "name": name,
@@ -119,6 +166,7 @@ async def add_prescription(
         "instructions": instructions,
         "times": times or [],
         "frequency": frequency,
+        "duration_days": duration_days,
     }
 
     if not confirmed:
@@ -144,6 +192,13 @@ async def add_prescription(
             readback += f" ({frequency})"
         if purpose:
             readback += f", for {purpose}"
+        if duration_days:
+            # Show the end date too — "for 14 days" alone is easy to mis-hear,
+            # and this is the number the person is confirming.
+            readback += (
+                f", for {duration_days} days (until "
+                f"{_course_end_date(duration_days).isoformat()})"
+            )
         warning = await _interaction_warning(ctx, name)
         # A same-name medication already on file at a different dose is really
         # a disguised dose CHANGE, not a new prescription — flag it the same
@@ -173,6 +228,14 @@ async def add_prescription(
     dosage = dosage or pending.get("dosage")
     purpose = purpose or pending.get("purpose")
     instructions = instructions or pending.get("instructions")
+    if duration_days is None:
+        duration_days = pending.get("duration_days")
+
+    # Recomputed at COMMIT, not carried from the proposal: a proposal held
+    # overnight would otherwise write an end date a day short.
+    schedule: dict = {"times": times or [], "frequency": frequency or "daily"}
+    if duration_days and int(duration_days) > 0:
+        schedule["end_date"] = _course_end_date(int(duration_days)).isoformat()
 
     row = {
         "elder_id": ctx.elder_id,
@@ -180,7 +243,7 @@ async def add_prescription(
         "dosage": dosage,
         "purpose": purpose,
         "instructions": instructions,
-        "schedule": {"times": times or [], "frequency": frequency or "daily"},
+        "schedule": schedule,
         "verified_by": ctx.elder_id,
         "verified_at": datetime.now(UTC).isoformat(),
     }
@@ -220,6 +283,11 @@ async def add_prescription(
         changed_fields={
             "name": {"before": None, "after": name},
             "dosage": {"before": None, "after": dosage},
+            **(
+                {"end_date": {"before": None, "after": schedule["end_date"]}}
+                if "end_date" in schedule
+                else {}
+            ),
             "purpose": {"before": None, "after": purpose},
             "times": {"before": None, "after": times or []},
             "frequency": {"before": None, "after": frequency},
@@ -265,37 +333,18 @@ async def _interaction_warning(ctx: ToolContext, new_name: str) -> str:
         return ""
 
 
-# Mass units this codebase can compare across (mg is the common unit); ml/iu/
-# units aren't a fixed mass so are left out — better to skip the check than
-# guess a wrong conversion. Fires at a DOUBLED dose or more: since this is a
-# non-blocking FYI (never stops a save), erring toward flagging more real
-# jumps outweighs the low cost of occasionally flagging a routine titration.
-_MG_PER_UNIT = {"mg": 1.0, "mcg": 0.001, "g": 1000.0}
-_DOSAGE_INCREASE_MULTIPLIER = 2.0
-
-
-def _as_mg(value: float, unit: str) -> float | None:
-    factor = _MG_PER_UNIT.get(unit)
-    return value * factor if factor is not None else None
-
-
 def _dosage_warning(old_dosage: str | None, new_dosage: str | None) -> str:
     """Best-effort, non-blocking caution when a new dosage is a big jump above
-    the old one — pure arithmetic on the two free-text values, no medical
-    judgment. Mirrors ``_interaction_warning``'s shape: fails open (returns
-    "") on anything unparseable or incomparable, so it only ever adds a
-    caveat, never blocks or crashes the propose flow.
+    the old one — pure arithmetic on the two free-text values (``dosage_ratio``,
+    base.py), no medical judgment. Mirrors ``_interaction_warning``'s shape:
+    fails open (returns "") on anything unparseable or incomparable, so it
+    only ever adds a caveat, never blocks or crashes the propose flow.
+    ``risk.py``'s classifier calls the SAME ratio helper with the opposite,
+    fail-CLOSED bias — see ``dosage_ratio``'s docstring for why the two need
+    to differ.
     """
-    old = parse_dosage(old_dosage)
-    new = parse_dosage(new_dosage)
-    if old is None or new is None:
-        return ""
-    old_mg = _as_mg(*old)
-    new_mg = _as_mg(*new)
-    if old_mg is None or new_mg is None or old_mg <= 0:
-        return ""
-    ratio = new_mg / old_mg
-    if ratio < _DOSAGE_INCREASE_MULTIPLIER:
+    ratio = dosage_ratio(old_dosage, new_dosage)
+    if ratio is None or ratio < DOSAGE_INCREASE_MULTIPLIER:
         return ""
     return (
         f" ⚠ That's a big increase — {old_dosage} to {new_dosage} is "

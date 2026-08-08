@@ -1,0 +1,38 @@
+{
+  "log": [
+    {
+      "task": "add_prescription_auto",
+      "shell": "elder",
+      "visited": 5,
+      "stoppedAt": "overlay unmounted after 5 step(s)"
+    },
+    {
+      "task": "travel_mode_auto",
+      "shell": "elder",
+      "visited": 6,
+      "stoppedAt": "step 8 is user-driven (waitFor: write-committed)"
+    },
+    {
+      "task": "edit_profile_auto",
+      "shell": "elder",
+      "visited": 0,
+      "stoppedAt": "ERRORED: edit_profile_auto (elder) exceeded 240000ms"
+    },
+    {
+      "task": "language_voice_tour",
+      "shell": "elder",
+      "visited": 0,
+      "stoppedAt": "ERRORED: language_voice_tour (elder) exceeded 240000ms"
+    }
+  ],
+  "findings": [
+    {
+      "task": "add_prescription_auto",
+      "shell": "elder",
+      "step": 7,
+      "stepId": "autoRx.verify",
+      "kind": "target-absent",
+      "detail": "step selector matched nothing (fallbackScrim=false, cutouts=1)"
+    }
+  ]
+}

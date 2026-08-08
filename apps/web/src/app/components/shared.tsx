@@ -1,6 +1,8 @@
 import { useEffect, useState } from "react";
-import { CheckCircle2, AlertTriangle, Circle, X, ChevronDown, Plus, Droplets, QrCode, User } from "lucide-react";
+import { CheckCircle2, AlertTriangle, Circle, X, ChevronDown, Plus, QrCode, User } from "lucide-react";
 import type { MedStatus, Patient } from "../types";
+import type { TimeFormat } from "../accessibility";
+import { formatClockAt } from "../lib/medications";
 import { MED_PHOTOS, MED_PHOTO_FALLBACKS } from "../data/medications";
 import { useLanguage } from "../lib/languageContext";
 import { t } from "../lib/language";
@@ -52,7 +54,64 @@ export function ProfileAvatar({ photo, size, className = "" }: { photo?: string;
   );
 }
 
-export function LiveStatusBar({ className = "" }: { className?: string }) {
+// --- iOS-style status bar -------------------------------------------------
+// The icons are hand-rolled inline SVG rather than lucide's Wifi/Battery/Signal.
+// Those are OUTLINE glyphs on a 24px grid; iOS uses filled shapes — a solid
+// 4-bar ladder, a filled fan, a rounded capsule with a nub — so lucide would
+// read as "some icons", not as an iPhone. Inline SVG needs no dependency, and
+// the bar already hand-rolled its signal bars for the same reason.
+//
+// Everything is currentColor so the bar keeps tracking the theme (and the
+// contrast/colour-vision variants) exactly as it always has.
+
+function CellularBars() {
+  // Four ascending bars, all full — this is mockup chrome, like the old ones.
+  return (
+    <svg width="17" height="11" viewBox="0 0 17 11" fill="currentColor" aria-hidden="true">
+      {[0, 1, 2, 3].map(i => (
+        <rect key={i} x={i * 4.5} y={8 - i * 2.4} width="3" height={3 + i * 2.4} rx="1" />
+      ))}
+    </svg>
+  );
+}
+
+function WifiFan() {
+  // Three nested arcs + a dot, drawn as filled wedges the way iOS does it
+  // rather than as stroked arcs.
+  return (
+    <svg width="15" height="11" viewBox="0 0 15 11" fill="currentColor" aria-hidden="true">
+      <path d="M7.5 9.6 5.55 7.5a2.9 2.9 0 0 1 3.9 0L7.5 9.6Z" />
+      <path d="M7.5 4.6c1.42 0 2.72.52 3.7 1.38l-1.16 1.2A4.2 4.2 0 0 0 7.5 6.05a4.2 4.2 0 0 0-2.54.85l-1.16-1.2A5.53 5.53 0 0 1 7.5 4.6Z" />
+      <path d="M7.5 1.2c2.32 0 4.44.86 6.03 2.27l-1.16 1.2A7.5 7.5 0 0 0 7.5 2.75 7.5 7.5 0 0 0 2.63 4.67L1.47 3.47A8.98 8.98 0 0 1 7.5 1.2Z" />
+    </svg>
+  );
+}
+
+function BatteryCapsule() {
+  // Rounded capsule, an inner fill inset by 1.5px, and the nub on the right.
+  // Static and full, matching how the signal bars and Wi-Fi are also mockup.
+  return (
+    <svg width="25" height="12" viewBox="0 0 25 12" fill="none" aria-hidden="true">
+      <rect x="0.6" y="0.6" width="21" height="10.8" rx="3.2" stroke="currentColor" strokeWidth="1.1" opacity="0.4" />
+      <rect x="2.1" y="2.1" width="18" height="7.8" rx="2" fill="currentColor" />
+      <path d="M23 4.2v3.6a2 2 0 0 0 0-3.6Z" fill="currentColor" opacity="0.4" />
+    </svg>
+  );
+}
+
+/**
+ * The phone mockup's status bar: a centred notch, the time on the left, and the
+ * cellular/Wi-Fi/battery cluster on the right.
+ *
+ * `timeFormat` is a PROP, not a `useAccessibility()` call. That hook throws
+ * without a provider (accessibility.tsx), and App.tsx documents a
+ * blank-white-screen incident from exactly that — three of this component's
+ * four mount sites are pre-auth screens, so a prop cannot regress them.
+ */
+export function LiveStatusBar({ className = "", timeFormat = "12h" }: {
+  className?: string;
+  timeFormat?: TimeFormat;
+}) {
   const [currentTime, setCurrentTime] = useState(new Date());
 
   useEffect(() => {
@@ -60,17 +119,47 @@ export function LiveStatusBar({ className = "" }: { className?: string }) {
     return () => window.clearInterval(intervalId);
   }, []);
 
+  // No AM/PM: iOS never shows a suffix in the status bar, whichever clock the
+  // person uses. The 24h setting is still honoured — formatClockAt already
+  // returns "15:45" there, so there is nothing to strip; only the redundant
+  // 12h suffix goes.
+  const clock = formatClockAt(currentTime, timeFormat).replace(/\s*[ap]\.?m\.?$/i, "");
+
   return (
-    <div className={`flex items-center justify-between px-6 pt-3 pb-1 shrink-0 ${className}`}>
-      <span className="text-xs font-semibold text-foreground font-mono">
-        {currentTime.toLocaleTimeString("en-SG", { hour: "numeric", minute: "2-digit" })}
+    <div className={`relative flex items-center justify-between px-6 h-10 shrink-0 ${className}`}>
+      {/* The notch. Deliberately NOT md:-gated, even though the phone bezel in
+          App.tsx is: `md` is 768px and this app is demoed in a phone-shaped
+          window (its own Playwright configs are 430 and 460px wide), so a
+          md:-gated notch would be invisible at exactly the width the mockup is
+          normally looked at. It belongs with the fake cellular/Wi-Fi/battery
+          icons beside it — all of them are mockup chrome that renders at every
+          width — not with the desktop-only bezel.
+
+          Solid bg-black with NO /NN opacity class and NO border class, both
+          deliberate: theme.css flattens /10../60 backgrounds to card white
+          under .contrast-max (an opacity-drawn notch would vanish) and forces
+          border-width:2px on anything border-classed under the contrast
+          variants. Fixed black also matches the bezel's own md:border-black —
+          hardware chrome already opts out of the theme. */}
+      <div
+        aria-hidden="true"
+        className="absolute left-1/2 top-0 w-[150px] h-[26px] rounded-b-[14px] bg-black"
+        style={{ transform: "translateX(-50%)" }}
+      />
+      {/* font-sans is EXPLICIT and load-bearing: every phone-frame wrapper in
+          App.tsx sets an inline fontFamily of "'DM Sans', system-ui, sans-serif",
+          and inline font-family inherits — so without this the time silently
+          renders in DM Sans. font-sans resolves to ui-sans-serif/system-ui,
+          which IS SF Pro on Apple hardware (SF Pro itself is not
+          redistributable, and no new font is being loaded). tabular-nums stops
+          the digits jittering as the clock ticks. */}
+      <span className="font-sans tabular-nums text-xs font-semibold text-foreground">
+        {clock}
       </span>
-      <div className="flex items-center gap-1.5">
-        <div className="flex gap-0.5 items-end h-3">
-          {[2, 3, 4, 4].map((height, i) => <div key={i} className="w-1 bg-foreground rounded-sm" style={{ height: `${height * 3}px` }} />)}
-        </div>
-        <Droplets size={11} className="text-foreground" />
-        <span className="text-xs font-semibold text-foreground font-mono">100%</span>
+      <div className="flex items-center gap-1.5 text-foreground">
+        <CellularBars />
+        <WifiFan />
+        <BatteryCapsule />
       </div>
     </div>
   );

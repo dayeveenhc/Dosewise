@@ -24,11 +24,19 @@ function fileToDataUrl(file: Blob): Promise<string> {
   });
 }
 
-function AllergyTypeAhead({ value, onChange, onSelect }: { value: string; onChange: (v: string) => void; onSelect: (v: string) => void }) {
+function AllergyTypeAhead({ value, chosen, onChange, onSelect }: { value: string; chosen: string[]; onChange: (v: string) => void; onSelect: (v: string) => void }) {
   const { language } = useLanguage();
   const suggestions = [...withCatalogLabels(COMMON_ALLERGIES, language), ...withCatalogLabels(COMMON_DRUG_ALLERGIES, language)];
   const q = value.trim().toLowerCase();
-  const matches = q ? suggestions.filter(item => item.label.toLowerCase().includes(q)).slice(0, 8) : suggestions.slice(0, 8);
+  // Match on the localized label OR the canonical English value, and dedupe
+  // case-insensitively against what's already added — same rule as the setup
+  // wizard's TagList. Filtering on the label alone meant the canonical English
+  // ("Penicillin") could not be typed once the app was in another language.
+  const added = new Set(chosen.map(c => c.trim().toLowerCase()));
+  const pool = suggestions.filter(item => !added.has(item.value.trim().toLowerCase()));
+  const matches = q
+    ? pool.filter(item => item.label.toLowerCase().includes(q) || item.value.toLowerCase().includes(q)).slice(0, 8)
+    : pool.slice(0, 8);
   return (
     <div className="relative">
       <input value={value} onChange={e => onChange(e.target.value)} placeholder={t(language, "editProfile.addAllergy")} className={"w-full bg-input-background border border-border rounded-xl px-3.5 py-2.5 text-sm text-foreground placeholder:text-muted-foreground outline-none focus:border-primary transition-colors"} />
@@ -221,7 +229,7 @@ export function EditProfileSheet({ patient, onClose, onSave }: EditProfileSheetP
                 <div className="flex flex-wrap gap-2 mb-3">
                   {allergies.map((a, i) => (
                     <span key={i} className="inline-flex items-center gap-1.5 bg-red-50 border border-red-200 text-red-800 rounded-xl px-2.5 py-1 text-xs font-semibold">
-                      <AlertTriangle size={10} className="text-red-600" /> {a}
+                      <AlertTriangle size={10} className="text-red-600" /> {localizeCatalogValue(a, k => t(language, k))}
                       <button onClick={() => setAllergies(prev => prev.filter((_, j) => j !== i))} className="text-red-400 hover:text-red-700 transition-colors ml-0.5">
                         <X size={10} />
                       </button>
@@ -232,6 +240,7 @@ export function EditProfileSheet({ patient, onClose, onSave }: EditProfileSheetP
                   <div className="flex-1">
                     <AllergyTypeAhead
                       value={newAllergy}
+                      chosen={allergies}
                       onChange={setNewAllergy}
                       onSelect={value => { setNewAllergy(value); setTimeout(() => addAllergy(), 0); }}
                     />

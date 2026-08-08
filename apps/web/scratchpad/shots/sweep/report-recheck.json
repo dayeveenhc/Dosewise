@@ -1,0 +1,80 @@
+{
+  "log": [
+    {
+      "task": "add_prescription_auto",
+      "shell": "elder",
+      "visited": 8,
+      "stoppedAt": "overlay unmounted after 8 step(s)"
+    },
+    {
+      "task": "travel_mode_auto",
+      "shell": "elder",
+      "visited": 7,
+      "stoppedAt": "step 8 is user-driven (waitFor: write-committed)"
+    },
+    {
+      "task": "zoom-xxlarge",
+      "shell": "elder",
+      "visited": 3,
+      "stoppedAt": "content zoom 1.25 via Text size \"xxlarge\"; measured zooms [1.25,1,1]"
+    },
+    {
+      "task": "zoom-small",
+      "shell": "elder",
+      "visited": 3,
+      "stoppedAt": "content zoom 0.85 via Text size \"small\"; measured zooms [0.85,1,1]"
+    },
+    {
+      "task": "zoom-caregiver-xxlarge",
+      "shell": "caregiver",
+      "visited": 3,
+      "stoppedAt": "content zoom 1.25 via Text size \"xxlarge\"; measured zooms [1,1,1.25]"
+    }
+  ],
+  "findings": [
+    {
+      "task": "add_prescription_auto",
+      "shell": "elder",
+      "step": 5,
+      "stepId": "autoRx.durationMode",
+      "kind": "cutout-off-centre-vs-control",
+      "detail": "[autoRx.durationMode] selector \"[data-walk=\"rx-duration\"]\" frames a wrapper: pad top/bottom 24.6/4.3 (Δ20.4), left/right 4.3/4.3 (Δ0.0); target {top:514.3 left:21.3 w:417.5 h:69.3} vs 2 focusable descendant(s) {top:538.9 left:25.5 w:409.0 h:40.4}"
+    },
+    {
+      "task": "add_prescription_auto",
+      "shell": "elder",
+      "step": 5,
+      "stepId": "autoRx.durationMode",
+      "kind": "cutout-oversized-vs-control",
+      "detail": "[autoRx.durationMode] selector \"[data-walk=\"rx-duration\"]\" area ratio 1.75x (> 1.6): target {top:514.3 left:21.3 w:417.5 h:69.3} vs control union {top:538.9 left:25.5 w:409.0 h:40.4}"
+    },
+    {
+      "task": "add_prescription_auto",
+      "shell": "elder",
+      "step": 9,
+      "stepId": "autoRx.verify",
+      "kind": "target-absent",
+      "detail": "step selector matched nothing (fallbackScrim=false, cutouts=1)"
+    },
+    {
+      "task": "travel_mode_auto",
+      "shell": "elder",
+      "step": 2,
+      "stepId": "autoTravel.tile",
+      "kind": "target-occluded",
+      "detail": "spotlight frames {top:552.0 left:18.0 w:424.0 h:72.3} but <div class=\"absolute inset-0 bg-black/40\"> is painted over it"
+    },
+    {
+      "task": "zoom-caregiver-xxlarge",
+      "shell": "caregiver",
+      "step": 3,
+      "stepId": "patsched.week-strip",
+      "kind": "target-occluded",
+      "detail": "spotlight frames {top:244.5 left:26.3 w:407.5 h:226.5} but <button data-walk/tour=\"patientswitcher-scan-qr\" class=\"flex items-center gap-3 w-full px-3 py-2.5 text-left hover:b\"> is painted over it"
+    }
+  ],
+  "pool": {
+    "minted": 0,
+    "reused": 3
+  }
+}

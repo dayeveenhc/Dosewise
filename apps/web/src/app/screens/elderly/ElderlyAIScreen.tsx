@@ -4,7 +4,7 @@ import { Volume2, Mic, Send, AlertTriangle, MessageCircle, Check, Trash2, Camera
 import type { Patient } from "../../types";
 import type { EMsg, ElderlyTab } from "./types";
 import { agentTurnStream, extractProfile, fileToBase64 } from "../../lib/hermes";
-import type { AgentTurnEvent, AgentAction } from "../../lib/hermes";
+import type { AgentTurnEvent, AgentAction, AgentAlert, WalkthroughRisk } from "../../lib/hermes";
 import { firstHighlightable } from "../../lib/changeHighlight";
 import { buttonsFor, lastInteractiveIndex } from "../../lib/chatChoices";
 import { anyMedicationRunningLow } from "../../lib/medications";
@@ -16,7 +16,7 @@ import { PACING } from "../../lib/walkthrough/pacing";
 import { useLanguage } from "../../lib/languageContext";
 import { useAccessibility } from "../../accessibility.tsx";
 import { t, LANGUAGE_OPTIONS, speechLangFor } from "../../lib/language";
-import { speak as speakUtterance } from "../../lib/speech";
+import { speakReply as speakUtterance, stopSpeaking } from "../../lib/speech";
 import { ConfirmDialog } from "../../components/ConfirmDialog";
 import { PhotoSourceSheet } from "../../components/PhotoSourceSheet";
 import { BottomSheet } from "../../components/BottomSheet";
@@ -100,7 +100,7 @@ function HelpRow({ icon: Icon, label, onClick, "data-walk": dataWalk }: {
 // actually take in.
 type CatId = "medicines" | "details" | "display" | "care";
 
-export function ElderlyAIScreen({ patient, elderId, onNavigate, onMedsChanged, onMedAdded, onHighlightChange, onOpenTravel, autoMessage, prefillMessage, onAutoMessageConsumed, onPrefillConsumed, onWalkthroughStart, onHeaderOverride, walkthroughResetSignal }: {
+export function ElderlyAIScreen({ patient, elderId, onNavigate, onMedsChanged, onMedAdded, onHighlightChange, onAgentAlert, onOpenTravel, autoMessage, prefillMessage, onAutoMessageConsumed, onPrefillConsumed, onWalkthroughStart, onHeaderOverride, guidedViewActive, openChatView, onOpenChatViewConsumed }: {
   patient: Patient;
   elderId?: string;
   onNavigate: (tab: ElderlyTab) => void;
@@ -110,6 +110,10 @@ export function ElderlyAIScreen({ patient, elderId, onNavigate, onMedsChanged, o
   // committed action carrying entity_type/entity_id/changed_fields, so the host
   // can mount ChangeHighlight. Replaces the name-string onMedAdded for Tier-A flows.
   onHighlightChange?: (action: AgentAction) => void;
+  // An urgent notice Mei raised this turn (raise_alert). Handed straight to the
+  // HOST rather than rendered here: the popup has to reach the person even
+  // after they leave this screen, which is the whole reason it exists.
+  onAgentAlert?: (alert: AgentAlert) => void;
   onOpenTravel: () => void;
   autoMessage?: string;
   // Seeds the input box only — never auto-sent, unlike autoMessage — so a
@@ -125,16 +129,45 @@ export function ElderlyAIScreen({ patient, elderId, onNavigate, onMedsChanged, o
   // Returns null when the walkthrough started, or a translation key explaining
   // why it could not — so the chat can SAY so instead of leaving the person
   // staring at a reply that promised a walkthrough which never appeared.
-  onWalkthroughStart?: (taskName: WalkthroughTaskName, params?: WalkthroughParams) => string | null | void;
+  // `risk` (RiskClassifier, Item 5) rides along ONLY on the real Hermes-turn
+  // path below — a tile launch (startWalk) never has one, same as it never
+  // has params from a real turn.
+  onWalkthroughStart?: (
+    taskName: WalkthroughTaskName,
+    params?: WalkthroughParams,
+    risk?: WalkthroughRisk,
+  ) => string | null | void;
   // Lets a sub-view (a category, or the chat) REPLACE the app header instead of
   // stacking a second one beneath it. Cleared on unmount.
   onHeaderOverride?: (h: { title: string; onBack: () => void; action?: React.ReactNode } | null) => void;
-  // Bumped by the host when a walkthrough starts. This screen keeps its own
-  // help-vs-chat state, and a tour's onEnter can only switch bottom-nav tabs —
-  // so a walkthrough begun FROM the chat (the normal way) left this screen in
-  // chat mode, where the category tiles its first step spotlights don't exist
-  // at all. Ignore the initial 0 so it can't steal a restored conversation.
-  walkthroughResetSignal?: number;
+  // True while a guided overlay (the autonomous walkthrough OR the passive
+  // product tour) is on screen. This screen keeps its own help-vs-chat state
+  // and a tour's onEnter can only switch bottom-nav tabs, so a tour begun FROM
+  // the chat left this screen in chat mode, where the category tiles its steps
+  // spotlight don't exist at all.
+  //
+  // A BOOLEAN, not the monotonic counter this used to be: the counter was
+  // never reset, and this screen unmounts on every bottom-nav switch, so after
+  // the first walkthrough of a session the reset effect re-fired on EVERY
+  // remount and threw the person back onto the tiles — including when Mei's
+  // own "Talk to Mei" handed off to the conversation. A live boolean answers
+  // the question the effect is actually asking, and goes false again the
+  // moment the overlay closes.
+  guidedViewActive?: boolean;
+  // "Open on the conversation, not the help tiles." Set by the host when it
+  // sends someone here to TALK (the idle popup's "Talk to Mei"), as opposed to
+  // a plain tab switch. Without it that handoff landed on the category tiles
+  // whenever the walkthrough had been launched from the tiles in the first
+  // place — there was no restored thread for the mode seed below to find, so
+  // "Talk to Mei" deterministically showed anything but Mei.
+  //
+  // A nullable value the parent CLEARS after consumption (the exact
+  // autoMessage/onAutoMessageConsumed shape above), deliberately NOT a
+  // monotonic counter: this screen unmounts on every bottom-nav switch, and a
+  // never-reset counter re-firing on each remount is precisely the bug
+  // guidedViewActive's own comment above documents.
+  openChatView?: boolean;
+  onOpenChatViewConsumed?: () => void;
 }) {
   const { language, setLanguage } = useLanguage();
   const { voiceOutput, setVoiceOutput } = useAccessibility();
@@ -154,7 +187,15 @@ export function ElderlyAIScreen({ patient, elderId, onNavigate, onMedsChanged, o
   // person back on the category tiles each time even though their conversation
   // was still sitting there intact behind the "Back to chat" pill. Clearing the
   // chat is the one thing that should return them to the buttons.
-  const [mode, setMode] = useState<"help" | "chat">(restored?.messages?.length ? "chat" : "help");
+  // (guidedViewActive overrides this on mount too — see its effect below.)
+  //
+  // openChatView wins outright: the host only sets it when it is deliberately
+  // sending someone here to talk, and unlike the restored-thread check it holds
+  // even when the conversation is empty — which is the whole point, since
+  // "Talk to Mei" is most often reached by someone who has not talked yet.
+  const [mode, setMode] = useState<"help" | "chat">(
+    openChatView ? "chat" : guidedViewActive ? "help" : restored?.messages?.length ? "chat" : "help",
+  );
   const [query, setQuery] = useState("");
   // A photo the user attached but hasn't sent yet — staged so they can type what
   // they want done with it, instead of us sending a fixed "here's my prescription".
@@ -179,20 +220,27 @@ export function ElderlyAIScreen({ patient, elderId, onNavigate, onMedsChanged, o
   // network call — guard its post-await continuation so a turn the user walked
   // away from can't navigate/highlight a screen they're no longer looking at.
   const mountedRef = useRef(true);
-  useEffect(() => () => { mountedRef.current = false; }, []);
+  // Also stop any reply mid-sentence. The neural voice plays a detached Audio
+  // element owned by lib/speech.ts, so speechSynthesis.cancel() cannot reach
+  // it — without this, walking away from the chat leaves Mei talking on a
+  // screen nobody is looking at.
+  useEffect(() => () => { mountedRef.current = false; stopSpeaking(); }, []);
 
   const uniqueMeds = [...new Set(patient.medications.map(m => m.name))];
   // Which message hosts the answer buttons this turn (see lib/chatChoices.ts).
   const interactiveIndex = lastInteractiveIndex(messages);
 
-  // A walkthrough is starting: show the help tiles it expects to spotlight. The
-  // conversation is untouched — the "Back to chat" pill returns to it.
+  // A guided overlay is on screen: show the help tiles it expects to spotlight.
+  // The conversation is untouched — the "Back to chat" pill returns to it, and
+  // once the overlay closes a remount restores it on its own (the mode seed
+  // above), which is what makes leaving a tab and coming back land where the
+  // person left off instead of on the tiles.
   useEffect(() => {
-    if (!walkthroughResetSignal) return;
+    if (!guidedViewActive) return;
     setMode("help");
     setCategory(null);
     setQuery("");
-  }, [walkthroughResetSignal]);
+  }, [guidedViewActive]);
   const canSend = !!input.trim() || !!pendingImage;
   // The refill walkthrough spotlights a per-medicine button that now only
   // exists below half supply. With nothing low it would dim the screen and
@@ -212,6 +260,31 @@ export function ElderlyAIScreen({ patient, elderId, onNavigate, onMedsChanged, o
     const reduced = typeof window !== "undefined" && window.matchMedia?.("(prefers-reduced-motion: reduce)").matches;
     el.scrollTo({ top: el.scrollHeight, behavior: instant || reduced ? "auto" : "smooth" });
   }, 60);
+
+  // Arrive at the BOTTOM of a restored thread, the way every texting app does.
+  // Every other scrollToBottom call site is an append path (send, tool_start,
+  // reply, upload), so a conversation restored from sessionStorage rendered at
+  // scrollTop 0 — the oldest message — and the person had to scroll down to
+  // find what they were just reading. Keyed on `mode` so it covers both a
+  // remount that seeds straight into "chat" (a bottom-nav round trip) and the
+  // help→chat switch, including the one openChatView now performs.
+  // ALWAYS instant: gliding down through the whole history is the symptom, not
+  // the fix.
+  useEffect(() => {
+    if (mode !== "chat" || messages.length === 0) return;
+    scrollToBottom(true);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [mode]);
+
+  // A restored photo has no intrinsic size, so the +60ms measurement above can
+  // read a scrollHeight that doesn't include it yet and land mid-thread. Nudge
+  // once the image lays out, but only while the person is still near the bottom
+  // — otherwise this yanks someone who has deliberately scrolled up to re-read.
+  const handleImageLoad = () => {
+    const el = scrollRef.current;
+    if (!el) return;
+    if (el.scrollHeight - el.scrollTop - el.clientHeight < 240) scrollToBottom(true);
+  };
 
   // Persist chat history so it survives switching bottom-nav tabs (this screen
   // unmounts/remounts each time) — sessionStorage clears on its own when the
@@ -337,7 +410,7 @@ export function ElderlyAIScreen({ patient, elderId, onNavigate, onMedsChanged, o
       }
     };
 
-    const { reply, actions, walkthrough, choices, awaiting_confirmation, rateLimited } = await agentTurnStream(trimmed, onEvent, imageBase64, pdfBase64, completedWalkthroughs, "elder");
+    const { reply, actions, walkthrough, choices, alert, awaiting_confirmation, rateLimited } = await agentTurnStream(trimmed, onEvent, imageBase64, pdfBase64, completedWalkthroughs, "elder");
     // User switched tabs mid-turn: this screen is gone. Don't touch parent state
     // or navigate/highlight a screen they're no longer on (the callbacks below
     // are parent-owned and survive this unmount).
@@ -350,7 +423,7 @@ export function ElderlyAIScreen({ patient, elderId, onNavigate, onMedsChanged, o
     // out of the way or it would cover the very thing being spotlighted.
     if (walkthrough) {
       setMode("help");
-      const refusal = onWalkthroughStart?.(walkthrough.task_name as WalkthroughTaskName, walkthrough.params);
+      const refusal = onWalkthroughStart?.(walkthrough.task_name as WalkthroughTaskName, walkthrough.params, walkthrough.risk);
       if (refusal) {
         // The host declined (wrong shell, or a precondition like "nothing is
         // running low"). Mei has already said she'll show them, so say plainly
@@ -378,6 +451,7 @@ export function ElderlyAIScreen({ patient, elderId, onNavigate, onMedsChanged, o
     // entity_type/entity_id, with a caption built from changed_fields. Falls back
     // to the legacy name-string card highlight only if the action lacks entity ids
     // (a tool not yet migrated to record_action).
+    if (alert) onAgentAlert?.(alert);
     const highlight = firstHighlightable(actions);
     if (highlight) {
       onHighlightChange?.(highlight);
@@ -448,6 +522,27 @@ export function ElderlyAIScreen({ patient, elderId, onNavigate, onMedsChanged, o
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
+
+  // Consume the "open on the conversation" request — and SET the mode, don't
+  // just assume the seed above did it.
+  //
+  // Keyed on [openChatView], NOT mount-only. The seed only runs when this
+  // screen actually mounts, and the host's "Talk to Mei" handoff is
+  // `setTab("ai")` — a no-op when the person is ALREADY on the ai tab, which is
+  // the common case: travel_mode_setup runs entirely there, request_refill's
+  // steps 2-3 do, and narrated.ts::navStep is step 1 of five tours. Nothing
+  // remounted, so nothing re-read the seed, so the flag was consumed with the
+  // person still sitting on the help tiles — and pendingChatView leaked as true
+  // into their next visit. Terminates on its own: the host clears the flag in
+  // response to the consume, and the false pass early-returns.
+  useEffect(() => {
+    if (!openChatView) return;
+    setMode("chat");
+    setCategory(null);
+    setQuery("");
+    onOpenChatViewConsumed?.();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [openChatView]);
 
   // Fetched once so agent turns can tell Mei which walkthroughs this elder has
   // already been shown (server-side proactive-offer suppression) — a stale
@@ -673,7 +768,7 @@ export function ElderlyAIScreen({ patient, elderId, onNavigate, onMedsChanged, o
               )}
               <div className={`max-w-[82%] flex flex-col gap-1 ${msg.role === "user" ? "items-end" : "items-start"}`}>
                 {msg.image && (
-                  <img src={msg.image} alt={t(language, "ai.attachment")} className="max-w-[70%] rounded-2xl border border-border object-cover" />
+                  <img src={msg.image} alt={t(language, "ai.attachment")} onLoad={handleImageLoad} className="max-w-[70%] rounded-2xl border border-border object-cover" />
                 )}
                 <div className={`rounded-2xl px-4 py-3 ${msg.role === "user" ? "bg-primary text-primary-foreground rounded-tr-sm" : "dw-surface rounded-tl-sm"}`}>
                   <p className={`text-[calc(15px*var(--dw-text,1))] leading-relaxed whitespace-pre-line ${msg.role === "user" ? "text-primary-foreground" : "text-foreground"}`}>{renderWithBold(msg.text)}</p>
@@ -686,12 +781,16 @@ export function ElderlyAIScreen({ patient, elderId, onNavigate, onMedsChanged, o
                     turn that both commits and asks a follow-up appends its
                     confirmation chip after the reply, which used to hide them. */}
                 {i === interactiveIndex && !sending && buttonsFor(msg, language).length > 0 && (
-                  <div className="flex flex-wrap gap-2 mt-1">
+                  // self-stretch, not a wrap row: inside this items-start column
+                  // the column's width IS the bubble's width, so stretching makes
+                  // each answer exactly as wide as the bubble it answers rather
+                  // than a small pill someone has to aim at.
+                  <div className="flex flex-col gap-2 mt-1 self-stretch">
                     {buttonsFor(msg, language).map((c, ci) => (
                       <button
                         key={ci}
                         onClick={() => send(c.value)}
-                        className="px-4 py-2 rounded-full bg-primary/10 border border-primary/30 text-primary text-[calc(14px*var(--dw-text,1))] font-bold active:scale-95 transition-transform"
+                        className="w-full min-h-[44px] px-4 py-2.5 rounded-2xl bg-primary/10 border border-primary/30 text-primary text-[calc(15px*var(--dw-text,1))] font-bold active:scale-[0.98] transition-transform"
                       >
                         {c.label}
                       </button>

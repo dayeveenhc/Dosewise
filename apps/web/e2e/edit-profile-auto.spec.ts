@@ -1,6 +1,6 @@
 import { expect, test } from "@playwright/test";
 import { mkdirSync } from "node:fs";
-import { anonClient, createThrowawayElder, signIn, startWalkthrough } from "./helpers";
+import { anonClient, createThrowawayElder, signIn, startWalkthroughAuto } from "./helpers";
 
 // Guided Auto-Navigation — autonomous profile edit, end to end against REAL
 // Supabase with a throwaway elder. Mei opens Settings → Your Profile, fills the
@@ -15,7 +15,7 @@ test("autonomous edit-profile: fill weight → save → verify persisted", async
   const creds = await createThrowawayElder();
 
   await signIn(page, creds);
-  await startWalkthrough(page, "edit_profile_auto");
+  await startWalkthroughAuto(page, "edit_profile_auto");
 
   // Act: the Your Profile expander opens and Mei fills the weight field herself.
   const weight = page.locator('[data-walk="elder-profile-weight"]');
@@ -54,7 +54,7 @@ test("a blocked profile write is CAUGHT by Verify — no false success", async (
   });
 
   await signIn(page, creds);
-  await startWalkthrough(page, "edit_profile_auto");
+  await startWalkthroughAuto(page, "edit_profile_auto");
 
   // It still fills and taps Save (Act/Submit), but Verify re-queries, finds the
   // old value, and STOPS with the honest error — never a false success.

@@ -6,10 +6,13 @@ import { WEEKLY_DATA } from "../data/patients";
 import { useLanguage } from "../lib/languageContext";
 import { t } from "../lib/language";
 
-interface SparkPoint { day: string; adherence: number }
+interface SparkPoint { day: string; dayKey?: string; adherence: number }
 
 function SparklineChart({ data, height = 80, fillOpacity = 0.15 }: { data: SparkPoint[]; height?: number; fillOpacity?: number }) {
+  const { language } = useLanguage();
   const uid = useId();
+  // `day` stays the English series key; only what's drawn follows the language.
+  const dayLabel = (d: SparkPoint) => (d.dayKey ? t(language, d.dayKey) : d.day);
   const W = 310;
   const H = height;
   const pad = { top: 6, bottom: 20, left: 2, right: 2 };
@@ -54,7 +57,7 @@ function SparklineChart({ data, height = 80, fillOpacity = 0.15 }: { data: Spark
             <rect
               x={xs[i] - 18} y={pad.top} width={36} height={plotH}
               fill="transparent"
-              onMouseEnter={() => setTooltip({ x: xs[i], y: ys[i], label: d.day, value: d.adherence })}
+              onMouseEnter={() => setTooltip({ x: xs[i], y: ys[i], label: dayLabel(d), value: d.adherence })}
             />
           </g>
         ))}
@@ -77,7 +80,7 @@ function SparklineChart({ data, height = 80, fillOpacity = 0.15 }: { data: Spark
             fontSize={10}
             fill="var(--muted-foreground)"
           >
-            {d.day}
+            {dayLabel(d)}
           </text>
         ))}
       </svg>
@@ -98,6 +101,12 @@ function SparklineChart({ data, height = 80, fillOpacity = 0.15 }: { data: Spark
 
 export function AIScreen({ patient }: { patient: Patient }) {
   const { language } = useLanguage();
+  // The doctor to share the summary with is this patient's own clinician, read
+  // from their contacts — it used to be the fixture's "Dr Priya Nair" hardcoded
+  // here, which named a stranger on any other account. Names are never
+  // translated; only the "your doctor" stand-in is.
+  const doctorName = patient.contacts.find(c => /^dr\b/i.test(c.name.trim()))?.name
+    ?? t(language, "summary.doctorFallback");
   return (
     <div className="px-4 py-5 space-y-5">
       {/* Header */}
@@ -145,8 +154,8 @@ export function AIScreen({ patient }: { patient: Patient }) {
             <div className="flex items-start gap-3">
               <AlertTriangle size={15} className="text-missed-fg shrink-0 mt-0.5" />
               <div>
-                <p className="text-sm font-semibold text-foreground">Celecoxib frequently missed at noon</p>
-                <p className="text-xs text-muted-foreground mt-0.5 leading-relaxed">The 12:00 PM dose of Celecoxib was missed on 3 out of 7 days this week. This is the most frequently missed medication and may be linked to lunchtime routine disruption.</p>
+                <p className="text-sm font-semibold text-foreground">{t(language, "summary.insight1Title")}</p>
+                <p className="text-xs text-muted-foreground mt-0.5 leading-relaxed">{t(language, "summary.insight1Body")}</p>
               </div>
             </div>
           </div>
@@ -154,8 +163,8 @@ export function AIScreen({ patient }: { patient: Patient }) {
             <div className="flex items-start gap-3">
               <CheckCircle2 size={15} className="text-taken shrink-0 mt-0.5" />
               <div>
-                <p className="text-sm font-semibold text-foreground">Morning routine well-established</p>
-                <p className="text-xs text-muted-foreground mt-0.5 leading-relaxed">Metformin and Amlodipine at 7:00 AM were taken consistently every day, averaging within 12 minutes of scheduled time. Excellent adherence for these doses.</p>
+                <p className="text-sm font-semibold text-foreground">{t(language, "summary.insight2Title")}</p>
+                <p className="text-xs text-muted-foreground mt-0.5 leading-relaxed">{t(language, "summary.insight2Body")}</p>
               </div>
             </div>
           </div>
@@ -163,8 +172,8 @@ export function AIScreen({ patient }: { patient: Patient }) {
             <div className="flex items-start gap-3">
               <TrendingDown size={15} className="text-warn shrink-0 mt-0.5" />
               <div>
-                <p className="text-sm font-semibold text-foreground">Slight decline vs last week</p>
-                <p className="text-xs text-muted-foreground mt-0.5 leading-relaxed">Week-on-week adherence dropped from 89% to 82%. No significant change in routine noted; may coincide with Mdm Tan's complaint of increased joint discomfort this week.</p>
+                <p className="text-sm font-semibold text-foreground">{t(language, "summary.insight3Title")}</p>
+                <p className="text-xs text-muted-foreground mt-0.5 leading-relaxed">{t(language, "summary.insight3Body", { nickname: patient.nickname })}</p>
               </div>
             </div>
           </div>
@@ -177,17 +186,17 @@ export function AIScreen({ patient }: { patient: Patient }) {
         <Card className="p-4 space-y-3">
           <div className="flex gap-3">
             <div className="w-5 h-5 rounded-full bg-primary text-primary-foreground flex items-center justify-center shrink-0 text-[calc(10px*var(--dw-text,1))] font-bold mt-0.5">1</div>
-            <p className="text-sm text-foreground leading-snug">Consider moving Celecoxib 200mg to a time linked to an existing routine (e.g. after lunch TV programme) to improve midday adherence.</p>
+            <p className="text-sm text-foreground leading-snug">{t(language, "summary.point1")}</p>
           </div>
           <div className="flex gap-3">
             <div className="w-5 h-5 rounded-full bg-primary text-primary-foreground flex items-center justify-center shrink-0 text-[calc(10px*var(--dw-text,1))] font-bold mt-0.5">2</div>
-            <p className="text-sm text-foreground leading-snug">Discuss Mdm Tan's reported joint pain and whether the missed Celecoxib doses may be contributing to increased discomfort — a feedback loop worth monitoring.</p>
+            <p className="text-sm text-foreground leading-snug">{t(language, "summary.point2", { nickname: patient.nickname })}</p>
           </div>
           <div className="flex gap-3">
             <div className="w-5 h-5 rounded-full bg-primary text-primary-foreground flex items-center justify-center shrink-0 text-[calc(10px*var(--dw-text,1))] font-bold mt-0.5">3</div>
-            <p className="text-sm text-foreground leading-snug">Metformin refill is needed within 4 days. Request a prescription at the next Polyclinic visit or via OneDoc / Health Buddy app.</p>
+            <p className="text-sm text-foreground leading-snug">{t(language, "summary.point3")}</p>
           </div>
-          <p className="text-[calc(10px*var(--dw-text,1))] text-muted-foreground pt-1 border-t border-border">{t(language, "summary.disclaimer", { doctor: "Dr Priya Nair" })}</p>
+          <p className="text-[calc(10px*var(--dw-text,1))] text-muted-foreground pt-1 border-t border-border">{t(language, "summary.disclaimer", { doctor: doctorName })}</p>
         </Card>
       </div>
     </div>

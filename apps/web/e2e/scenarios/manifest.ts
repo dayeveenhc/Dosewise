@@ -1,4 +1,4 @@
-// The single source of truth for the 32 Phase-3 scenario specs. Each row maps
+// The single source of truth for the 33 Phase-3 scenario specs. Each row maps
 // to exactly one spec file `e2e/scenarios/{id}-{slug}.spec.ts`; coverage.spec.ts
 // enforces the mapping (ids sequential, slugs kebab-case, taskNames real
 // WalkthroughTaskName literals, no orphan spec files).

@@ -1,0 +1,362 @@
+{
+  "log": [
+    {
+      "task": "add_prescription_auto",
+      "shell": "elder",
+      "visited": 6,
+      "stoppedAt": "overlay unmounted after 6 step(s)"
+    },
+    {
+      "task": "add_condition_auto",
+      "shell": "elder",
+      "visited": 6,
+      "stoppedAt": "overlay unmounted after 6 step(s)"
+    },
+    {
+      "task": "travel_mode_auto",
+      "shell": "elder",
+      "visited": 7,
+      "stoppedAt": "step 8 is user-driven (waitFor: write-committed)"
+    },
+    {
+      "task": "edit_profile_auto",
+      "shell": "elder",
+      "visited": 5,
+      "stoppedAt": "overlay unmounted after 5 step(s)"
+    },
+    {
+      "task": "add_doctor_question_auto",
+      "shell": "elder",
+      "visited": 6,
+      "stoppedAt": "overlay unmounted after 6 step(s)"
+    },
+    {
+      "task": "language_voice_tour",
+      "shell": "elder",
+      "visited": 3,
+      "stoppedAt": "walked all 3 defined step(s)"
+    },
+    {
+      "task": "notifications_tour",
+      "shell": "elder",
+      "visited": 3,
+      "stoppedAt": "walked all 3 defined step(s)"
+    },
+    {
+      "task": "emergency_contact_tour",
+      "shell": "elder",
+      "visited": 3,
+      "stoppedAt": "step 3 did not advance on a real acknowledge of [data-walk=\"elder-emergency-call\"]"
+    },
+    {
+      "task": "caregiver_view_toggle_tour",
+      "shell": "caregiver",
+      "visited": 2,
+      "stoppedAt": "step 2 is user-driven (waitFor: none)"
+    },
+    {
+      "task": "patient_schedule_tour",
+      "shell": "caregiver",
+      "visited": 3,
+      "stoppedAt": "walked all 3 defined step(s)"
+    },
+    {
+      "task": "weekly_summary_tour",
+      "shell": "caregiver",
+      "visited": 3,
+      "stoppedAt": "walked all 3 defined step(s)"
+    },
+    {
+      "task": "check_schedule",
+      "shell": "elder",
+      "visited": 3,
+      "stoppedAt": "walked all 3 defined step(s)"
+    },
+    {
+      "task": "log_dose",
+      "shell": "elder",
+      "visited": 2,
+      "stoppedAt": "step 2 did not advance on a real click of [data-walk=\"elder-take-dose\"]"
+    },
+    {
+      "task": "undo_dose",
+      "shell": "elder",
+      "visited": 2,
+      "stoppedAt": "step 2 did not advance on a real click of [data-walk=\"elder-undo-dose\"]"
+    },
+    {
+      "task": "reminder_settings",
+      "shell": "elder",
+      "visited": 2,
+      "stoppedAt": "walked all 2 defined step(s)"
+    },
+    {
+      "task": "text_size",
+      "shell": "elder",
+      "visited": 2,
+      "stoppedAt": "step 2 is user-driven (waitFor: input)"
+    },
+    {
+      "task": "travel_mode_setup",
+      "shell": "elder",
+      "visited": 1,
+      "stoppedAt": "step 1 did not advance on a real click of [data-walk=\"elder-cat-medicines\"]"
+    },
+    {
+      "task": "request_refill",
+      "shell": "elder",
+      "visited": 1,
+      "stoppedAt": "step 1 did not advance on a real click of [data-walk=\"med-request-refill-btn\"]"
+    },
+    {
+      "task": "accept_caregiver_link",
+      "shell": "elder",
+      "visited": 1,
+      "stoppedAt": "step 1 would not advance on Next (two taps)"
+    },
+    {
+      "task": "link_caregiver-elder",
+      "shell": "elder",
+      "visited": 5,
+      "stoppedAt": "step 5 is user-driven (waitFor: write-committed)"
+    },
+    {
+      "task": "link_caregiver-caregiver",
+      "shell": "caregiver",
+      "visited": 3,
+      "stoppedAt": "step 3 is user-driven (waitFor: automatic-detection)"
+    },
+    {
+      "task": "zoom-xxlarge",
+      "shell": "elder",
+      "visited": 3,
+      "stoppedAt": "content zoom 1.25 via Text size \"xxlarge\"; measured zooms [1.25,1,1]"
+    },
+    {
+      "task": "zoom-small",
+      "shell": "elder",
+      "visited": 3,
+      "stoppedAt": "content zoom 0.85 via Text size \"small\"; measured zooms [0.85,1,1]"
+    },
+    {
+      "task": "zoom-caregiver-xxlarge",
+      "shell": "caregiver",
+      "visited": 3,
+      "stoppedAt": "content zoom 1.25 via Text size \"xxlarge\"; measured zooms [1,1,1.25]"
+    }
+  ],
+  "findings": [
+    {
+      "task": "add_prescription_auto",
+      "shell": "elder",
+      "step": 7,
+      "stepId": "autoRx.verify",
+      "kind": "target-absent",
+      "detail": "step selector matched nothing (fallbackScrim=false, cutouts=1)"
+    },
+    {
+      "task": "add_condition_auto",
+      "shell": "elder",
+      "step": 2,
+      "stepId": "autoCond.edit",
+      "kind": "target-absent",
+      "detail": "step selector matched nothing (fallbackScrim=false, cutouts=1)"
+    },
+    {
+      "task": "add_condition_auto",
+      "shell": "elder",
+      "step": 7,
+      "stepId": "autoCond.verify",
+      "kind": "cutout-off-centre-vs-control",
+      "detail": "[autoCond.verify] selector \"[data-walk=\"elder-conditions\"]\" frames a wrapper: pad top/bottom 41.8/0.0 (Δ41.8), left/right -1.0/0.0 (Δ1.0); target {top:400.7 left:35.0 w:390.0 h:133.6} vs 5 focusable descendant(s) {top:442.5 left:34.0 w:391.0 h:91.9}"
+    },
+    {
+      "task": "add_doctor_question_auto",
+      "shell": "elder",
+      "step": 7,
+      "stepId": "autoDoctorQ.verify",
+      "kind": "callout-could-not-clear",
+      "detail": "overlay reports data-walk-callout-cleared=\"0\" — no placement clears this target (callout h=178.5, target h=688.0, container h=940.0, usable band 746.0)"
+    },
+    {
+      "task": "add_doctor_question_auto",
+      "shell": "elder",
+      "step": 7,
+      "stepId": "autoDoctorQ.verify",
+      "kind": "cutout-off-centre-vs-control",
+      "detail": "[autoDoctorQ.verify] selector \"[data-walk=\"elder-doctor-questions\"]\" frames a wrapper: pad top/bottom 171.0/0.0 (Δ171.0), left/right 0.0/0.0 (Δ0.0); target {top:100.4 left:17.0 w:426.0 h:688.0} vs 7 focusable descendant(s) {top:271.3 left:17.0 w:426.0 h:517.1}"
+    },
+    {
+      "task": "add_doctor_question_auto",
+      "shell": "elder",
+      "step": 7,
+      "stepId": "autoDoctorQ.verify",
+      "kind": "callout-overlaps-target",
+      "detail": "callout {top:651.0 left:17.0 w:426.0 h:178.5} overlaps spotlighted target {top:100.4 left:17.0 w:426.0 h:688.0}"
+    },
+    {
+      "task": "language_voice_tour",
+      "shell": "elder",
+      "step": 2,
+      "stepId": "langvoice.section",
+      "kind": "cutout-off-centre-vs-control",
+      "detail": "[langvoice.section] selector \"[data-tour=\"elder-language\"]\" frames a wrapper: pad top/bottom 97.9/18.0 (Δ79.9), left/right 18.0/18.0 (Δ0.0); target {top:99.6 left:17.0 w:426.0 h:410.9} vs 3 focusable descendant(s) {top:197.5 left:35.0 w:390.0 h:295.0}"
+    },
+    {
+      "task": "notifications_tour",
+      "shell": "elder",
+      "step": 2,
+      "stepId": "notif.refill-row",
+      "kind": "cutout-off-centre-vs-control",
+      "detail": "[notif.refill-row] selector \"[data-walk=\"notif-refill-row\"]\" frames a wrapper: pad top/bottom 130.6/18.0 (Δ112.6), left/right 18.0/18.0 (Δ0.0); target {top:103.0 left:17.0 w:426.0 h:197.4} vs 2 focusable descendant(s) {top:233.6 left:35.0 w:390.0 h:48.8}"
+    },
+    {
+      "task": "notifications_tour",
+      "shell": "elder",
+      "step": 2,
+      "stepId": "notif.refill-row",
+      "kind": "cutout-oversized-vs-control",
+      "detail": "[notif.refill-row] selector \"[data-walk=\"notif-refill-row\"]\" area ratio 4.42x (> 1.6): target {top:103.0 left:17.0 w:426.0 h:197.4} vs control union {top:233.6 left:35.0 w:390.0 h:48.8}"
+    },
+    {
+      "task": "emergency_contact_tour",
+      "shell": "elder",
+      "step": 3,
+      "stepId": "emergency.call-button",
+      "kind": "target-absent",
+      "detail": "step selector matched nothing (fallbackScrim=true, cutouts=0)"
+    },
+    {
+      "task": "caregiver_view_toggle_tour",
+      "shell": "caregiver",
+      "step": 2,
+      "stepId": "viewtoggle.switch-button",
+      "kind": "callout-missing",
+      "detail": "no callout rendered (overlayPresent=false, scrim=false)"
+    },
+    {
+      "task": "patient_schedule_tour",
+      "shell": "caregiver",
+      "step": 3,
+      "stepId": "patsched.week-strip",
+      "kind": "target-occluded",
+      "detail": "spotlight frames {top:184.7 left:17.0 w:426.0 h:137.9} but <button class=\"flex items-center gap-3 w-full px-3 py-2.5 text-left transit\"> is painted over it"
+    },
+    {
+      "task": "weekly_summary_tour",
+      "shell": "caregiver",
+      "step": 2,
+      "stepId": "weekly.open-quickhelp",
+      "kind": "target-absent",
+      "detail": "step selector matched nothing (fallbackScrim=false, cutouts=1)"
+    },
+    {
+      "task": "check_schedule",
+      "shell": "elder",
+      "step": 2,
+      "stepId": "schedule.readTimeline",
+      "kind": "callout-could-not-clear",
+      "detail": "overlay reports data-walk-callout-cleared=\"0\" — no placement clears this target (callout h=220.2, target h=657.4, container h=940.0, usable band 746.0)"
+    },
+    {
+      "task": "check_schedule",
+      "shell": "elder",
+      "step": 2,
+      "stepId": "schedule.readTimeline",
+      "kind": "callout-overlaps-target",
+      "detail": "callout {top:610.0 left:17.0 w:426.0 h:220.2} overlaps spotlighted target {top:100.1 left:0.0 w:460.0 h:657.4}"
+    },
+    {
+      "task": "check_schedule",
+      "shell": "elder",
+      "step": 3,
+      "stepId": "schedule.now",
+      "kind": "cutout-off-centre-vs-control",
+      "detail": "[schedule.now] selector \"[data-walk=\"elder-day-nav\"]\" frames a wrapper: pad top/bottom 12.8/45.9 (Δ33.1), left/right 17.0/17.0 (Δ0.0); target {top:90.2 left:0.0 w:460.0 h:96.9} vs 2 focusable descendant(s) {top:103.0 left:17.0 w:426.0 h:38.3}"
+    },
+    {
+      "task": "check_schedule",
+      "shell": "elder",
+      "step": 3,
+      "stepId": "schedule.now",
+      "kind": "cutout-oversized-vs-control",
+      "detail": "[schedule.now] selector \"[data-walk=\"elder-day-nav\"]\" area ratio 2.74x (> 1.6): target {top:90.2 left:0.0 w:460.0 h:96.9} vs control union {top:103.0 left:17.0 w:426.0 h:38.3}"
+    },
+    {
+      "task": "log_dose",
+      "shell": "elder",
+      "step": 2,
+      "stepId": "logDose.tapTook",
+      "kind": "target-absent",
+      "detail": "step selector matched nothing (fallbackScrim=true, cutouts=0)"
+    },
+    {
+      "task": "undo_dose",
+      "shell": "elder",
+      "step": 2,
+      "stepId": "undoDose.tapUndo",
+      "kind": "target-absent",
+      "detail": "step selector matched nothing (fallbackScrim=true, cutouts=0)"
+    },
+    {
+      "task": "text_size",
+      "shell": "elder",
+      "step": 2,
+      "stepId": "textSize.slider",
+      "kind": "cutout-off-centre-vs-control",
+      "detail": "[textSize.slider] selector \"[data-tour=\"elder-fontsize\"]\" frames a wrapper: pad top/bottom 63.6/26.4 (Δ37.3), left/right 40.8/49.8 (Δ9.0); target {top:416.3 left:18.0 w:424.0 h:102.7} vs 1 focusable descendant(s) {top:479.9 left:58.8 w:333.5 h:12.8}"
+    },
+    {
+      "task": "text_size",
+      "shell": "elder",
+      "step": 2,
+      "stepId": "textSize.slider",
+      "kind": "cutout-oversized-vs-control",
+      "detail": "[textSize.slider] selector \"[data-tour=\"elder-fontsize\"]\" area ratio 10.24x (> 1.6): target {top:416.3 left:18.0 w:424.0 h:102.7} vs control union {top:479.9 left:58.8 w:333.5 h:12.8}"
+    },
+    {
+      "task": "travel_mode_setup",
+      "shell": "elder",
+      "step": 1,
+      "stepId": "travel.open-quickhelp",
+      "kind": "target-absent",
+      "detail": "step selector matched nothing (fallbackScrim=true, cutouts=0)"
+    },
+    {
+      "task": "request_refill",
+      "shell": "elder",
+      "step": 1,
+      "stepId": "refill.tap-request",
+      "kind": "target-absent",
+      "detail": "step selector matched nothing (fallbackScrim=false, cutouts=1)"
+    },
+    {
+      "task": "link_caregiver-elder",
+      "shell": "elder",
+      "step": 5,
+      "stepId": "link.elder.accept",
+      "kind": "target-absent",
+      "detail": "step selector matched nothing (fallbackScrim=true, cutouts=0)"
+    },
+    {
+      "task": "link_caregiver-caregiver",
+      "shell": "caregiver",
+      "step": 3,
+      "stepId": "link.cg.scan-camera",
+      "kind": "target-absent",
+      "detail": "step selector matched nothing (fallbackScrim=false, cutouts=1)"
+    },
+    {
+      "task": "zoom-caregiver-xxlarge",
+      "shell": "caregiver",
+      "step": 3,
+      "stepId": "patsched.week-strip",
+      "kind": "target-occluded",
+      "detail": "spotlight frames {top:234.0 left:26.3 w:407.5 h:226.5} but <button data-walk/tour=\"patientswitcher-scan-qr\" class=\"flex items-center gap-3 w-full px-3 py-2.5 text-left hover:b\"> is painted over it"
+    }
+  ],
+  "pool": {
+    "minted": 0,
+    "reused": 3
+  }
+}

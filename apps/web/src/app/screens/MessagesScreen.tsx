@@ -20,11 +20,25 @@ export function MessagesScreen({ elderId }: { elderId?: string }) {
     void fetchCareNotes(elderId).then(setCareNotes);
   }, [elderId]);
 
+  // Seeded thread messages carry a key prefix so their role/body follow the
+  // language setting; anything typed here (below) has none and renders as
+  // written. Person NAMES are never translated — same rule the elder-side
+  // Reminders screen uses.
+  const localized = (m: typeof messages[number], field: "role" | "body") =>
+    m.i18nKey ? t(language, `${m.i18nKey}.${field}`) : m[field];
+
   const send = () => {
     if (!draft.trim()) return;
     setMessages(prev => [
       ...prev,
-      { id: prev.length + 1, author: "You", role: "Son", body: draft.trim(), time: "Now", isMe: true },
+      {
+        id: prev.length + 1,
+        author: t(language, "common.you"),
+        role: t(language, "messages.myRole"),
+        body: draft.trim(),
+        time: t(language, "home.now"),
+        isMe: true,
+      },
     ]);
     setDraft("");
   };
@@ -41,7 +55,7 @@ export function MessagesScreen({ elderId }: { elderId?: string }) {
           {["WM", "SF", "SN"].map((init, i) => (
             <div key={i} className="w-6 h-6 rounded-full bg-secondary border-2 border-background flex items-center justify-center text-[calc(9px*var(--dw-text,1))] font-bold text-primary">{init}</div>
           ))}
-          <span className="text-[calc(11px*var(--dw-text,1))] text-muted-foreground">You, Shu Fen, Siti Nuraini</span>
+          <span className="text-[calc(11px*var(--dw-text,1))] text-muted-foreground">{t(language, "common.you")}, Shu Fen, Siti Nuraini</span>
         </div>
       </div>
 
@@ -67,11 +81,11 @@ export function MessagesScreen({ elderId }: { elderId?: string }) {
                   <div className="w-5 h-5 rounded-full bg-secondary flex items-center justify-center text-[calc(9px*var(--dw-text,1))] font-bold text-primary">
                     {m.author.split(" ").map(w => w[0]).join("").slice(0, 2)}
                   </div>
-                  <span className="text-[calc(10px*var(--dw-text,1))] text-muted-foreground font-medium">{m.author} · {m.role}</span>
+                  <span className="text-[calc(10px*var(--dw-text,1))] text-muted-foreground font-medium">{m.author} · {localized(m, "role")}</span>
                 </div>
               )}
               <div className={`rounded-2xl px-3.5 py-2.5 ${m.isMe ? "bg-primary text-primary-foreground rounded-tr-sm" : "bg-card border border-border rounded-tl-sm"}`}>
-                <p className={`text-sm leading-relaxed ${m.isMe ? "text-primary-foreground" : "text-foreground"}`}>{m.body}</p>
+                <p className={`text-sm leading-relaxed ${m.isMe ? "text-primary-foreground" : "text-foreground"}`}>{localized(m, "body")}</p>
               </div>
               <p className={`text-[calc(10px*var(--dw-text,1))] font-mono text-muted-foreground mt-1 ${m.isMe ? "text-right mr-1" : "ml-1"}`}>{m.time}</p>
             </div>

@@ -49,6 +49,18 @@ apps/web/test-results/
 apps/web/playwright-report/
 apps/web/scratchpad/pw-artifacts/
 services/hermes/test-results/
+# Reusable throwaway Supabase accounts for the geometry sweep
+# (e2e/helpers.ts::acquirePooledElder). Holds real, if disposable, credentials —
+# and it exists precisely because signup throttling makes fresh ones unreliable,
+# so it is machine-local state, not something to share.
+apps/web/scratchpad/.dw-elder-pool.json
+# Debug screenshots from the scratchpad visual specs (19MB / 200+ PNGs from
+# geometry sweeps, filmstrips and one-off diagnostics). The SPECS are committed
+# and regenerate these on demand, so carrying the images in git buys nothing and
+# grows the repo forever. The sweep's report JSONs are small text and ARE kept —
+# MEMORY.md cites them as the baseline a future run diffs against.
+apps/web/scratchpad/shots/**/*.png
+apps/web/scratchpad/shots/*.png
 
 # --- Supabase (local) ---
 supabase/.branches/

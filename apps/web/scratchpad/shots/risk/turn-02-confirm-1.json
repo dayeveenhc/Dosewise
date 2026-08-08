@@ -1,0 +1,9 @@
+{
+  "http": 200,
+  "reply": "It seems I missed a step, let's try that again.\n\n💊 Lisinopril 10mg → 20mg — 🕗 once daily in the morning.\n\nPlease confirm this change for your Lisinopril dose. Is this correct?",
+  "tools_used": [
+    "update_medication_dosage"
+  ],
+  "actions": [],
+  "walkthrough": null
+}

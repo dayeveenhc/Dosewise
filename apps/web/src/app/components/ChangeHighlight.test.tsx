@@ -1,9 +1,20 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { act, cleanup, render, waitFor } from "@testing-library/react";
+import type { ReactElement, ReactNode } from "react";
 import type { AgentAction } from "../lib/hermes";
 import { PACING } from "../lib/walkthrough/pacing";
 import { readPhaseLog, resetPhaseLog } from "../lib/walkthrough/phaseLog";
 import { ChangeHighlight } from "./ChangeHighlight";
+import { LanguageProvider } from "../lib/languageContext";
+import { AccessibilityProvider } from "../accessibility.tsx";
+
+// ChangeHighlight builds its caption FOR THE READER (language + 12h/24h clock),
+// so it needs the two providers the app always mounts above it. Both default to
+// English/12h with an empty localStorage, which is what these assertions expect.
+const Providers = ({ children }: { children: ReactNode }) => (
+  <LanguageProvider><AccessibilityProvider>{children}</AccessibilityProvider></LanguageProvider>
+);
+const renderWithProviders = (ui: ReactElement) => render(ui, { wrapper: Providers });
 
 // jsdom implements none of these (layout APIs); they're irrelevant to what
 // these tests assert (class application / cleanup / caption text), so stub them.
@@ -62,7 +73,7 @@ describe("ChangeHighlight — bulk actions ring every element simultaneously", (
     const onNavigate = vi.fn();
     const onDone = vi.fn();
 
-    render(
+    renderWithProviders(
       <ChangeHighlight
         change={bulkChange(["uuid-a", "uuid-b", "uuid-c"])}
         mode="elderly"
@@ -90,7 +101,7 @@ describe("ChangeHighlight — bulk actions ring every element simultaneously", (
 
   it("a superseding null change removes the ring from EVERY element", () => {
     const cards = ["uuid-a", "uuid-b", "uuid-c"].map(addCard);
-    const { rerender } = render(
+    const { rerender } = renderWithProviders(
       <ChangeHighlight
         change={bulkChange(["uuid-a", "uuid-b", "uuid-c"])}
         mode="elderly"
@@ -108,7 +119,7 @@ describe("ChangeHighlight — bulk actions ring every element simultaneously", (
 
   it("unmount removes the ring from EVERY element", () => {
     const cards = ["uuid-a", "uuid-b"].map(addCard);
-    const { unmount } = render(
+    const { unmount } = renderWithProviders(
       <ChangeHighlight
         change={bulkChange(["uuid-a", "uuid-b"])}
         mode="elderly"
@@ -128,7 +139,7 @@ describe("ChangeHighlight — bulk actions ring every element simultaneously", (
     const cards = ["uuid-a", "uuid-b"].map(addCard);
     const onDone = vi.fn();
 
-    render(
+    renderWithProviders(
       <ChangeHighlight
         change={bulkChange(["uuid-a", "uuid-b", "uuid-missing"])}
         mode="elderly"
@@ -161,7 +172,7 @@ describe("ChangeHighlight — bulk actions ring every element simultaneously", (
     const errSpy = vi.spyOn(console, "error").mockImplementation(() => {});
     const onDone = vi.fn();
 
-    render(
+    renderWithProviders(
       <ChangeHighlight
         change={bulkChange(["uuid-none"])}
         mode="elderly"
@@ -187,7 +198,7 @@ describe("ChangeHighlight — bulk actions ring every element simultaneously", (
       changed_fields: { times: { before: ["18:00"], after: ["20:00"] } },
     };
 
-    render(
+    renderWithProviders(
       <ChangeHighlight change={single} mode="elderly" onNavigate={vi.fn()} onDone={vi.fn()} />,
     );
 
@@ -205,7 +216,7 @@ describe("ChangeHighlight — bulk actions ring every element simultaneously", (
     addCard("uuid-log");
     const onDone = vi.fn();
 
-    render(
+    renderWithProviders(
       <ChangeHighlight change={bulkChange(["uuid-log"])} mode="elderly" onNavigate={vi.fn()} onDone={onDone} />,
     );
     act(() => { vi.advanceTimersByTime(PACING.HIGHLIGHT_DWELL_MIN_MS + 500); });

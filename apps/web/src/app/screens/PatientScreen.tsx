@@ -91,7 +91,7 @@ export function PatientScreen({ patient, justAddedMed, onEditProfile, onAddPresc
           {patient.conditions.length > 0 ? patient.conditions.map((c, i) => (
             <div key={i} className="flex items-center gap-3 px-4 py-3">
               <Activity size={15} className="text-primary shrink-0" />
-              <span className="text-sm text-foreground font-medium">{c}</span>
+              <span className="text-sm text-foreground font-medium">{localizeCatalogValue(c, k => t(language, k))}</span>
             </div>
           )) : (
             <div className="px-4 py-4 text-sm text-muted-foreground">{t(language, "common.noConditionsRecorded")} <button onClick={onEditProfile} className="text-primary underline">{t(language, "common.addOne")}</button></div>
@@ -106,7 +106,7 @@ export function PatientScreen({ patient, justAddedMed, onEditProfile, onAddPresc
           <div className="flex flex-wrap gap-2">
             {patient.allergies.map((a, i) => (
               <span key={i} data-testid={`allergy-${slugify(a)}`} className="inline-flex items-center gap-1.5 bg-missed-bg text-missed-fg border border-missed-border rounded-xl px-3 py-1.5 text-sm font-semibold">
-                <AlertTriangle size={13} className="text-missed-fg" /> {a}
+                <AlertTriangle size={13} className="text-missed-fg" /> {localizeCatalogValue(a, k => t(language, k))}
               </span>
             ))}
           </div>
@@ -175,7 +175,7 @@ export function PatientScreen({ patient, justAddedMed, onEditProfile, onAddPresc
                 </div>
                 <div className="flex-1 min-w-0">
                   <p className="text-sm font-semibold text-muted-foreground">{m.name} <span className="text-xs font-normal">{m.dose}</span></p>
-                  <p className="text-[calc(11px*var(--dw-text,1))] text-muted-foreground/80">{m.purpose}</p>
+                  <p className="text-[calc(11px*var(--dw-text,1))] text-muted-foreground/80">{localizeCatalogValue(m.purpose, k => t(language, k))}</p>
                 </div>
               </div>
             ))}

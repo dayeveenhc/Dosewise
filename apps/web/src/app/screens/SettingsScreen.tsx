@@ -30,7 +30,10 @@ export function SettingsScreen({ patient, caregiverAccount, onSwitchMode, onSign
   onEditAccount: () => void;
 }) {
   const { language, setLanguage } = useLanguage();
-  const { fontSize, setFontSize, contrast, setContrast, voiceOutput, setVoiceOutput } = useAccessibility();
+  const {
+    fontSize, setFontSize, contrast, setContrast, voiceOutput, setVoiceOutput,
+    walkthroughManualMode, setWalkthroughManualMode,
+  } = useAccessibility();
   const contrastOptions: { id: ContrastMode; label: string }[] = [
     { id: "normal", label: t(language, "settings.contrastNormal") },
     { id: "high", label: t(language, "settings.contrastHigh") },
@@ -168,6 +171,13 @@ export function SettingsScreen({ patient, caregiverAccount, onSwitchMode, onSign
               <p className="text-xs text-muted-foreground">{t(language, "settings.readAloudDesc")}</p>
             </div>
             <Switch checked={voiceOutput} onCheckedChange={setVoiceOutput} />
+          </div>
+          <div className="px-4 py-4 flex items-center justify-between gap-3">
+            <div className="flex-1">
+              <p className="text-sm font-medium text-foreground">{t(language, "settings.walkthroughManual")}</p>
+              <p className="text-xs text-muted-foreground">{t(language, "settings.walkthroughManualDesc")}</p>
+            </div>
+            <Switch checked={walkthroughManualMode} onCheckedChange={setWalkthroughManualMode} />
           </div>
         </Card>
       </div>

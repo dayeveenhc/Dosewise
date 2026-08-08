@@ -62,6 +62,32 @@ class Settings(BaseSettings):
     # --- OpenFDA (optional; works keyless at a lower rate limit) ---
     openfda_api_key: str = ""
 
+    # --- Web-app spoken replies (OpenAI TTS; optional) ---
+    # The web client speaks Mei's replies with the browser's own speechSynthesis
+    # by default. That API has no prosody control at all — no SSML, no
+    # instruction channel — so the best it can sound is "clear", never warm.
+    # When these are set, /voice/tts serves a real neural voice instead and the
+    # client falls back to the browser only if this route is unavailable.
+    # Reuses openai_api_key above; empty there disables the route (503), which
+    # is exactly what the fallback is for. Deliberately NOT the HuggingFace
+    # MMS-TTS used for Telegram: mms-tts-eng is more robotic than a decent
+    # browser voice, so it would be a downgrade here.
+    openai_tts_model: str = "gpt-4o-mini-tts"
+    # A warm, mid-range female voice — Mei's persona (soul.md).
+    openai_tts_voice: str = "shimmer"
+    # The lever the browser never had: free-text delivery direction, applied
+    # per request. Kept here rather than in code so it can be retuned from .env
+    # without a deploy.
+    openai_tts_instructions: str = (
+        "You are Mei, a warm and caring medication companion for an older adult. "
+        "Speak gently and unhurriedly, with real warmth and expression — like a "
+        "kind daughter or nurse who is genuinely glad to help, not a system "
+        "reading a notice. Let your pitch rise and fall naturally, pause at "
+        "commas and full stops, and land reassuring words softly. Never sound "
+        "rushed, clipped, or robotic. Say medication names and numbers clearly "
+        "and a little more slowly than the rest of the sentence."
+    )
+
     # --- HuggingFace (voice: STT + TTS + language ID on Telegram) ---
     huggingface_api_key: str = ""
     # High-resource multilingual STT (zh/ta/ms/en/yue...), via the HF Inference API.
@@ -85,6 +111,24 @@ class Settings(BaseSettings):
     mongodb_slang_collection: str = "dialect_slang"
     # Cap the number of slang terms injected into the prompt.
     slang_cap: int = 40
+
+    # --- Answer buttons for conversational questions (agent/answers.py) ---
+    # When the model asks a yes/no with no tool behind it, the web client has
+    # nothing to paint and the person must type. Asking the model to call
+    # offer_choices alongside its reply does not fix that — measured 0/6 on real
+    # turns with the prompt and tool-description rails already strengthened;
+    # a model that has committed to a text answer skips a side-effect-only tool.
+    #
+    # So a finished reply that ENDS IN A QUESTION MARK gets one extra completion
+    # with a FORCED suggest_answers call (extract.py's trick). The model both
+    # judges whether the question has pickable answers and writes them in the
+    # person's own language — which is exactly what the earlier heuristic could
+    # not do, since Hermes holds no translation table.
+    #
+    # Costs one short completion per question-ending turn. Turn OFF to trade
+    # answer buttons back for that latency; everything still works, people just
+    # type. Fails open on any error.
+    answer_buttons: bool = True
 
     # --- Telegram (test channel) ---
     telegram_bot_token: str = ""

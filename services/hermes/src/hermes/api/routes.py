@@ -7,12 +7,14 @@ import base64
 import json
 import logging
 
-from fastapi import APIRouter, Depends, Header, HTTPException, Request
+from fastapi import APIRouter, Depends, Header, HTTPException, Request, Response
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 
 from ..agent.extract import extract_profile_fields
 from ..agent.loop import run_agent_turn
+from ..agent.tts import AUDIO_MEDIA_TYPE, synthesize_reply
+from ..agent.tts import available as tts_available
 from ..channels.pdf import extract_pdf_text
 from ..channels.session import SessionState
 from ..channels.telegram import handle_update
@@ -64,8 +66,20 @@ class AgentTurnResponse(BaseModel):
     # client can confirm and navigate to the page that shows the change. Empty on
     # a propose turn (nothing saved yet).
     actions: list[dict] = []
-    # Set when start_walkthrough was called this turn — {"task_name": str} — so the
-    # client can mount the spotlight overlay. None on every other turn.
+    # Set when start_walkthrough was called this turn — {"task_name": str,
+    # "params": dict[str, str], "risk"?: {"flagged": bool, "signals": [str],
+    # "reasons": [str]}} — so the client can mount the spotlight overlay.
+    # "signals" is a stable per-axis code (e.g. "dosage_jump"), same
+    # order/length as "reasons"' human-readable prose — match on "signals" to
+    # key any client behaviour off a SPECIFIC risk axis, never on "reasons"
+    # text (tools/risk.py's module docstring explains why). "risk"
+    # (tools/risk.py::assess_risk) is present ONLY for the *_auto family this
+    # dispatch actually risk-assesses (tools/walkthrough.py::
+    # RISK_ASSESSED_TASKS); every other task_name carries no "risk" key at
+    # all. None on every other turn. (Untyped `dict` on purpose — this is a
+    # straight passthrough of ctx.walkthrough, so a new key added there reaches
+    # the client with no change needed here; this comment is what must stay
+    # in sync instead.)
     walkthrough: dict | None = None
     # Set when offer_choices was called this turn — [{"label", "value"}] — so the
     # client can render tappable answer buttons under the reply. None otherwise.
@@ -77,14 +91,25 @@ class AgentTurnResponse(BaseModel):
     # synthesizes its own localized Yes/No buttons from this when `choices` is
     # empty, so a confirm is never a "type the word yes" dead end.
     awaiting_confirmation: bool = False
+    # Set when raise_alert fired this turn — {"severity", "title", "body",
+    # "medication_name"}. The web client shows it as a full-screen popup that
+    # still reaches the person after they leave the chat, which is the point:
+    # this is for something they must act on today. Not a write, like
+    # `walkthrough`/`choices`. Telegram ignores it (the tool's return text is
+    # what the model says there).
+    alert: dict | None = None
 
 
 def _authenticate_and_check_rate_limit(
-    body: AgentTurnRequest, request: Request
+    body: AgentTurnRequest, request: Request, *, bucket: str = "turn"
 ) -> tuple[str, object]:
     """Resolve elder_id from the JWT (or dev fallback) and enforce the per-user
     turn rate limit. Raises HTTPException on failure. Shared by /agent/turn and
-    /agent/turn/stream so the two auth paths can't silently diverge."""
+    /agent/turn/stream so the two auth paths can't silently diverge — and by
+    /voice/tts, which only needs the auth half plus its OWN ``bucket`` (reading
+    a reply aloud must not eat the allowance for asking the next question).
+    Only ``body.jwt``/``body.elder_id`` are read, so any request model carrying
+    those two fields fits."""
     app = request.app.state
     settings = get_settings()
 
@@ -105,7 +130,7 @@ def _authenticate_and_check_rate_limit(
     # by the HTTP middleware in main.py).
     limiter = getattr(app, "rate_limiter", None)
     if settings.rate_limit_enabled and limiter is not None:
-        allowed, retry_after = limiter.check(f"turn:{elder_id}", turn_tiers(settings))
+        allowed, retry_after = limiter.check(f"{bucket}:{elder_id}", turn_tiers(settings))
         if not allowed:
             raise HTTPException(
                 status_code=429,
@@ -227,6 +252,7 @@ async def agent_turn(body: AgentTurnRequest, request: Request) -> AgentTurnRespo
         actions=ctx.committed_actions,
         walkthrough=ctx.walkthrough,
         choices=ctx.choices,
+        alert=ctx.alert,
         awaiting_confirmation=bool(getattr(state, "awaiting_confirmation", False)),
     )
 
@@ -278,6 +304,7 @@ async def agent_turn_stream(body: AgentTurnRequest, request: Request) -> Streami
                     "actions": ctx.committed_actions,
                     "walkthrough": ctx.walkthrough,
                     "choices": ctx.choices,
+                    "alert": ctx.alert,
                     "awaiting_confirmation": bool(
                         getattr(state, "awaiting_confirmation", False)
                     ),
@@ -297,6 +324,7 @@ async def agent_turn_stream(body: AgentTurnRequest, request: Request) -> Streami
                     "actions": [],
                     "walkthrough": None,
                     "choices": None,
+                    "alert": None,
                     "awaiting_confirmation": False,
                 }
             )
@@ -392,6 +420,43 @@ async def profile_extract(body: ProfileExtractRequest, request: Request) -> Prof
         return ProfileExtractResponse(fields={}, note="Sorry, I couldn't read that just now.")
 
     return ProfileExtractResponse(fields=fields)
+
+
+class VoiceTtsRequest(BaseModel):
+    # The reply to speak. Same auth fields as /agent/turn (this reads nothing
+    # per-user, but it spends money, so it stays behind a real identity for the
+    # rate limiter to key on).
+    text: str
+    jwt: str | None = None
+    elder_id: str | None = None
+
+
+@router.post("/voice/tts", dependencies=[Depends(require_api_key)])
+async def voice_tts(body: VoiceTtsRequest, request: Request) -> Response:
+    """Speak a reply in Mei's voice, as mp3.
+
+    503 — not a silent empty body — when no voice is configured: the web client
+    treats any non-200 as "fall back to the browser's own speechSynthesis", so
+    an honest failure code is what keeps spoken replies working everywhere
+    rather than going quiet on a misconfigured deploy.
+    """
+    _authenticate_and_check_rate_limit(body, request, bucket="tts")
+
+    if not tts_available():
+        raise HTTPException(status_code=503, detail="tts not configured")
+
+    audio = await synthesize_reply(body.text)
+    if not audio:
+        raise HTTPException(status_code=503, detail="tts unavailable")
+
+    return Response(
+        content=audio,
+        media_type=AUDIO_MEDIA_TYPE,
+        # A reply's audio is regenerated per request and never re-fetched; say
+        # so rather than letting an intermediary cache someone's medication
+        # details as a playable file.
+        headers={"Cache-Control": "no-store"},
+    )
 
 
 @router.post("/telegram/webhook")

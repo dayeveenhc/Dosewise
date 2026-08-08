@@ -3,7 +3,8 @@ import { mkdirSync } from "node:fs";
 import {
   agentTurn8901, anonClient, assertPhaseMins, createThrowawayElder,
   readPhaseLog, recheckAccessibility, resetPhaseLog, saveTurnArtifact, signIn,
-  startWalkthrough, advanceWalkthroughUntil, advanceWalkthroughToStep, finishWalkthrough, type TurnResult,
+  startWalkthrough, advanceWalkthroughUntil, advanceWalkthroughToStep, finishWalkthrough,
+  tapWalkthroughNext, type TurnResult,
 } from "../helpers";
 import { PACING } from "../../src/app/lib/walkthrough/pacing";
 
@@ -67,13 +68,17 @@ test("s02 add-condition: 'Please add high blood pressure to my conditions' -> ad
 
   await startWalkthrough(page, "add_condition_auto", { condition: CONDITION });
 
-  // Steps 1-2 (open Your Profile, tap Edit) each hold at their commit gate until
-  // the person taps Next, so tap through to the conditions fill first.
-  await advanceWalkthroughToStep(page, 3);
-
-  // SCREENSHOT (mid-type): catch a clearly-partial value in the conditions
-  // TagList while Mei types (chars 4..12 of 19 — a wide window at FILL_MS_PER_CHAR).
-  await page.waitForFunction(
+  // Steps 1-3 now flow with NO tap at all. computeHoldGate's case 2 (a click
+  // that opens the surface the next step works in) was widened on 2026-08-08
+  // from "next step FILLS" to "next step ACTS", because burial doesn't care
+  // which: step 1 opens Your Profile, step 2 taps Edit inside it, step 3 fills
+  // the conditions field. Holding on step 1 left the spotlight on a control the
+  // newly-revealed section had already moved past.
+  //
+  // So the mid-type watcher is ARMED FIRST and awaited after — the run carries
+  // itself into the fill on its own, and arming after the advance would miss a
+  // window that has already opened and closed.
+  const midType = page.waitForFunction(
     (sel) => {
       const el = document.querySelector(sel) as HTMLInputElement | null;
       return !!el && el.value.length >= 4 && el.value.length <= 12;
@@ -81,6 +86,13 @@ test("s02 add-condition: 'Please add high blood pressure to my conditions' -> ad
     CONDITIONS_INPUT,
     { timeout: 20_000, polling: 16 },
   );
+  // A no-op once the run has already carried itself past 2; kept so the spec
+  // still works if the gate ever tightens again.
+  await advanceWalkthroughToStep(page, 2);
+
+  // SCREENSHOT (mid-type): a clearly-partial value in the conditions TagList
+  // while Mei types (chars 4..12 of 19 — a wide window at FILL_MS_PER_CHAR).
+  await midType;
   await page.screenshot({ path: `${SHOTS}/1-mid-type.png`, fullPage: true });
 
   // Step 4 is the "Add" tap that turns the typed text into a chip — commit
@@ -91,14 +103,21 @@ test("s02 add-condition: 'Please add high blood pressure to my conditions' -> ad
   const condField = page.locator('[data-walk="elder-conditions"]');
   await expect(condField.getByText(CONDITION, { exact: false })).toBeVisible({ timeout: 20_000 });
 
-  // Fills + chip done → the run PAUSES at the manual-Save confirm step (waitFor,
-  // no Next) — nothing commits on autopilot (2026-07-28 contract). The person
-  // taps Save THEMSELVES. Wait for the confirm callout (its click listener is now
-  // attached), then tap Save; the act-less verify/reveal tail then runs.
+  // Fills + chip done → the run PAUSES at the Confirm recap step (Item 5,
+  // "ConfirmBack-Phase" — split into a separate recap step + the real Submit
+  // waitFor step below, the exact mechanism proven on add_prescription_auto.ts;
+  // add_condition_auto's own recap carries no review card — the TagList input
+  // it would read clears itself the instant the "Add" step commits the chip,
+  // so a live-read ReviewField would always show blank and wrongly force the
+  // clarifying-question path on every run). startWalkthrough() puts the
+  // callout's AutoNav switch on "Step by step" and the throwaway account is
+  // below TRUST_MODE_THRESHOLD anyway, so Confirm holds for an explicit tap
+  // rather than auto-elapsing.
   // Each autonomous step now holds at its commit gate until the person taps
-  // Next, so tap through the fills to reach the manual-Save confirm step.
+  // Next, so tap through the fills to reach the Confirm recap step.
   await advanceWalkthroughUntil(page, () => page.getByText("tap Save yourself", { exact: false }).isVisible());
-  await expect(page.getByText("tap Save yourself", { exact: false }), "manual-Save confirm step reached").toBeVisible({ timeout: 20_000 });
+  await expect(page.getByText("tap Save yourself", { exact: false }), "Confirm (recap) step reached").toBeVisible({ timeout: 20_000 });
+  await tapWalkthroughNext(page); // onto the real Submit waitFor step
 
   // Arm the verify-callout waiter immediately BEFORE the save, so it can't miss
   // the transient "Checking…" window (VERIFY_MIN_MS floor, ~600ms) between save
@@ -132,6 +151,10 @@ test("s02 add-condition: 'Please add high blood pressure to my conditions' -> ad
   );
 
   const log = await readPhaseLog(page);
+  // "confirm" is deliberately absent here — Item 2 (TrustMode) means a fresh
+  // throwaway account (walkthroughCompletionCount 0, below
+  // TRUST_MODE_THRESHOLD) takes the TAP-gated path above (awaitNext, logged
+  // minMs 0), not the CONFIRM_MIN_MS auto-elapsing floor a veteran gets.
   assertPhaseMins(log, [
     { surface: "walkthrough", phase: "field", min: PACING.FIELD_MIN_MS },
     { surface: "walkthrough", phase: "click", min: PACING.PRE_CLICK_MS },

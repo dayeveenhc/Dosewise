@@ -355,7 +355,7 @@ function MedList({ meds, extractKind, routine, onAdd, onRemove, "data-walk": dat
                     className="w-full text-left px-3.5 py-2.5 hover:bg-muted active:bg-muted border-b border-border/50 last:border-0 transition-colors"
                   >
                     <span className="text-sm font-medium text-foreground">{m.name}</span>
-                    <span className="text-xs text-muted-foreground ml-2">{m.purpose} · {m.dose}</span>
+                    <span className="text-xs text-muted-foreground ml-2">{t(language, m.purposeKey)} · {m.dose}</span>
                   </button>
                 ))}
               </div>

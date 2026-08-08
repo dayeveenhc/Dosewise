@@ -1,0 +1,54 @@
+{
+  "log": [
+    {
+      "task": "add_prescription_auto",
+      "shell": "elder",
+      "visited": 5,
+      "stoppedAt": "overlay unmounted after 5 step(s)"
+    },
+    {
+      "task": "add_condition_auto",
+      "shell": "elder",
+      "visited": 7,
+      "stoppedAt": "reached the 12-step sweep cap"
+    },
+    {
+      "task": "edit_profile_auto",
+      "shell": "elder",
+      "visited": 6,
+      "stoppedAt": "reached the 12-step sweep cap"
+    },
+    {
+      "task": "add_doctor_question_auto",
+      "shell": "elder",
+      "visited": 3,
+      "stoppedAt": "step 4 would not advance on Next"
+    }
+  ],
+  "findings": [
+    {
+      "task": "add_prescription_auto",
+      "shell": "elder",
+      "step": 5,
+      "stepId": "autoRx.confirm",
+      "kind": "callout-overlaps-target",
+      "detail": "callout {top:295.0 left:17.0 w:344.0 h:426.8} overlaps spotlighted target {top:421.0 left:21.3 w:335.5 h:51.0}"
+    },
+    {
+      "task": "add_doctor_question_auto",
+      "shell": "elder",
+      "step": 2,
+      "stepId": "autoDoctorQ.openTabQuestions",
+      "kind": "cutout-misaligned",
+      "detail": "cutout {top:554.0 left:11.0 w:356.0 h:67.3} != target+6 {top:26.1 left:186.2 w:174.4 h:58.8} [dy=527.9 prehighlight=false transform=none]"
+    },
+    {
+      "task": "add_doctor_question_auto",
+      "shell": "elder",
+      "step": 2,
+      "stepId": "autoDoctorQ.openTabQuestions",
+      "kind": "target-occluded",
+      "detail": "spotlight frames {top:32.1 left:192.2 w:162.4 h:46.8} but nothing (outside the viewport) is painted over it"
+    }
+  ]
+}

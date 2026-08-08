@@ -59,23 +59,35 @@ export const isoDate = (d: Date) => `${d.getFullYear()}-${String(d.getMonth() + 
 /**
  * Whether a medication is due on a given calendar day.
  *
- * Three cadences, matching what `schedule` can hold:
+ * A fixed course (`endDate`, from `schedule.end_date`) is checked FIRST and
+ * beats every cadence below it: past the last day, nothing is due regardless of
+ * which days the medicine would otherwise fall on. This is how a course
+ * "cancels itself" — derived at read time, never a write, so it cannot race a
+ * second tab and needs no scheduled job. An unparseable date falls through
+ * rather than suppressing: a medicine that silently stops reminding is a worse
+ * failure than one that reminds a day too long.
+ *
+ * Three cadences after that, matching what `schedule` can hold:
  *   - no `days`, no `intervalDays`  → every day (the default, and what every
  *     medication created before this existed reads back as)
  *   - `days: ["mon","thu"]`         → only those weekdays. This is the shape
  *     Hermes already understands (`dosing.py::scheduled_today`), so the app and
  *     the reminder scheduler agree.
  *   - `intervalDays: 2`             → every other day, counted from `startDate`.
- *     NOTE: `scheduled_today` does NOT understand this — it treats a schedule
- *     with no `days` as daily — so an interval medication currently shows the
- *     right cadence everywhere in the app but would still be reminded daily by
- *     the Hermes scheduler. Closing that needs a change in `services/hermes`,
- *     which is outside apps/web's ownership.
+ *
+ * All three, and the course gate above, are mirrored one-for-one by
+ * `dosing.py::scheduled_today`, so the app and the Hermes reminder scheduler
+ * agree. (Until 2026-08-08 the interval branch was app-only and an
+ * every-other-day medicine was still reminded DAILY by the scheduler and
+ * reported missed on its off days — if you change the rules here, change them
+ * there in the same pass.)
  */
 export function isDueOn(
-  med: { days?: string[]; intervalDays?: number; startDate?: string },
+  med: { days?: string[]; intervalDays?: number; startDate?: string; endDate?: string },
   day: Date,
 ): boolean {
+  const left = courseDaysLeft(med, day);
+  if (left !== null && left < 0) return false;
   if (med.days?.length) {
     const tokens = new Set(med.days.map(d => String(d).trim().toLowerCase().slice(0, 3)));
     return tokens.has(weekdayToken(day));
@@ -90,6 +102,29 @@ export function isDueOn(
   const anchor = new Date(start.getFullYear(), start.getMonth(), start.getDate());
   const diff = Math.round((target.getTime() - anchor.getTime()) / 86_400_000);
   return ((diff % every) + every) % every === 0;
+}
+
+/**
+ * Days remaining in a fixed course, counted in whole calendar days.
+ *
+ *   null  → no course; this is an ongoing prescription (the common case)
+ *   > 0   → still running, N more days after today
+ *   0     → today is the LAST day (endDate is inclusive)
+ *   < 0   → finished; isDueOn returns false and the card offers "move to past"
+ *
+ * One helper for the gate, the countdown chip, the finished state and the alert
+ * tier, so none of them can disagree about when a course ends. Returns null on
+ * an unparseable date so callers fail open the same way isDueOn does.
+ */
+export function courseDaysLeft(med: { endDate?: string }, day: Date = new Date()): number | null {
+  if (!med.endDate) return null;
+  const end = new Date(`${med.endDate}T00:00:00`);
+  if (Number.isNaN(end.getTime())) return null;
+  // Calendar days, not timestamps — a dose time either side of midnight must
+  // not shift which day a course ends on (same reason as isDueOn's interval).
+  const target = new Date(day.getFullYear(), day.getMonth(), day.getDate());
+  const last = new Date(end.getFullYear(), end.getMonth(), end.getDate());
+  return Math.round((last.getTime() - target.getTime()) / 86_400_000);
 }
 
 // Human-readable cadence ("Mon, Thu" / "Every 2 days"), or undefined for a plain
@@ -140,7 +175,7 @@ export async function ensureProfile(elderId: string): Promise<void> {
 // ever writes single-time schedules, so this doesn't occur from data created here.
 export async function fetchElderMedications(elderId: string): Promise<Medication[]> {
   const [medsRes, dosesRes, refillsRes] = await Promise.all([
-    supabase.from("medications").select("id,name,purpose,dosage,schedule")
+    supabase.from("medications").select("id,name,purpose,dosage,schedule,priority")
       .eq("elder_id", elderId).eq("archived", false),
     supabase.from("doses").select("medication_id,status,logged_at")
       .eq("elder_id", elderId).gte("scheduled_at", startOfLocalDayIso()),
@@ -153,7 +188,7 @@ export async function fetchElderMedications(elderId: string): Promise<Medication
   const out: Medication[] = [];
   for (const med of medsRes.data ?? []) {
     const sched = (med.schedule ?? null) as
-      | { times?: string[]; days?: string[]; interval_days?: number; start_date?: string }
+      | { times?: string[]; days?: string[]; interval_days?: number; start_date?: string; end_date?: string }
       | null;
     const times: string[] = sched?.times ?? [];
     // Only a genuinely non-daily cadence is carried forward — a `days` list of
@@ -186,6 +221,8 @@ export async function fetchElderMedications(elderId: string): Promise<Medication
         days,
         intervalDays,
         startDate: sched?.start_date,
+        endDate: sched?.end_date,
+        priority: med.priority ?? undefined,
       });
     }
   }
@@ -371,6 +408,8 @@ interface MedicationInput {
   // Cadence. `days` is the shape Hermes already reads (dosing.py::scheduled_today);
   // `intervalDays` is app-side only for now — see isDueOn's note.
   days?: string[]; intervalDays?: number;
+  // A fixed course's last day (YYYY-MM-DD, inclusive). Omitted = ongoing.
+  endDate?: string;
 }
 
 // Mirrors what tools/medications.py writes, so a medication added here and one
@@ -386,6 +425,9 @@ function buildSchedule(input: MedicationInput): Record<string, unknown> {
     schedule.frequency = "interval";
     schedule.start_date = isoDate(new Date()); // the anchor isDueOn counts from
   }
+  // Outside the cadence branches on purpose: a course can end regardless of
+  // which days the medicine falls on.
+  if (input.endDate) schedule.end_date = input.endDate;
   return schedule;
 }
 
@@ -415,10 +457,26 @@ export async function addMedication(elderId: string, input: MedicationInput): Pr
 // the elder's "Edit" flow on a medication card. Deliberately does not touch
 // `refills`: the person is correcting the prescription's details, not
 // re-reporting how much supply they currently have on hand.
+// MERGES the schedule rather than replacing it, mirroring what Hermes's
+// set_medication_reminder already does with `old_schedule`
+// (tools/medications.py). It used to write buildSchedule(input) wholesale,
+// which silently destroyed every key this form doesn't know about — so a course
+// end date, or anything Hermes writes that the sheet has never heard of, was
+// deleted the first time somebody corrected a dose. The explicit deletes are
+// the subtle half: buildSchedule omits the keys for whichever cadence was NOT
+// chosen, so a bare spread would resurrect `days` on a medicine just switched
+// back to daily.
 export async function updateMedication(medicationId: string, input: MedicationInput): Promise<void> {
+  const { data: existing } = await supabase
+    .from("medications").select("schedule").eq("id", medicationId).maybeSingle();
+  const next: Record<string, unknown> = { ...(existing?.schedule ?? {}), ...buildSchedule(input) };
+  if (!(input.days?.length && input.days.length < 7)) delete next.days;
+  if (!((input.intervalDays ?? 1) > 1)) { delete next.interval_days; delete next.start_date; }
+  if (!input.endDate) delete next.end_date;
+
   const { error } = await supabase
     .from("medications")
-    .update({ name: input.name, purpose: input.purpose, dosage: input.dosage, schedule: buildSchedule(input) })
+    .update({ name: input.name, purpose: input.purpose, dosage: input.dosage, schedule: next })
     .eq("id", medicationId);
   if (error) throw error;
 }

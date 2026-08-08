@@ -18,7 +18,19 @@ const FALLBACK_UNREACHABLE = "I can't reach the assistant right now. Please chec
 function fallback(reply: string, rateLimited = false): AgentTurnResponse {
   // awaiting_confirmation is explicitly false: a sign-out/network/rate-limit
   // fallback must never paint confirm buttons under a reply nothing proposed.
-  return { reply, tools_used: [], actions: [], walkthrough: null, choices: null, awaiting_confirmation: false, rateLimited };
+  return { reply, tools_used: [], actions: [], walkthrough: null, choices: null, alert: null, awaiting_confirmation: false, rateLimited };
+}
+
+/**
+ * Something Mei decided needs acting on TODAY (the raise_alert tool). Surfaced
+ * as a full-screen popup by the HOST, not by the chat screen — the point is
+ * that it still reaches the person after they navigate away from the chat.
+ */
+export interface AgentAlert {
+  severity: "critical" | "urgent";
+  title: string;
+  body: string;
+  medication_name?: string | null;
 }
 
 // A tappable answer button the agent offered this turn (offer_choices tool):
@@ -63,6 +75,20 @@ export interface AgentAction {
   }>;
 }
 
+// The RiskClassifier's per-instance result (services/hermes tools/risk.py) —
+// present ONLY for the *_auto family that dispatch actually risk-assesses
+// (walkthrough.py::RISK_ASSESSED_TASKS); absent for every other task_name.
+// Read by the Confirm phase (decision B, Item 5): risk.flagged forces an
+// explicit tap there regardless of trust level. `signals` is a stable
+// per-axis code (e.g. "dosage_jump") — match on THIS, never on `reasons`'
+// human-readable prose, which is display-only. Exported so every hop between
+// here and lib/walkthrough/orchestrate.ts's PhaseHandlers shares one shape.
+export interface WalkthroughRisk {
+  flagged: boolean;
+  signals: string[];
+  reasons: string[];
+}
+
 // Set when Mei's start_walkthrough tool ran this turn — the step content itself
 // is resolved client-side, by task_name, from lib/walkthrough/steps/. `params`
 // carries only VALUES the app injects into the walkthrough's fill/verify steps
@@ -70,6 +96,7 @@ export interface AgentAction {
 export interface WalkthroughPayload {
   task_name: string;
   params?: Record<string, string>;
+  risk?: WalkthroughRisk;
 }
 
 interface AgentTurnResponse {
@@ -79,6 +106,8 @@ interface AgentTurnResponse {
   walkthrough: WalkthroughPayload | null;
   // Tappable answer buttons the agent offered this turn (offer_choices), or null.
   choices?: AgentChoice[] | null;
+  // An urgent notice the agent raised this turn (raise_alert), or null.
+  alert?: AgentAlert | null;
   // True when a tool PROPOSED something this turn and is waiting on a yes/no
   // (Hermes session.awaiting_confirmation). Deterministic, unlike `choices`,
   // which only exists if the model chose to call offer_choices — so the chat
@@ -97,13 +126,22 @@ interface AgentTurnResponse {
 // caller's `sending` guard keeps the input locked during the brief wait.
 const RETRY_AFTER_CAP_MS = 8000;
 
+// The headers EVERY Hermes POST needs. One place, so a new endpoint can't be
+// added with the API-key header quietly missing (which fails as a 401 the
+// caller then reports as "signed out" — a misleading dead end).
+export function hermesHeaders(): Record<string, string> {
+  return {
+    "Content-Type": "application/json",
+    ...(HERMES_API_KEY ? { "X-Hermes-Api-Key": HERMES_API_KEY } : {}),
+  };
+}
+
+export const hermesUrl = () => HERMES_URL;
+
 async function postAgentTurn(path: string, jwt: string, body: Record<string, unknown>): Promise<Response> {
   const doFetch = () => fetch(`${HERMES_URL}${path}`, {
     method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-      ...(HERMES_API_KEY ? { "X-Hermes-Api-Key": HERMES_API_KEY } : {}),
-    },
+    headers: hermesHeaders(),
     body: JSON.stringify({ ...body, jwt }),
   });
   const resp = await doFetch();
@@ -163,6 +201,7 @@ export async function agentTurn(
       actions: data.actions ?? [],
       walkthrough: data.walkthrough ?? null,
       choices: data.choices ?? null,
+      alert: data.alert ?? null,
       awaiting_confirmation: data.awaiting_confirmation ?? false,
     };
   } catch (err) {
@@ -189,6 +228,7 @@ export interface AgentTurnEvent {
   actions?: AgentAction[];
   walkthrough?: WalkthroughPayload | null;
   choices?: AgentChoice[] | null;
+  alert?: AgentAlert | null;
   awaiting_confirmation?: boolean;
 }
 
@@ -254,6 +294,7 @@ export async function agentTurnStream(
             actions: event.actions ?? [],
             walkthrough: event.walkthrough ?? null,
             choices: event.choices ?? null,
+            alert: event.alert ?? null,
             awaiting_confirmation: event.awaiting_confirmation ?? false,
           };
         } else {
@@ -304,10 +345,7 @@ export async function extractProfile(
   try {
     const resp = await fetch(`${HERMES_URL}/profile/extract`, {
       method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        ...(HERMES_API_KEY ? { "X-Hermes-Api-Key": HERMES_API_KEY } : {}),
-      },
+      headers: hermesHeaders(),
       body: JSON.stringify({ image_base64: imageBase64, pdf_base64: pdfBase64 }),
     });
     if (!resp.ok) {
@@ -320,6 +358,41 @@ export async function extractProfile(
   } catch (err) {
     console.warn("[dosewise] extractProfile: request failed before a reply", err);
     return { fields: {} };
+  }
+}
+
+// Mei's reply spoken by a real neural voice (services/hermes /voice/tts), as an
+// audio blob ready for Audio(). Returns null on ANY failure — no key configured
+// (503), no session, network, CORS — because the caller's job is then to fall
+// back to the browser's own speechSynthesis rather than go silent. Deliberately
+// quiet about it after the first warn: a deploy without a TTS key would
+// otherwise log once per spoken reply forever.
+let ttsUnavailableLogged = false;
+export async function fetchSpokenReply(text: string): Promise<Blob | null> {
+  if (!HERMES_URL || !text.trim()) return null;
+  try {
+    const { data: { session } } = await supabase.auth.getSession();
+    if (!session) return null;
+    const resp = await fetch(`${HERMES_URL}/voice/tts`, {
+      method: "POST",
+      headers: hermesHeaders(),
+      body: JSON.stringify({ text, jwt: session.access_token }),
+    });
+    if (!resp.ok) {
+      if (!ttsUnavailableLogged) {
+        ttsUnavailableLogged = true;
+        console.warn(`[dosewise] /voice/tts unavailable (HTTP ${resp.status}) — using the browser voice`);
+      }
+      return null;
+    }
+    const blob = await resp.blob();
+    return blob.size > 0 ? blob : null;
+  } catch (err) {
+    if (!ttsUnavailableLogged) {
+      ttsUnavailableLogged = true;
+      console.warn("[dosewise] /voice/tts request failed — using the browser voice", err);
+    }
+    return null;
   }
 }
 

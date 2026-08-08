@@ -6,10 +6,14 @@ Covers every registered tool's key branches: happy path, empty/not-found, and
 
 from __future__ import annotations
 
+from datetime import UTC, datetime, timedelta
+from zoneinfo import ZoneInfo
+
 import hermes.tools.drug_info as drug_info
 import hermes.tools.interactions as interactions
 from fakes import FakeDB, FakeSupabase, FakeTelegram
 from hermes.channels.session import SessionRegistry, SessionState
+from hermes.config import get_settings
 from hermes.tools import get_handler
 from hermes.tools.base import ToolContext
 
@@ -503,6 +507,55 @@ async def test_log_refill_unknown_medication():
                                           pills_remaining=10)
     assert "No medication named" in out
     assert not db.inserted and not db.updated
+
+
+# --- add_prescription fixed course (duration_days -> schedule.end_date) -----
+async def test_add_prescription_duration_days_writes_an_inclusive_end_date():
+    add = get_handler("add_prescription")
+    db = FakeDB({"medications": []})
+    ctx = _ctx(db)
+
+    proposal = await add(ctx, name="Amoxicillin", confirmed=False,
+                         dosage="500mg", duration_days=14)
+    # The person is confirming the course length, so it has to be read back.
+    assert "14 days" in proposal
+
+    await add(ctx, name="Amoxicillin", confirmed=True, dosage="500mg",
+              duration_days=14)
+    row = next(r for t, r in db.inserted if t == "medications")
+    tz = ZoneInfo(get_settings().hermes_tz)
+    expected = (datetime.now(UTC).astimezone(tz).date() + timedelta(days=13)).isoformat()
+    # INCLUSIVE of today: 14 days means today plus the next 13.
+    assert row["schedule"]["end_date"] == expected
+
+
+async def test_add_prescription_bare_yes_preserves_the_proposed_duration():
+    # The Telegram checkmark / a plain "yes" resupplies nothing, so the course
+    # length has to survive on the pending proposal or it is silently dropped
+    # and the medicine becomes an ongoing prescription.
+    add = get_handler("add_prescription")
+    db = FakeDB({"medications": []})
+    ctx = _ctx(db)
+
+    await add(ctx, name="Amoxicillin", confirmed=False, duration_days=7)
+    await add(ctx, name="Amoxicillin", confirmed=True)
+
+    row = next(r for t, r in db.inserted if t == "medications")
+    assert "end_date" in row["schedule"]
+
+
+async def test_add_prescription_without_duration_stays_ongoing():
+    add = get_handler("add_prescription")
+    db = FakeDB({"medications": []})
+    ctx = _ctx(db)
+
+    await add(ctx, name="Metformin", confirmed=False, dosage="500mg")
+    await add(ctx, name="Metformin", confirmed=True, dosage="500mg")
+
+    row = next(r for t, r in db.inserted if t == "medications")
+    # Most maintenance medicines have no end date; guessing one would stop
+    # their reminders early.
+    assert "end_date" not in row["schedule"]
 
 
 # --- add_prescription photo storage ----------------------------------------
