@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import type { ChangeEvent } from "react";
-import { Send, TrendingUp, Plane, Check, Sparkles, MessageCircle, Camera, FileText, Pill, Globe, Mic, Volume2, X, Trash2, AlertTriangle, ChevronRight, Search, Stethoscope, RefreshCw, MessageSquare, CalendarDays, QrCode, Users, Bell, ChevronDown, CheckCircle2, SlidersHorizontal, ChevronLeft } from "lucide-react";
+import { Send, TrendingUp, Plane, Check, Sparkles, MessageCircle, Camera, FileText, Pill, Globe, Mic, Volume2, X, Trash2, AlertTriangle, ChevronRight, Search, Stethoscope, RefreshCw, MessageSquare, CalendarDays, QrCode, Users, Bell, ChevronDown, CheckCircle2, ChevronLeft } from "lucide-react";
 import type { Patient, Screen } from "../types";
 import { ProfileAvatar } from "../components/shared";
 import { agentTurnStream, fileToBase64 } from "../lib/hermes";
@@ -21,6 +21,7 @@ import { speakReply as speakUtterance, stopSpeaking } from "../lib/speech";
 import { ConfirmDialog } from "../components/ConfirmDialog";
 import { PhotoSourceSheet } from "../components/PhotoSourceSheet";
 import { BottomSheet } from "../components/BottomSheet";
+import { HandsHeartIcon, PillBottleIcon, ClipboardCheckIcon, SlidersIcon } from "../components/CategoryIcons";
 
 interface ChatMsg { id: number; role: "user" | "agent"; text: string; time: string; isConfirmation?: boolean; isRateLimited?: boolean; image?: string; choices?: { label: string; value: string }[]; awaitingConfirmation?: boolean }
 
@@ -590,7 +591,7 @@ export function AskMeiScreen({ patient, patients, selectedPatient, onSelectPatie
   // under "checkins", whose tile is what weekly_summary_tour now spotlights.
   const CATEGORIES: Record<CatId, { icon: any; title: string; items: HelpItem[] }> = {
     medicines: {
-      icon: Pill,
+      icon: PillBottleIcon,
       title: t(language, "ai.cgCatMedicines"),
       items: [
         { icon: Camera,      label: t(language, "ai.rowAddMedPhoto"),  run: () => setPickerFor("rx") },
@@ -601,7 +602,7 @@ export function AskMeiScreen({ patient, patients, selectedPatient, onSelectPatie
       ],
     },
     checkins: {
-      icon: TrendingUp,
+      icon: ClipboardCheckIcon,
       title: t(language, "ai.cgCatCheckins"),
       items: [
         { icon: TrendingUp,   label: t(language, "common.weeklySummary"), run: () => setShowSummary(true), walk: "cg-weeklysummary-tile" },
@@ -612,7 +613,7 @@ export function AskMeiScreen({ patient, patients, selectedPatient, onSelectPatie
       ],
     },
     care: {
-      icon: Users,
+      icon: HandsHeartIcon,
       title: t(language, "ai.cgCatCare"),
       items: [
         { icon: Send,          label: t(language, "common.sendReminder"),   run: () => onSendReminder?.() },
@@ -622,7 +623,7 @@ export function AskMeiScreen({ patient, patients, selectedPatient, onSelectPatie
       ],
     },
     app: {
-      icon: SlidersHorizontal,
+      icon: SlidersIcon,
       title: t(language, "ai.cgCatApp"),
       items: [
         { icon: Globe,    label: t(language, "ai.languageVoice"),      run: () => setShowLangSheet(true) },
@@ -768,8 +769,8 @@ export function AskMeiScreen({ patient, patients, selectedPatient, onSelectPatie
           </div>
         </div>
       ) : (
-        <div className="flex-1 overflow-y-auto scrollbar-none px-4 pt-3 pb-4 space-y-3 border-t border-border/60 dw-view-in" data-tour="cg-askmei">
-          <div className="relative">
+        <div className="flex-1 min-h-0 overflow-y-auto scrollbar-none px-4 pt-3 pb-4 flex flex-col gap-3.5 border-t border-border/60 dw-view-in" data-tour="cg-askmei">
+          <div className="relative shrink-0">
             <Search size={17} className="absolute left-3.5 top-1/2 -translate-y-1/2 text-muted-foreground pointer-events-none" />
             <input
               value={query}
@@ -785,7 +786,7 @@ export function AskMeiScreen({ patient, patients, selectedPatient, onSelectPatie
           </div>
 
           {query.trim() ? (
-            <div className="dw-surface divide-y divide-border overflow-hidden">
+            <div className="dw-surface divide-y divide-border overflow-hidden shrink-0">
               {searchResults.map(r => (
                 <button
                   key={`${r.section}-${r.label}`}
@@ -807,7 +808,7 @@ export function AskMeiScreen({ patient, patients, selectedPatient, onSelectPatie
               )}
             </div>
           ) : (
-            <div className="grid grid-cols-2 gap-3">
+            <div className="grid grid-cols-2 grid-rows-2 gap-3 flex-1 min-h-0">
               {(Object.keys(CATEGORIES) as CatId[]).map(id => {
                 const cat = CATEGORIES[id];
                 return (
@@ -815,14 +816,12 @@ export function AskMeiScreen({ patient, patients, selectedPatient, onSelectPatie
                     key={id}
                     onClick={() => setCategory(id)}
                     data-walk={`cg-cat-${id}`}
-                    className="dw-surface dw-press p-4 h-[118px] flex flex-col items-center justify-center gap-2 text-center"
+                    className="dw-surface dw-press p-4 flex flex-col items-center justify-center gap-3 text-center"
                   >
-                    <div className="w-11 h-11 rounded-2xl bg-secondary flex items-center justify-center">
-                      <cat.icon size={21} className="text-primary" />
-                    </div>
+                    <cat.icon size={52} className="text-primary" />
                     <div className="min-w-0">
-                      <p className="text-[calc(13px*var(--dw-text,1))] font-bold text-foreground leading-tight">{cat.title}</p>
-                      <p className="text-[calc(11px*var(--dw-text,1))] text-muted-foreground mt-0.5">{t(language, "ai.catCount", { count: cat.items.length })}</p>
+                      <p className="text-[calc(17px*var(--dw-text,1))] font-bold text-foreground leading-tight">{cat.title}</p>
+                      <p className="text-[calc(13px*var(--dw-text,1))] text-muted-foreground mt-0.5">{t(language, "ai.catCount", { count: cat.items.length })}</p>
                     </div>
                   </button>
                 );

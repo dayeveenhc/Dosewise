@@ -1,6 +1,6 @@
 import { useState, useRef, useEffect } from "react";
 import type { ChangeEvent } from "react";
-import { Volume2, Mic, Send, AlertTriangle, MessageCircle, Check, Trash2, Camera, FileText, Pill, Globe, X, Plane, ChevronRight, CalendarDays, CheckCircle2, RotateCcw, RefreshCw, Bell, Phone, Type, QrCode, UserCheck, Stethoscope, HeartPulse, Search, Sparkles, User, Palette, Heart } from "lucide-react";
+import { Volume2, Mic, Send, AlertTriangle, MessageCircle, Check, Trash2, Camera, FileText, Pill, Globe, X, Plane, ChevronRight, CalendarDays, CheckCircle2, RotateCcw, RefreshCw, Bell, Phone, Type, QrCode, UserCheck, Stethoscope, HeartPulse, Search, Sparkles } from "lucide-react";
 import type { Patient } from "../../types";
 import type { EMsg, ElderlyTab } from "./types";
 import { agentTurnStream, extractProfile, fileToBase64 } from "../../lib/hermes";
@@ -20,6 +20,7 @@ import { speakReply as speakUtterance, stopSpeaking } from "../../lib/speech";
 import { ConfirmDialog } from "../../components/ConfirmDialog";
 import { PhotoSourceSheet } from "../../components/PhotoSourceSheet";
 import { BottomSheet } from "../../components/BottomSheet";
+import { HandsHeartIcon, PillBottleIcon, PaletteBrushIcon, PersonIcon } from "../../components/CategoryIcons";
 
 const nowLabel = () => new Date().toLocaleTimeString("en-SG", { hour: "2-digit", minute: "2-digit" });
 
@@ -645,7 +646,7 @@ export function ElderlyAIScreen({ patient, elderId, onNavigate, onMedsChanged, o
 
   const CATEGORIES: Record<CatId, { icon: any; title: string; items: { icon: any; label: string; run: () => void; walk?: string }[] }> = {
     medicines: {
-      icon: Pill,
+      icon: PillBottleIcon,
       title: t(language, "ai.catMedicines"),
       items: [
         { icon: Camera,       label: t(language, "ai.rowAddMedPhoto"),           run: () => setPickerFor("rx") },
@@ -658,7 +659,7 @@ export function ElderlyAIScreen({ patient, elderId, onNavigate, onMedsChanged, o
       ],
     },
     details: {
-      icon: User,
+      icon: PersonIcon,
       title: t(language, "ai.catDetails"),
       items: [
         { icon: HeartPulse,   label: t(language, "ai.rowAddCondition"),          run: () => openChatWith(t(language, "ai.prefillAddCondition")) },
@@ -668,7 +669,7 @@ export function ElderlyAIScreen({ patient, elderId, onNavigate, onMedsChanged, o
       ],
     },
     display: {
-      icon: Palette,
+      icon: PaletteBrushIcon,
       title: t(language, "ai.catDisplay"),
       items: [
         { icon: Type,   label: t(language, "ai.rowContrast"),             run: () => startWalk("text_size") },
@@ -680,7 +681,7 @@ export function ElderlyAIScreen({ patient, elderId, onNavigate, onMedsChanged, o
       ],
     },
     care: {
-      icon: Heart,
+      icon: HandsHeartIcon,
       title: t(language, "ai.catCare"),
       items: [
         // The guided version of the row above — Mei walks to the card herself.
@@ -869,9 +870,7 @@ export function ElderlyAIScreen({ patient, elderId, onNavigate, onMedsChanged, o
                     data-walk={`elder-cat-${id}`}
                     className="dw-surface dw-press p-4 flex flex-col items-center justify-center gap-3 text-center"
                   >
-                    <div className="w-16 h-16 rounded-2xl bg-secondary flex items-center justify-center">
-                      <cat.icon size={30} className="text-primary" />
-                    </div>
+                    <cat.icon size={52} className="text-primary" />
                     <div className="min-w-0">
                       <p className="text-[calc(17px*var(--dw-text,1))] font-bold text-foreground leading-tight">{cat.title}</p>
                       <p className="text-[calc(13px*var(--dw-text,1))] text-muted-foreground mt-0.5">{t(language, "ai.catCount", { count: cat.items.length })}</p>
