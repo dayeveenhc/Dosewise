@@ -6,6 +6,7 @@ import { COMMON_ALLERGIES, COMMON_DRUG_ALLERGIES, localizeCatalogValue } from ".
 import { withCatalogLabels } from "./setup/GuidedSetupWizard";
 import { ProfileAvatar } from "../components/shared";
 import { PhotoSourceSheet } from "../components/PhotoSourceSheet";
+import { CameraSheet } from "../components/CameraSheet";
 import { useLanguage } from "../lib/languageContext";
 import { t } from "../lib/language";
 
@@ -57,6 +58,7 @@ export function EditProfileSheet({ patient, onClose, onSave }: EditProfileSheetP
   const { language } = useLanguage();
   const [photo, setPhoto] = useState(patient.photo);
   const [showPhotoSource, setShowPhotoSource] = useState(false);
+  const [showCamera, setShowCamera] = useState(false);
   const cameraRef = useRef<HTMLInputElement>(null);
   const libraryRef = useRef<HTMLInputElement>(null);
   const [name, setName] = useState(patient.name);
@@ -92,11 +94,13 @@ export function EditProfileSheet({ patient, onClose, onSave }: EditProfileSheetP
     onClose();
   };
 
+  // Split from the change handler so the in-app camera feeds the same path.
+  const handlePhotoFile = (file: File) => { void fileToDataUrl(file).then(setPhoto); };
+
   const onPhotoFile = (e: ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     e.target.value = "";
-    if (!file) return;
-    void fileToDataUrl(file).then(setPhoto);
+    if (file) handlePhotoFile(file);
   };
 
   const fieldCls = "w-full bg-input-background border border-border rounded-xl px-3.5 py-2.5 text-sm text-foreground placeholder:text-muted-foreground outline-none focus:border-primary transition-colors";
@@ -156,9 +160,17 @@ export function EditProfileSheet({ patient, onClose, onSave }: EditProfileSheetP
               <input ref={libraryRef} type="file" accept="image/*" className="sr-only" onChange={onPhotoFile} />
               {showPhotoSource && (
                 <PhotoSourceSheet
-                  onTakePhoto={() => { setShowPhotoSource(false); cameraRef.current?.click(); }}
+                  onTakePhoto={() => { setShowPhotoSource(false); setShowCamera(true); }}
                   onChooseFile={() => { setShowPhotoSource(false); libraryRef.current?.click(); }}
                   onClose={() => setShowPhotoSource(false)}
+                />
+              )}
+              {showCamera && (
+                <CameraSheet
+                  facing="user"
+                  onCapture={file => { setShowCamera(false); handlePhotoFile(file); }}
+                  onClose={() => setShowCamera(false)}
+                  onFallback={() => { setShowCamera(false); cameraRef.current?.click(); }}
                 />
               )}
               <div>
@@ -228,9 +240,9 @@ export function EditProfileSheet({ patient, onClose, onSave }: EditProfileSheetP
                 <label className="block text-xs font-semibold text-foreground mb-2">{t(language, "editProfile.knownAllergies")}</label>
                 <div className="flex flex-wrap gap-2 mb-3">
                   {allergies.map((a, i) => (
-                    <span key={i} className="inline-flex items-center gap-1.5 bg-red-50 border border-red-200 text-red-800 rounded-xl px-2.5 py-1 text-xs font-semibold">
-                      <AlertTriangle size={10} className="text-red-600" /> {localizeCatalogValue(a, k => t(language, k))}
-                      <button onClick={() => setAllergies(prev => prev.filter((_, j) => j !== i))} className="text-red-400 hover:text-red-700 transition-colors ml-0.5">
+                    <span key={i} className="inline-flex items-center gap-1.5 bg-missed-bg border border-missed-border text-missed-fg rounded-xl px-2.5 py-1 text-xs font-semibold">
+                      <AlertTriangle size={10} className="text-missed-fg" /> {localizeCatalogValue(a, k => t(language, k))}
+                      <button onClick={() => setAllergies(prev => prev.filter((_, j) => j !== i))} className="text-missed-fg hover:opacity-70 transition-colors ml-0.5">
                         <X size={10} />
                       </button>
                     </span>

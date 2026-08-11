@@ -36,8 +36,16 @@ hermes/agent/loop.py`), reached by two independent channels:
 - **`POST /agent/turn`** (`services/hermes/src/hermes/api/routes.py`) — called
   directly from the browser by `apps/web/src/app/lib/hermes.ts::agentTurn()`.
   This is the **primary demo surface**. Auth: the client forwards its Supabase
-  session JWT (`{message, jwt, image_base64?, pdf_base64?, reply_language?}` →
-  `{reply, tools_used, actions, walkthrough?, choices?}`). `choices` (2026-07-28,
+  session JWT (`{message, jwt, images_base64?, image_base64?, pdf_base64?,
+  reply_language?}` → `{reply, tools_used, actions, walkthrough?, choices?}`).
+  **`images_base64` (2026-08-10)** is the list form — the web composer can stage
+  up to 5 photos on one turn, and every one becomes its own vision block in all
+  three provider paths (`agent/loop.py`). The scalar `image_base64` is still
+  accepted and is what Telegram sends; when both arrive the list wins, and the
+  server caps the turn at 6. Only the FIRST image is staged as
+  `session.pending_image`, because that slot exists solely so `add_prescription`
+  can store one pill photo against the medication that gets confirmed.
+  `choices` (2026-07-28,
   from `offer_choices`) is `[{label,value}]` the chat renders as tappable answer
   buttons; a tap sends the `value` as the next turn. **`alert` (2026-08-08, from
   `raise_alert`)** is `{severity,title,body,medication_name}` — something Mei
@@ -183,6 +191,21 @@ Both have an AI assistant chat screen wired to Hermes:
   Selectors `data-tour="cg-askmei"` (the title row, which contains the "Quick
   help" switch) and `data-walk="cg-weeklysummary-tile"` are load-bearing —
   don't rename them without updating those steps + s29.
+- `screens/setup/SetupMethodScreen.tsx` — the "How would you like to set up?"
+  screen reached from the "For a loved one" / "For myself" picker. HealthHub
+  (disabled placeholder), Upload records, Guided questions, and — **caregiver
+  mode only** — "Scan a loved one's QR code" (`data-walk="setup-method-scan-qr"`),
+  which opens `ScanLinkSheet` in its **deferred** mode. There is no session yet at
+  that point and RLS 0005 requires `caregiver_id = auth.uid()`, so the scan only
+  decodes: `App.tsx` holds the payload in `pendingCareLink` across the wizard's
+  account step and `GuidedSetupWizard.finish()` calls `createLinkRequest` after
+  `saveProfile`. Covered end-to-end by `e2e/caregiver-onboarding-link.spec.ts`.
+- `components/ScanLinkSheet.tsx` — the one QR scanner, used from both the
+  caregiver dashboard's `PatientSwitcher` (writes the `care_links` row itself)
+  and onboarding (defers, via `onScanned`). Besides the live camera it accepts an
+  **uploaded photo** of the code through `html5-qrcode`'s `scanFile` — the only
+  way through when the camera is denied, which is also why the upload button
+  renders in the error phase and not just while scanning.
 - `screens/elderly/ElderlyAIScreen.tsx` — **not a chat screen**: a grouped list
   of what Mei can do ("I can do this for you" — photo/report scan, travel sheet,
   doctor question; "I can show you how" — 10 narrated walkthroughs), with the
@@ -209,13 +232,18 @@ normally forbids touching `services/hermes/` or `supabase/`**; cross-cutting
 work across that boundary needs explicit user sign-off (as happened for the
 Hermes wiring — see MEMORY.md).
 
-**Every step shows the same action row.** Autonomous steps render Next (Done on
-the last); user-driven `waitFor` steps render `components/WalkthroughWaitPill.tsx`
-in the same slot — a NON-interactive indicator naming the real control ("Waiting
-for you: Add Lisinopril"), derived from the target's own accessible name so it
-can't drift from the UI. It is a `<div>` on purpose: `getByRole("button")`
-matches disabled buttons too, and the consent specs prove their invariant by
-asserting no advance control exists. Mei still cannot advance a consent step.
+**Autonomous steps render Next (Done on the last) in the action row;
+user-driven `waitFor` steps render NO control there at all (2026-08-09).** The
+"tap THIS" cue for a waitFor step is the spotlight itself: the main-rect glow
+overlay gains `.dw-spotlight-glow-wait` (theme.css — one `.dw-gate-ready`-style
+arrival beat, then a much stronger resting ring; never a looping pulse). This
+replaced `WalkthroughWaitPill.tsx` (DELETED, with its `walk.waitingFor.*` keys
+×6) — the pill named the control in words while the control itself stayed
+quietly lit, and its copy collided with step instructions that already said
+"Tap X". The consent invariant is unchanged and simpler: a glow overlay is
+`pointer-events-none` by construction, and `Walkthrough.test.tsx` still proves
+no advance-shaped control exists on a waitFor step. Mei still cannot advance a
+consent step.
 
 **The overlay's callout is rendered UNCONDITIONALLY — never gate it on the
 spotlight having been measured.** It is the only host of the Exit button, so
@@ -230,7 +258,12 @@ select value matching no option) STOPS the run rather than advancing past it.
 for the things that move it (2026-08-06).** `Walkthrough.tsx`'s measure effect
 runs one `getBoundingClientRect` per frame for the life of the step and pushes
 state only when the box actually changed (0.5px epsilon); scroll/resize
-listeners remain, but they are no longer the mechanism. Enumerating movers does
+listeners remain, but they are no longer the mechanism. `GuidedTour.tsx` (the
+passive product tour) runs the same watcher since 2026-08-09 — it had been
+measure-once-per-step, which drifted on Supabase-fetch mounts and on the
+font-size step's own invited reflow. `.walk-field-prehighlight` animates the
+individual `translate` property (2026-08-09), never `transform` — a filled
+animation on `transform` overrides the inline `translateY` lift. Enumerating movers does
 not work here — the target is translated by `.walk-field-prehighlight` (-3px,
 `both` fill), by `targetLiftPx`'s repositioning (up to ~330px, applied to the
 nearest `[data-walk]` ANCESTOR, so neither an attribute observer nor a bubbling
@@ -313,13 +346,26 @@ earned TrustMode (2026-08-04).** Mei performs each step's action at the
 (`pace.ts::awaitNext`, a timer-less waiter) until the person taps Next — "Done"
 on the last step. Within a phase, a Next after that phase's minimum still only
 shortens the dwell; `nextRequested` keeps the two meanings separate so one tap
-can never do both. `PACING` itself is unchanged — the gate does the anti-rush job.
+can never do both. `PACING` was retuned ~1.4x slower across the board
+(2026-08-09) — the gate still does the anti-rush job.
 `orchestrate.ts::runActStep`'s terminal gate now branches on a
 `requireExplicitAdvance` signal computed by the host from
 `accessibility.tsx`'s `walkthroughManualMode || walkthroughCompletionCount <
 TRUST_MODE_THRESHOLD` (3, `lib/walkthrough/pacing.ts`) — a first-timer or
 manual-mode user keeps the tap gate unchanged; a veteran instead auto-advances
-after `READY_AUTO_MS` (900ms) with zero taps. `walkthroughCompletionCount` is
+after `READY_AUTO_MS` (1250ms) with zero taps. **The LAST step AUTO-CLOSES
+(2026-08-09, later the same day):** `isFinalStep` routes the terminal gate to
+`pace.awaitNextOrTimeout("ready", PACING.FINAL_AUTOCLOSE_MS)` (4000ms) — Done
+still closes immediately, Replay re-runs the reveal (opening a fresh window),
+and once the window elapses the walkthrough returns to the app on its own, for
+EVERY trust level. This deliberately reversed the same-morning "final Done is
+always the person's" hold at the user's explicit request ("whenever a
+walkthrough is done, it goes back to the normal app"). An ERRORED final step
+(verify-failed / stalled) now renders a primary Done that calls **`onExit`,
+never `onAdvance`** — a failed run must not record a completion or earn
+TrustMode credit — so the lone grey "Exit walkthrough" dead-end is gone. The
+10 tours whose last step is a real `waitFor` action still end on the person's
+own action, untouched. `walkthroughCompletionCount` is
 device-local and counts **any** completed walkthrough (incremented at the same
 `handleWalkthroughAdvance` call site as `markWalkthroughCompleted`, but
 deliberately NOT gated on `AUTONOMOUS_TASKS` the way that call is — it's a
@@ -367,7 +413,9 @@ invariant (which now excludes by `data-walk`, not by class name) still reads
   an already-auto-elapsing gate and silently cuts `READY_AUTO_MS`'s beat to zero
   on every auto run. Terminal `ready` only — that phase is post-act, so
   resolving it re-runs nothing; never Confirm (risk/trust/blank decide that),
-  and `waitFor` steps never reach `ready`.
+  and `waitFor` steps never reach `ready`. The LAST step's timed
+  `FINAL_AUTOCLOSE_MS` gate is never tap-gated, so the ref alone keeps the
+  toggle from cutting the finale short.
 - `e2e/helpers.ts::useStepByStepNav` locates it **by `data-walk`, never by
   accessible name** (the name is localized and changes with its own state), and
   the sense is inverted for a single toggle: press it when it reads pressed.
@@ -410,7 +458,23 @@ the CONVERSATION** — see the chat-restore note below.
 user-tapped Save**, not an autonomous submit: the fill steps stay animated/auto,
 but the terminal step is a `waitFor` on the real Save button (skippable:false, no
 Next), followed by an act-less verify/reveal tail — nothing commits on autopilot
-(mirrors `accept_caregiver_link.ts`). That confirm step now also carries a
+(mirrors `accept_caregiver_link.ts`). **That Save step waits on the WRITE, not
+the click (2026-08-10, `add_prescription_auto`):**
+`{type:"write-committed", source:"app-event", event:"medication-saved"}`, emitted
+by `AddPrescriptionSheet::handleAdd` after `await onAdd(...)` resolves. A `click`
+wait ended the step while the insert was still in flight, so the next step's
+Verify re-queried an empty table and the run stopped at "I couldn't confirm that
+saved" (and its recovery path then wrote the medicine a SECOND time) — and it
+never fired at all when the dose-safety dialog made `handleAdd` return early,
+stranding the run on a step that is neither autonomous nor stalled, i.e. a
+callout with NO Done at all. The step carries `timeoutMs: 60000` because a bus
+signal that never arrives (a save that threw emits nothing) is the one way this
+shape can still hang — deliberately NOT the 20000 the QR-decode/agent-commit
+steps use, since `armTimeout` never resets and `IDLE_TIMEOUT_MS` is 20000 too, so
+that budget would time out a person who was merely reading. The errored/stalled Done in `Walkthrough.tsx` is no
+longer gated on `isLastStep` — a stalled step at ANY index offers a real way
+back. `Walkthrough.tsx`'s `failedRef` also feeds `shouldCancel`, so a stalled
+final step can't sail through its timed gate and bank a completion. That confirm step now also carries a
 `review` list, rendering the live field values in the callout with a Change
 button (`components/WalkthroughReview.tsx`) so the person can actually check what
 Mei typed before committing it. The former spotlight-only tours
@@ -504,6 +568,21 @@ optional integer `duration_days` (inclusive, recomputed at COMMIT so a proposal
 held overnight isn't off by one), and `add_prescription_auto` gains two
 conditional `act:click` steps driving real preset buttons — including a
 dynamic exact-value preset, so a 5-day course is never snapped to 7.
+**`add_prescription_auto`'s params also carry `times` (2026-08-10)** — the dose
+times as ONE comma-separated 24h string (`"12:00"`, `"08:00,20:00"`), since
+`walkthrough.py` `str()`-coerces every param and a real list would arrive as the
+literal `"['12:00']"`. Before this the params were `{name, dose, purpose,
+duration_days?}` only: on web Mei commits through the walkthrough, never
+`add_prescription(confirmed=true)`, so the `times` she had just read back died at
+the handoff and the sheet used `defaultDoseTime(routine)` — someone who said "one
+at 12 pm" got an 8am reminder. `parseTimesParam` (exported from the step file,
+returns canonical `HH:MM` and DROPS junk loudly — unlike `to24h`, which answers
+`"08:00"` for anything it can't parse) feeds `AddPrescriptionSheet`'s new
+`initialTimes` prop, the Confirm recap's time row (`data-walk="rx-time-value"`),
+and both direct-save fallbacks (`App.tsx`'s caregiver branch,
+`handleWalkthroughVerifyFailed`). The sheet SEEDS the picker rather than a step
+clicking a quick chip: the chips toggle, so clicking "noon" would leave the 8am
+default selected beside it and schedule two doses.
 **The same pass closed the `interval_days` divergence** `lib/medications.ts` had
 documented since 2026-07: `scheduled_today` now understands it, so an
 every-other-day medicine is no longer reminded daily and reported missed on its
@@ -521,6 +600,20 @@ the FOUR `NotificationPrefs` toggles — which map one-to-one onto the four
 trigger classes, so the popup's per-class gate was already built, persisted and
 localized. `CRITICAL_SUPPLY_DAYS = 3` sits under the existing
 `LOW_SUPPLY_DAYS`/`REFILL_PROMPT_DAYS` scale rather than adding a fourth.
+**Ordinary missed doses alert too (2026-08-09, `missed_dose`):** a
+non-critical medicine past its slot by `MISSED_DOSE_GRACE_MIN` (60 — matches
+Home's `DUE_WINDOW_MIN`, so the timeline's "due now" and the alert can't
+contradict) raises severity `urgent` — bell-tier popup once a day, Reminders
+card, badge — behind the same `missedDoseAlerts` toggle; critical keeps zero
+grace and the `critical` tier. Vague slots ("after breakfast") are SKIPPED for
+the ordinary tier (`to24h`'s 08:00 fallback would nag at a fictional time),
+and `buildAlerts` now takes `doseSnoozes` — a `snooze_dose` entry shifts the
+due time to its `until` for BOTH tiers. Underneath this,
+`fetchElderMedications` attributes taken doses PER SLOT via
+`assignTakenSlots` (exact local-HH:MM `scheduled_at` match first, then
+earliest-first for leftovers — `doses.py`'s rule): one taken row no longer
+marks every slot of a multi-time medicine taken, which had hidden exactly the
+missed evening slot this feature exists for.
 **The elder Reminders low-stock card was a hardcoded `"Metformin"`/`4 days`
 literal and is now real data** — which means it can be ABSENT, so
 `notifications_tour` is refused at dispatch when nothing is outstanding
@@ -528,9 +621,53 @@ literal and is now real data** — which means it can be ABSENT, so
 `nothingLow` gate) and its `notif-refill-row`/`notif-ack-btn` anchors ride the
 first supply alert rather than a fixed medicine. `e2e/scenarios/s19` therefore
 seeds a real `refills` row now.
-**Whether an alert may INTERRUPT is decided only in `pickPopupAlert`** — tier,
+**Where an alert SENDS you is decided only in `destinationFor` (2026-08-09).**
+`lib/alerts.ts::destinationFor(alert) → {tab, focusMedicationId?, focusMedName?}`
+is a table in `lib/` beside `changeHighlight.ts`'s `ENTITY_TARGETS` and
+`agentActions.ts`'s `ACTION_TARGETS`; supply/course → Medications, missed →
+Home, everything else → Reminders. It replaced an inline ternary inside
+`ElderlyApp`'s popup, which is why only the popup could route and the Reminders
+cards were inert. Routing is DEEP: `ElderlyApp::goToAlert` sets the tab and a
+nullable `focusMed` (the `pendingPrefill` idiom — carries id AND name, since a
+demo/local row has no uuid) that `ElderlyPrescriptionScreen` consumes to open
+the medicine's detail PAGE and `ElderlyHomeScreen` consumes to scroll the dose
+into view. (That consumption is guarded on `!highlightIds?.length`: a highlight
+CLOSES the detail page, because the ring needs the list, so an alert route
+arriving in the same commit would re-open it and swallow the proof.) Its two derived predicates, `canViewAlert` (there is somewhere else
+to go) and `canTellCaregiver` (the alert is about a *medicine*), gate the CTAs
+identically on both surfaces: the popup's `onView` is now passed
+CONDITIONALLY, which is what finally makes `UrgentAlertPopup`'s documented
+"absent when there is nowhere to go" contract real rather than dead code, and
+each Reminders card carries the same pair above its Dismiss/Request-refill row
+(a 2×2 grid — never a container `onClick`, since `notifications_tour` documents
+that row as click-less and auto-clicks `notif-ack-btn` inside it).
+"Tell my caregiver" hands the alert to Mei as a prefilled, unsent message — on
+the Reminders CARDS only. **The popup dropped that button (2026-08-11)**, and
+that is a removal rather than a narrowing: the only kinds `canTellCaregiver` is
+true for are the medicine-backed ones (missed dose, low/out of supply), which
+are exactly the ones a person answers themselves one tap away; every other kind
+that can interrupt already got `false`, having no focusMedication.
+**Whether an alert may INTERRUPT is decided only in `pickPopupGroup`** — tier,
 preference toggle, once-per-day dedupe, cooldown, quiet hours, and suppression
 behind any other modal — so every anti-nag rule is in one testable place.
+`pickPopupAlert` survives as a thin wrapper (`pickPopupGroup(groupForPopup(a))?.
+lead`) purely so its eight-case suite keeps guarding all of those rules.
+**Alerts are GROUPED for the popup (2026-08-11)**: `groupForPopup` folds
+missed-critical + missed-dose into one interruption and out-of-supply +
+low-supply into another, so three missed doses are one popup that says "three"
+rather than three identical ones. `care_link_request` must NEVER aggregate (a
+consent prompt that hides who is asking), nor `agent` (its title/body are model
+prose there is nothing to summarise into). Dismissing acknowledges EVERY member,
+so the badge can't keep shouting behind a popup just answered.
+**Two coupled ladders** replace the flat 30-minute cooldown: the interval
+stretches (urgent 30m→2h→done; critical 20m→45m→90m→3h→6h) while a meter in the
+popup fills and its tier copy escalates. The ladder's LENGTH is the anti-nag
+guarantee — past its end the group never interrupts again that day and lives on
+the Reminders tab and the badge. "One sitting" needs no new concept: the state
+is already sessionStorage. `alertState.ts::poppedIdsFor` is the day-filtered
+bridge between the store's `{id}|{date}` keys and the bare ids the pure
+functions compare — they disagreed until 2026-08-11, so the once-per-day dedupe
+had never actually fired.
 `components/UrgentAlertPopup.tsx` reuses `WalkthroughIdlePrompt`'s shape but
 carries its OWN `z-[120]`: above the Add-prescription sheet (`z-50`) and the nav
 (`z-40`), below the walkthrough overlay (`z-[200]`, whose callout is the only
@@ -550,6 +687,27 @@ and then gives up; a collapsed accordion means the row isn't in the DOM at all,
 so a discontinued medicine got the write with no ring and no caption. The screen
 owns the fix (`ElderlyPrescriptionScreen` takes `highlightIds` and opens its own
 "Past medications" list), not the highlight layer.
+
+**The medicine detail page (2026-08-11)** is a SUB-VIEW of the prescriptions
+tab, reached by tapping a card, not a new `ElderlyTab`: widening that union
+would touch `alerts.ts::destinationFor`, `changeHighlight`'s ENTITY_TARGETS and
+every walkthrough step's `screen.tab`. It uses ElderlyApp's `headerOverride`
+(the `ElderlySettingsScreen` profile/about idiom — the owning screen sets the
+title + back and clears it on unmount), and the nav stays visible.
+`screens/elderly/ElderlyMedicationDetail.tsx` shows the medicine in full and
+offers Edit (the existing `AddPrescriptionSheet editing=` path), **I've refilled
+it** (`components/AddRefillSheet.tsx` → `lib/medications.ts::logRefill`, the
+supply on hand — NOT the same as Request refill, which asks the doctor via
+chat), and **Remove from my list** (archive behind ConfirmDialog, available on
+ANY medicine here rather than only a finished course; DELETE is denied by
+migration 0004, so `archived = true` remains the only removal). Two rules bind
+it: it must carry **`data-testid="med-detail"` + `data-med-id`, never a testid
+ending in the uuid** (`findEntityElement` falls back to `[data-testid$="-{id}"]`
+and takes the first match in DOCUMENT order, and four e2e specs assert exact
+counts of `[data-testid^="medication-"]`), and it must **consume
+`screenResetSignal`** — `request_refill`'s step carries
+`onEnter: {tab:"prescriptions"}`, a no-op when already there, so a detail page
+left open hides `med-request-refill-btn` and a `waitFor` step has no Next.
 
 **Proof-of-change is the `ChangeHighlight` layer.** Its keystone: every write
 tool's `committed_actions` entry carries **what** changed —
@@ -577,10 +735,13 @@ notifications, emergency contacts) stay honest-navigation-only.
 
 **Some top-level `e2e/*.spec.ts` files are STALE and fail for reasons that have
 nothing to do with current work.** Check their `git log -1` date before
-diagnosing: five walkthrough specs are frozen at 2026-07-24 and never tap the
-manual Save the 2026-07-28 contract requires (`travel-mode-auto`,
-`edit-profile-auto`, `add-condition-auto`, `add-prescription-auto`,
-`reveal-caption`); three more are frozen at 2026-07-26 and assert on
+diagnosing: five walkthrough specs never tap the manual Save the 2026-07-28
+contract requires (`travel-mode-auto`, `edit-profile-auto`, `add-condition-auto`,
+`add-prescription-auto`, `reveal-caption`) — **their last commit is 2026-08-08
+(`21681aa`), not 2026-07-24 as this file long claimed, but that commit only
+renamed `startWalkthrough`→`startWalkthroughAuto`; no Save tap was added, so the
+staleness stands** (`travel-mode-auto` additionally asserts hard-coded dates that
+are now in the past); three more are frozen at 2026-07-26 and assert on
 `.border-stone-800`, a raw Tailwind class the 2026-07-29 design revamp deleted
 (`bugfix-highlight`, `scenario1-dose-taken`, `scenario6-dosage-update`). All are
 superseded by the governed `e2e/scenarios/sNN` modules below, which do handle
@@ -657,7 +818,20 @@ FastAPI service, `uv`-managed. Key files:
 - `api/routes.py` — `/health`, `/agent/turn`, `/telegram/webhook`,
   `/profile/extract` (the structured "pull" API: reads an uploaded PDF/photo and
   returns `{fields}` for onboarding autofill; API-key gated but **jwt-free** since
-  it's stateless — no Supabase/identity; impl in `agent/extract.py`), and
+  it's stateless — no Supabase/identity; impl in `agent/extract.py`),
+  **`/prescription/extract`** (2026-08-11 — the same "pull" shape for a
+  medication LABEL: `{fields}` = name/dose/purpose/times/frequency/duration_days/
+  instructions plus `inferred[]`, the fields the model derived rather than read.
+  This is what replaced the chat loop in the add-prescription sheet's scan tab,
+  which used to answer a label photo by asking what the dose and frequency were.
+  The dose rail is preserved by construction: the schema instructs the model to
+  OMIT a dose it can't read rather than list it in `inferred`, so no number can
+  be invented server-side; the app fills such blanks from MEDICATION_CATALOG and
+  badges them "Please check". jwt OPTIONAL — when present it buys a per-user
+  `extract:` bucket on top of main.py's per-IP limiter. Shares the three
+  provider helpers with the profile extractor, which are parameterised on
+  (tool, schema, system) — `test_profile_extract.py` passing unchanged is the
+  proof that refactor was behaviour-preserving), and
   **`/voice/tts`** (2026-08-07 — speaks a reply as mp3 for the web chat; impl in
   `agent/tts.py`. API-key + JWT gated like `/agent/turn`, but rate-limited on its
   OWN `tts:` bucket so reading replies aloud can't eat the allowance for asking
@@ -783,8 +957,13 @@ FastAPI service, `uv`-managed. Key files:
 
 Run: `cd services/hermes && uv sync --extra dev && uv run hermes-serve` (port
 8000 by default) or `uv run hermes-chat` for the CLI harness. Tests: `uv run
-pytest` (fully offline/mocked; a `supabase/scripts` RLS integration test needs a
-live local Supabase and is marked `integration`).
+pytest` (fully offline/mocked — 434 pass with no keys and no network; CI runs
+exactly this plus `ruff check .`, and gates **nothing** in `apps/web`). The RLS
+integration tests are `tests/test_rls_integration.py` + `tests/test_storage_rls.py`
+(27 tests, marked `integration`, also self-skipping without `RUN_INTEGRATION=1`) —
+they live **here, not in `supabase/scripts/`**, which holds only
+`provision_hosted.py`; `supabase/` has no test suite of its own, it supplies the
+local CLI stack + `seed/seed.sql` those tests run against.
 
 ## Deployment note
 

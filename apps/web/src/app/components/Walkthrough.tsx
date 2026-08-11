@@ -11,7 +11,6 @@ import { IDLE_TIMEOUT_MS, PACING } from "../lib/walkthrough/pacing";
 import { SpotlightCallout } from "./SpotlightCallout";
 import { WalkthroughIdlePrompt } from "./WalkthroughIdlePrompt";
 import { WalkthroughReview, readValues } from "./WalkthroughReview";
-import { WalkthroughWaitPill } from "./WalkthroughWaitPill";
 import type { PaceController, PacePhaseState } from "../lib/walkthrough/pace";
 import type { ReviewField, RevealDirective, VerifyDirective, WalkthroughScreen, WalkthroughStep } from "../lib/walkthrough/types";
 import type { WalkthroughRisk } from "../lib/hermes";
@@ -206,8 +205,11 @@ export function Walkthrough({
   // logic can't silently stop covering it):
   //   1. a waitFor-typed step — ALWAYS a real wait (Submit/consent taps):
   //      only a real user action on the real target can ever satisfy it.
-  //   2. the terminal "ready" gate, but only while Auto navigation is OFF —
-  //      an auto-elapsing "ready" (READY_AUTO_MS) is not a wait at all.
+  //   2. the terminal "ready" gate, while Auto navigation is OFF and it is
+  //      not the LAST step — an auto-elapsing "ready" (READY_AUTO_MS) is not
+  //      a wait at all, and neither is the final step's timed
+  //      FINAL_AUTOCLOSE_MS window (the run ends by itself there, so the
+  //      idle popup must never arm on it).
   //   3. the Confirm phase, but only when IT is tap-gated (risk-flagged,
   //      requireExplicitAdvance, or a blank review field) — the auto-
   //      elapsing recap a trusted, low-risk user gets (CONFIRM_MIN_MS) is
@@ -219,7 +221,7 @@ export function Walkthrough({
   // below) offering a bypass there would be actively dangerous, not helpful.
   const waitingOnUser = !phaseError && stalled === null && (
     !!step.waitFor ||
-    (paceState.phase === "ready" && !autoNav) ||
+    (paceState.phase === "ready" && !autoNav && !isLastStep) ||
     (paceState.phase === "confirm" && confirmTapRequiredRef.current) ||
     confirmBlocked
   );
@@ -246,6 +248,20 @@ export function Walkthrough({
     const outer = requestAnimationFrame(() => { inner = requestAnimationFrame(() => setAnimateTop(true)); });
     return () => { cancelAnimationFrame(outer); cancelAnimationFrame(inner); };
   }, [stepIndex]);
+
+  // Replay press acknowledgement. A press during the reveal's uncuttable
+  // floor is registered but produces nothing visible until the floor elapses
+  // (up to REVEAL_PULSE_MS) — this styles the button as "queued" until the
+  // re-run's own paced() re-entry publishes canAdvance true→false, i.e. the
+  // moment the replay actually starts.
+  const [replayQueued, setReplayQueued] = useState(false);
+  const prevCanAdvanceRef = useRef(paceState.canAdvance);
+  useEffect(() => {
+    const prev = prevCanAdvanceRef.current;
+    prevCanAdvanceRef.current = paceState.canAdvance;
+    if (replayQueued && prev && !paceState.canAdvance) setReplayQueued(false);
+  }, [paceState.canAdvance, replayQueued]);
+  useEffect(() => setReplayQueued(false), [stepIndex]);
 
   // Measure + spotlight the target, retrying a few frames in case the screen
   // this step needs hasn't finished mounting yet. Then keep the cutout GLUED to
@@ -483,8 +499,23 @@ export function Walkthrough({
   // waitFor below. Guarded to fire exactly once per step, and cancels if the
   // overlay unmounts (Exit) mid-animation so it never drives a torn-down screen.
   const actedRef = useRef(false);
+  // A step that ERRORED or STALLED must stop its own driver, not merely paint
+  // an error over one that keeps running: the measure effect (which raises
+  // `stalled`) and the driver effect below are independent, so a stalled FINAL
+  // step would otherwise sail through its timed FINAL_AUTOCLOSE_MS gate, call
+  // onAdvance, and record a completion — TrustMode credit for a run that
+  // failed, contradicting the errored-Done rule further down. Read through a
+  // ref because runActStep holds ONE closure for the whole step.
+  // Only ever RAISES the flag; the driver effect below clears it per step (it
+  // runs after this one in the same commit, so a step change can't leave the
+  // previous step's failure latched).
+  const failedRef = useRef(false);
+  useEffect(() => {
+    if (phaseError || stalled !== null) failedRef.current = true;
+  }, [phaseError, stalled]);
   useEffect(() => {
     actedRef.current = false;
+    failedRef.current = false;
     setPhaseError(false);
     setPaceState({ phase: null, canAdvance: false });
     // Autonomous path: an `act` step, OR an act-less step that carries
@@ -524,11 +555,15 @@ export function Walkthrough({
       tapGated || !!risk?.flagged || (!!step.review && hasBlankReviewField(step.review))
     );
     // Whether this step's TERMINAL gate will be a real tap-wait — the same
-    // three-way orchestrate.ts's own `ready` branch takes, mirrored here for
+    // branching orchestrate.ts's own `ready` gate takes, mirrored here for
     // the "turning Auto on releases the gate" effect further down. Recorded at
     // step start because that is when orchestrate decides it; re-deriving later
     // would not change what the running step is actually awaiting.
-    readyIsTapGatedRef.current = holdGate !== false && !(autoNav || requireExplicitAdvance === false);
+    // The LAST step is NOT tap-gated any more: its gate is the timed
+    // FINAL_AUTOCLOSE_MS window (orchestrate.ts's isFinalStep branch), which
+    // elapses on its own — releasing it early via the AutoNav toggle would
+    // cut the one beat that lets someone read the finale.
+    readyIsTapGatedRef.current = holdGate !== false && !isLastStep && !(autoNav || requireExplicitAdvance === false);
     void (async () => {
       // (Navigate) → Act → (Verify) → (Confirm) → (Reveal) → advance. A
       // failed Verify STOPS here and shows an error — never advances, so
@@ -543,7 +578,7 @@ export function Walkthrough({
           actedRef.current = true;
           onAdvance();
         },
-        shouldCancel: () => cancelled,
+        shouldCancel: () => cancelled || failedRef.current,
         holdGate,
         requireExplicitAdvance: tapGated,
         // Read once, when the step starts — flipping the switch mid-step
@@ -552,6 +587,7 @@ export function Walkthrough({
         autoAdvance: autoNav,
         riskFlagged: !!risk?.flagged,
         hasBlankReviewField,
+        isFinalStep: isLastStep,
       });
       if (cancelled) return;
       if (outcome === "verify-failed") {
@@ -624,8 +660,13 @@ export function Walkthrough({
         if (!el) return false;
 
         if (waitFor.type === "click" || waitFor.type === "acknowledge") {
-          el.addEventListener("click", advance, { once: true });
-          detach = () => el.removeEventListener("click", advance);
+          // The selector can match SEVERAL controls (the wizard's gender
+          // buttons, the relationship chips) and any of them satisfies the
+          // step — so listen on every match. querySelector alone armed only
+          // the FIRST button, and tapping any sibling left the step hanging.
+          const els = Array.from(document.querySelectorAll(selector));
+          els.forEach(e => e.addEventListener("click", advance, { once: true }));
+          detach = () => els.forEach(e => e.removeEventListener("click", advance));
           return true;
         }
         if (waitFor.type === "input") {
@@ -806,6 +847,8 @@ export function Walkthrough({
   //     to nothing on every auto run — a silent pacing regression rather than
   //     the intended "release what the person is stuck on".
   //   - the ref is cleared on release, so this can only ever fire once per gate.
+  //     (The FINAL step's timed FINAL_AUTOCLOSE_MS gate is never tap-gated, so
+  //     the ref alone keeps this from cutting the finale short.)
   useEffect(() => {
     if (!autoNav || paceState.phase !== "ready" || !readyIsTapGatedRef.current) return;
     readyIsTapGatedRef.current = false;
@@ -922,7 +965,7 @@ export function Walkthrough({
                   <rect x={navRect.left - 4} y={navRect.top - 4} width={navRect.width + 8} height={navRect.height + 8} rx="16" fill="black" />
                 )}
                 {changeRect && (
-                  <rect x={changeRect.left - 6} y={changeRect.top - 6} width={changeRect.width + 12} height={changeRect.height + 12} rx="12" fill="black" />
+                  <rect x={changeRect.left - 6} y={changeRect.top - 6} width={changeRect.width + 12} height={changeRect.height + 12} rx="16" fill="black" />
                 )}
               </mask>
             </defs>
@@ -934,7 +977,10 @@ export function Walkthrough({
               legible (and becomes a solid ring, per that mode's own philosophy)
               under contrast-max without a separate override. */}
           <div
-            className="absolute dw-spotlight-glow"
+            // Keyed per step so the wait variant restarts its cycle on each new
+            // waitFor step rather than carrying the previous one's phase over.
+            key={`glow-${stepIndex}`}
+            className={`absolute dw-spotlight-glow ${!autonomous ? "dw-spotlight-glow-wait" : ""}`}
             style={{ top: rect.top - 6, left: rect.left - 6, width: rect.width + 12, height: rect.height + 12 }}
           />
           {/* The nav-bar tab for the step's page gets its own glow too, not
@@ -1039,24 +1085,46 @@ export function Walkthrough({
               now COMMITS the step (nothing advances on its own); during a phase
               it still only shortens dwell/animation and never performs the
               action. */}
-          {/* User-driven step: same action-row slot, but a non-interactive
-              indicator naming the real control. Consent taps stay the user's
-              own — this only tells them what the app is waiting for, which the
-              empty row never did. Not shown on the stalled states: their copy
-              already says Mei couldn't find the thing. */}
-          {!autonomous && !phaseError && stalled === null && (
+          {/* User-driven step: the action row stays empty — the strengthened
+              spotlight glow on the target itself (.dw-spotlight-glow-wait) is
+              the "tap THIS" signal now, where the old "Waiting for you" pill
+              named the control in words while the control stayed quietly lit.
+              Consent taps stay entirely the user's own. */}
+          {/* Errored/stalled step, at ANY index: the run cannot finish, but the
+              person must still get a first-class way back to the app — a lone
+              grey Exit read as "abandon", which is why "sometimes it doesn't
+              close". This used to be gated on isLastStep, which left the shape
+              that actually strands people uncovered: a stalled MIDDLE step is
+              user-driven (waitFor), so the autonomous row below is dark too and
+              the action row was completely empty (2026-08-10 — the add-
+              prescription Save step). Done here calls onExit, NEVER onAdvance:
+              a failed run must not record a completion or earn TrustMode
+              credit. */}
+          {(phaseError || stalled !== null) && (
             <>
               <div className="flex-1" />
-              <WalkthroughWaitPill step={step} />
+              <button
+                onClick={onExit}
+                className="min-h-[44px] px-5 py-2 rounded-xl bg-primary text-primary-foreground text-sm font-semibold dw-press"
+              >
+                {t(language, "walk.done")}
+              </button>
             </>
           )}
           {autonomous && !phaseError && stalled === null && (
             <>
               <div className="flex-1" />
-              {paceState.phase === "reveal" && (
+              {/* Replay stays through the "ready" gate that follows the
+                  reveal — a tap landing just after the phase flipped used to
+                  be silently dropped while the button was still on screen.
+                  `replayQueued` acknowledges a press during the reveal's
+                  uncuttable floor (nothing visible happens for up to
+                  REVEAL_PULSE_MS otherwise), clearing when the re-run
+                  actually starts. */}
+              {step.reveal && (paceState.phase === "reveal" || paceState.phase === "ready") && (
                 <button
-                  onClick={() => paceRef.current?.requestReplay()}
-                  className="min-h-[44px] px-4 py-2 rounded-xl border border-border bg-card text-sm font-semibold text-foreground"
+                  onClick={() => { resetIdleTimer(); setReplayQueued(true); paceRef.current?.requestReplay(); }}
+                  className={`min-h-[44px] px-4 py-2 rounded-xl border text-sm font-semibold dw-press ${replayQueued ? "border-ring bg-secondary text-secondary-foreground ring-2 ring-ring" : "border-border bg-card text-foreground"}`}
                 >
                   {t(language, "walk.replay")}
                 </button>

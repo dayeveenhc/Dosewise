@@ -26,8 +26,18 @@ const HOURS = Array.from({ length: END_HOUR - START_HOUR + 1 }, (_, i) => START_
 // highlighted, and offering "I took it". An hour either side covers "just about
 // to", "right now" and "you're a bit late" without ever being the whole day.
 const DUE_WINDOW_MIN = 60;
-const LIST_BOTTOM_PAD = 64;                // clears the floating Now / next-dose
-                                           // pills that hover over the timeline
+// The band of the timeline each floating pill ("Now", "Next at …") covers.
+//
+// Written as a calc against --dw-text, NOT a flat 64px: both pills size their
+// own text with `calc(…px*var(--dw-text))`, so at the larger reading sizes the
+// pill grew past the space reserved for it and the last dose of the day sat
+// underneath it (measured: 47px tall at the default size, 58px at xxlarge,
+// against a 64px reserve that never moved).
+//
+// Only the list's own bottom padding, so the LAST dose of the day always
+// clears both pills. Deliberately NOT also subtracted from the scroller's box
+// in measureView — see the note there.
+const LIST_EDGE_PAD = "calc(64px * var(--dw-text, 1))";
 
 // Parse a "7:00 AM" clock string to minutes-since-midnight, or null if it isn't
 // a concrete clock time.
@@ -65,7 +75,7 @@ function resolveDose(m: Medication): { minutes: number; clock: string; vague: bo
 const to24hInput = (d: Date) => `${String(d.getHours()).padStart(2, "0")}:${String(d.getMinutes()).padStart(2, "0")}`;
 
 
-export function ElderlyHomeScreen({ patient, elderId, onLogDose, onUnlogDose, onOpenTravel, justAddedMed, onAskMei }: {
+export function ElderlyHomeScreen({ patient, elderId, onLogDose, onUnlogDose, onOpenTravel, justAddedMed, onAskMei, focusMed, onFocusMedConsumed }: {
   patient: Patient;
   // Needed to log/read dose history for days other than today directly
   // (bypassing the onLogDose prop, which only ever touches patient.medications'
@@ -78,6 +88,13 @@ export function ElderlyHomeScreen({ patient, elderId, onLogDose, onUnlogDose, on
   // Opens Ask Mei with a question already typed in (never sent — the elder
   // still taps Send). Optional so the screen keeps working without a host.
   onAskMei?: (prefill: string) => void;
+  // "A missed-dose alert sent the person here about this medicine" — scroll its
+  // card into view rather than leaving them to find it in a full day's timeline.
+  // Nullable-value the child clears, matching the prefill props elsewhere in
+  // this shell; matched on medicationId first, then name (demo/local rows have
+  // no medicationId).
+  focusMed?: { medicationId?: string; name?: string } | null;
+  onFocusMedConsumed?: () => void;
 }) {
   const { colourBlind, timeFormat } = useAccessibility();
   const { language } = useLanguage();
@@ -260,6 +277,39 @@ export function ElderlyHomeScreen({ patient, elderId, onLogDose, onUnlogDose, on
     if (first) cardRefs.current.get(first.id)?.scrollIntoView({ block: "center", behavior: "smooth" });
   };
 
+  // Same mechanism, aimed by an alert instead of by the missed pill: land on the
+  // dose the alert is about. Earliest slot when a medicine is taken more than
+  // once a day, matching jumpToFirstMissed's "start of what was skipped" rule.
+  //
+  // Consumed hit or miss (see ElderlyPrescriptionScreen's twin for the full
+  // reasoning): cardRefs are populated by ref callbacks DURING render, so they
+  // exist by the time this effect runs on the same commit that switched the tab.
+  // A miss here is legitimate — the dose may belong to a different day than the
+  // one selected — and re-firing it later would scroll the person somewhere they
+  // did not ask to go.
+  //
+  // Claims scrolledForDayRef on a hit. Arriving from an alert means this screen
+  // is MOUNTING, so the snap-to-now effect below is about to run in the same
+  // commit and would otherwise immediately scroll away from the dose we were
+  // just asked to show (found live: a 6am missed dose landed off-screen because
+  // "now" was mid-afternoon). Claiming the day is that effect's own existing
+  // "already handled" guard, not a new mechanism.
+  useEffect(() => {
+    if (!focusMed) return;
+    const match = dayMeds
+      .filter(m => (focusMed.medicationId && m.medicationId === focusMed.medicationId)
+        || (!!focusMed.name && m.name === focusMed.name))
+      .reduce<(typeof dayMeds)[number] | null>(
+        (a, b) => (a && resolveDose(a).minutes <= resolveDose(b).minutes ? a : b), null);
+    const card = match ? cardRefs.current.get(match.id) : undefined;
+    if (card) {
+      scrolledForDayRef.current = selectedDay.toDateString();
+      card.scrollIntoView({ block: "center", behavior: "smooth" });
+    }
+    onFocusMedConsumed?.();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [focusMed, hourRows]);
+
   // --- scroll: snap to now on load / day change ----------------------------
   // Measured from real geometry rather than offsetTop: offsetTop is relative to
   // the nearest positioned ancestor, which is NOT this scroll container.
@@ -292,12 +342,20 @@ export function ElderlyHomeScreen({ patient, elderId, onLogDose, onUnlogDose, on
     const el = scrollRef.current;
     if (!el) return;
     const box = el.getBoundingClientRect();
+    // Deliberately the RAW box, not the box minus the floating pills' band:
+    // shrinking it was measured making things worse, because the pill is only
+    // rendered when this says the card is off screen. A card resting inside the
+    // band is genuinely visible while no pill is there — call it hidden and the
+    // pill appears ON TOP of the very dose it points at, which is the overlap
+    // this pass set out to remove (2026-08-10).
+    const top = box.top + 8;
+    const bottom = box.bottom - 8;
     const node = nextDose ? cardRefs.current.get(nextDose.id) : undefined;
     if (!node || !node.isConnected) {
       setNextOff(null);
     } else {
       const r = node.getBoundingClientRect();
-      setNextOff(r.bottom < box.top + 8 ? "up" : r.top > box.bottom - 8 ? "down" : null);
+      setNextOff(r.bottom < top ? "up" : r.top > bottom ? "down" : null);
     }
     // The button offers to take you somewhere you cannot see. Offering it while
     // the line is already on screen is what made it look broken: you tapped it
@@ -305,7 +363,7 @@ export function ElderlyHomeScreen({ patient, elderId, onLogDose, onUnlogDose, on
     const target = nowLineRef.current;
     if (!isSelectedToday || !target) { setShowJump(false); return; }
     const line = target.getBoundingClientRect();
-    setShowJump(line.bottom < box.top + 8 || line.top > box.bottom - 8);
+    setShowJump(line.bottom < top || line.top > bottom);
   }, [nextDose, isSelectedToday]);
 
   useEffect(() => {
@@ -436,7 +494,7 @@ export function ElderlyHomeScreen({ patient, elderId, onLogDose, onUnlogDose, on
     // for something that still needs action.
     const cardCls = justAdded ? "border-[3px] border-taken bg-taken-bg dw-shadow ring-2 ring-taken/40"
                   : isNext ? "border-[3px] border-upcoming-border bg-upcoming-bg/50 dw-shadow dw-flow-upcoming"
-                  : isMissed ? "border-[3px] border-[#EF8A17] bg-missed-bg/50 dw-shadow dw-flow-missed"
+                  : isMissed ? "border-[3px] border-missed-border bg-missed-bg/50 dw-shadow dw-flow-missed"
                   : "border border-border bg-card dw-shadow";
     const timeCls = isNext ? "text-upcoming-fg" : isMissed ? "text-missed-fg" : "text-muted-foreground";
 
@@ -461,7 +519,7 @@ export function ElderlyHomeScreen({ patient, elderId, onLogDose, onUnlogDose, on
                 </span>
               )}
               {isMissed && (
-                <span className="flex items-center gap-1 bg-card text-missed-fg border border-[#EF8A17] text-[calc(12px*var(--dw-text,1))] font-bold px-2 py-0.5 rounded-full">
+                <span className="flex items-center gap-1 bg-card text-missed-fg border border-missed-border text-[calc(12px*var(--dw-text,1))] font-bold px-2 py-0.5 rounded-full">
                   <AlertTriangle size={11} />{t(language, "common.missed")}
                 </span>
               )}
@@ -496,7 +554,7 @@ export function ElderlyHomeScreen({ patient, elderId, onLogDose, onUnlogDose, on
             onClick={() => openTakeDialog(m)}
             data-walk="elder-take-dose"
             className={`w-full flex items-center justify-center gap-2.5 py-3 border-t font-bold text-[calc(16px*var(--dw-text,1))] text-white active:opacity-80 transition-opacity ${
-              isNext ? "border-upcoming-border bg-upcoming-border" : "border-[#EF8A17] bg-[#B45309]"
+              isNext ? "border-upcoming-border bg-upcoming-border" : "border-missed-border bg-missed-fg"
             }`}
           >
             <div className="w-6 h-6 rounded-full border-2 border-white flex items-center justify-center">
@@ -557,7 +615,10 @@ export function ElderlyHomeScreen({ patient, elderId, onLogDose, onUnlogDose, on
               <ChevronLeft size={18} className="text-foreground" />
             </button>
           </div>
-          <h2 className="dw-display text-[calc(21px*var(--dw-text,1))] font-semibold leading-none whitespace-nowrap text-center truncate text-foreground">
+          {/* leading-tight, not leading-none: truncate's overflow-hidden clips at
+              the line box, and Fraunces' descenders ("g" in August) overflow a
+              1em box at ANY font size. */}
+          <h2 className="dw-display text-[calc(20px*var(--dw-text,1))] font-semibold leading-tight whitespace-nowrap text-center truncate text-foreground">
             {selectedDay.toLocaleDateString("en-SG", { weekday: "short", day: "numeric", month: "long" })}
           </h2>
           <button onClick={() => changeDay(1)} aria-label={t(language, "home.scheduled")} className="w-9 h-9 rounded-full bg-card border border-border flex items-center justify-center shrink-0 active:bg-muted transition-colors">
@@ -597,7 +658,7 @@ export function ElderlyHomeScreen({ patient, elderId, onLogDose, onUnlogDose, on
           overlap and every dose sits under its true hour. */}
       <div className="relative flex-1 min-h-0 flex flex-col border-t border-border/60">
         <div ref={scrollRef} data-tour="elder-schedule" onScroll={measureView} className="flex-1 overflow-y-auto scrollbar-none">
-          <div className="flex flex-col px-4 pt-2" style={{ paddingBottom: LIST_BOTTOM_PAD }}>
+          <div className="flex flex-col px-4 pt-2" style={{ paddingBottom: LIST_EDGE_PAD }}>
             {hourRows.map(row => (
               <div key={row.hour} className="flex gap-3 py-2 border-b border-border/25 last:border-0">
                 {/* Narrow on purpose — every px here comes straight out of the
@@ -620,7 +681,11 @@ export function ElderlyHomeScreen({ patient, elderId, onLogDose, onUnlogDose, on
                     ));
                     if (!row.showNow) return cards;
                     const nowBlock = (
-                      <div key="now" ref={nowLineRef} className="flex flex-col gap-1">
+                      // data-walk: the check_schedule walkthrough spotlights
+                      // this block instead of the whole timeline (which is
+                      // taller than the viewport band, so the callout could
+                      // never clear it).
+                      <div key="now" ref={nowLineRef} data-walk="elder-timeline-now" className="flex flex-col gap-1">
                       {/* Everything ABOVE this line has already come and gone,
                           so the count of what was missed belongs here, pointing
                           back up at it — not buried in a card further down. */}
@@ -681,7 +746,16 @@ export function ElderlyHomeScreen({ patient, elderId, onLogDose, onUnlogDose, on
           <button
             onClick={scrollToNextDose}
             data-testid={`next-dose-${nextOff}`}
-            className={`absolute ${nextOff === "up" ? "top-3" : "bottom-4"} left-4 z-30 flex items-center gap-2 bg-card border border-border text-foreground rounded-full pl-3 pr-4 py-2.5 dw-float dw-press transition-transform`}
+            // bg-SECONDARY, not bg-card: this pill floats over the dose cards,
+            // and it used to be the same white as them with the same border
+            // radius — so where it overlapped a card it read as part of that
+            // card rather than as a control on top of it ("the next-dose button
+            // appears underneath the taken/missed doses", 2026-08-10). Same
+            // reasoning as .dw-shadow-up on the bottom nav: a floating layer
+            // that matches what scrolls behind it has to be told apart by
+            // something. Kept lighter than the primary-filled "Now" button
+            // beside it, which is still the more prominent of the two.
+            className={`absolute ${nextOff === "up" ? "top-3" : "bottom-4"} left-4 z-30 flex items-center gap-2 bg-secondary border border-primary/30 text-secondary-foreground rounded-full pl-3 pr-4 py-2.5 dw-float dw-press transition-transform`}
           >
             {nextOff === "up" ? <ArrowUp size={16} className="text-primary" /> : <ArrowDown size={16} className="text-primary" />}
             <span className="text-[calc(14px*var(--dw-text,1))] font-bold whitespace-nowrap">{t(language, "home.offscreenBelow", { clock: formatClock(resolveDose(nextDose).clock, timeFormat) })}</span>

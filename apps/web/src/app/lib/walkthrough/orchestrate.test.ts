@@ -598,3 +598,79 @@ describe("runActStep — TrustMode veteran auto-advance (Item 2, decision C)", (
     expect(readyEntry?.minMs).toBe(PACING.READY_AUTO_MS);
   });
 });
+
+// The final step's gate is TIMED (FINAL_AUTOCLOSE_MS): the walkthrough closes
+// itself once the window elapses, Done closes it sooner, and Replay re-runs
+// the reveal. This deliberately reversed the same-day "final Done is always
+// the person's" rule at the user's explicit request (2026-08-09; pacing.ts).
+// minMs 0 in the phase log is the discriminator that the gate was the
+// open-immediately kind, not a paced floor.
+describe("runActStep — final step auto-closes after FINAL_AUTOCLOSE_MS (isFinalStep)", () => {
+  it("auto-advances after FINAL_AUTOCLOSE_MS (not READY_AUTO_MS) with autoAdvance=true", async () => {
+    mountButton("target");
+    const h = handlers({ autoAdvance: true, isFinalStep: true });
+    const step = baseStep({});
+
+    let outcome: string | undefined;
+    void runActStep(step, h).then(o => { outcome = o; });
+    // Past READY_AUTO_MS but inside the final window — must still be holding.
+    await vi.advanceTimersByTimeAsync(CLICK_MS + PACING.READY_AUTO_MS + 30);
+    expect(outcome).toBeUndefined();
+    // The window elapsing ends the run on its own.
+    await vi.advanceTimersByTimeAsync(PACING.FINAL_AUTOCLOSE_MS);
+    expect(outcome).toBe("advanced");
+    expect(readPhaseLog().find(e => e.phase === "ready")?.minMs).toBe(0);
+  });
+
+  it("a first-timer's final gate self-resolves too, and Done ends it early", async () => {
+    mountButton("target");
+    // requireExplicitAdvance=true: the user decision is absolute — the final
+    // window times out for every trust level.
+    const h = handlers({ requireExplicitAdvance: true, isFinalStep: true });
+    const step = baseStep({});
+
+    let outcome: string | undefined;
+    void runActStep(step, h).then(o => { outcome = o; });
+    await vi.advanceTimersByTimeAsync(CLICK_MS + 30);
+    expect(outcome).toBeUndefined();
+
+    h.pace.requestNext(); // Done inside the window — closes immediately
+    await vi.advanceTimersByTimeAsync(1);
+    expect(outcome).toBe("advanced");
+    expect(readPhaseLog().find(e => e.phase === "ready")?.minMs).toBe(0);
+  });
+
+  it("Replay at the final gate re-runs the reveal, never advances, then a fresh window closes the run", async () => {
+    mountButton("target");
+    const onReveal = vi.fn();
+    const h = handlers({ autoAdvance: true, isFinalStep: true, onReveal });
+    const step = baseStep({ reveal: { screen: ON_AI, selector: "#row" } });
+
+    let outcome: string | undefined;
+    void runActStep(step, h).then(o => { outcome = o; });
+    // Run the reveal to its gate.
+    await vi.advanceTimersByTimeAsync(CLICK_MS + PACING.REVEAL_PULSE_MS + PACING.HIGHLIGHT_DWELL_MIN_MS + 30);
+    expect(h.pace.state().phase).toBe("ready");
+    expect(onReveal).toHaveBeenCalledTimes(1);
+
+    h.pace.requestReplay(); // tap landing AT the gate — used to be dropped
+    await vi.advanceTimersByTimeAsync(PACING.REVEAL_PULSE_MS + PACING.HIGHLIGHT_DWELL_MIN_MS + 30);
+    expect(onReveal).toHaveBeenCalledTimes(2); // reveal re-ran
+    expect(outcome).toBeUndefined();           // and the step did NOT advance
+
+    await vi.advanceTimersByTimeAsync(PACING.FINAL_AUTOCLOSE_MS);
+    expect(outcome).toBe("advanced");
+  });
+
+  it("a NON-final step with autoAdvance=true still auto-elapses on READY_AUTO_MS — the relaxation is untouched elsewhere", async () => {
+    mountButton("target");
+    const h = handlers({ autoAdvance: true, isFinalStep: false });
+    const step = baseStep({});
+
+    let outcome: string | undefined;
+    void runActStep(step, h).then(o => { outcome = o; });
+    await vi.advanceTimersByTimeAsync(CLICK_MS + PACING.READY_AUTO_MS + 30);
+    expect(outcome).toBe("advanced");
+    expect(readPhaseLog().find(e => e.phase === "ready")?.minMs).toBe(PACING.READY_AUTO_MS);
+  });
+});

@@ -34,7 +34,7 @@ export function GuidedTour({ steps, onFinish }: { steps: TourStep[]; onFinish: (
   const [rect, setRect] = useState<Rect | null>(null);
   const [navRect, setNavRect] = useState<Rect | null>(null);
   const [containerHeight, setContainerHeight] = useState(0);
-  const [calloutHeight, setCalloutHeight] = useState(165);
+  const [calloutHeight, setCalloutHeight] = useState(150); // matches Walkthrough.tsx's seed
   // This step's target could not be found at all. Surfaced as honest copy in
   // the callout instead of an unexplained dark screen — the same decision
   // Walkthrough.tsx's `stalled` makes. Skip/Back/Next stay reachable, so it is
@@ -50,7 +50,18 @@ export function GuidedTour({ steps, onFinish }: { steps: TourStep[]; onFinish: (
     setStalled(false);
     const startedAt = Date.now();
     let raf = 0;
-    const measure = () => {
+    let watchRaf = 0;
+    let disposed = false;
+    // Last values actually pushed to state, so the per-frame watcher below can
+    // re-measure continuously while only re-rendering when something MOVED.
+    let lastRect: Rect | null = null;
+    let lastNavRect: Rect | null = null;
+    let lastContainerHeight = 0;
+    const sameBox = (a: Rect | null, b: Rect) =>
+      !!a && Math.abs(a.top - b.top) < 0.5 && Math.abs(a.left - b.left) < 0.5
+      && Math.abs(a.width - b.width) < 0.5 && Math.abs(a.height - b.height) < 0.5;
+
+    const recompute = (doScroll: boolean): boolean => {
       // Measure THIS element's own box, not its parentElement's — the parent
       // may have a border (e.g. the desktop phone-bezel frame's md:border-6),
       // and position:absolute's containing block is the parent's PADDING edge
@@ -60,32 +71,72 @@ export function GuidedTour({ steps, onFinish }: { steps: TourStep[]; onFinish: (
       // parent) already sits exactly at the padding edge, so its own rect IS
       // the correct (0,0) origin with no border-width math needed.
       const targetEl = document.querySelector(step.target);
-      if (rootRef.current && targetEl) {
-        // Scroll first — measuring before the scroll settles captures stale
-        // coordinates that don't match where the element ends up on screen.
-        // origin is measured AFTER, not before: scrollIntoView can scroll an
-        // ancestor shared with the overlay root itself (not just an inner
-        // list), which moves origin too — reading it beforehand mixes two
-        // different scroll positions into one offset and throws the cutout
-        // off by exactly that scroll delta.
-        targetEl.scrollIntoView({ block: "center" });
-        const origin = rootRef.current.getBoundingClientRect();
-        const t = targetEl.getBoundingClientRect();
-        setRect({ top: t.top - origin.top, left: t.left - origin.left, width: t.width, height: t.height });
+      if (!rootRef.current || !targetEl) return false;
+      // Scroll first — measuring before the scroll settles captures stale
+      // coordinates that don't match where the element ends up on screen.
+      // origin is measured AFTER, not before: scrollIntoView can scroll an
+      // ancestor shared with the overlay root itself (not just an inner
+      // list), which moves origin too — reading it beforehand mixes two
+      // different scroll positions into one offset and throws the cutout
+      // off by exactly that scroll delta.
+      if (doScroll) targetEl.scrollIntoView({ block: "center" });
+      const origin = rootRef.current.getBoundingClientRect();
+      const t = targetEl.getBoundingClientRect();
+      const next = { top: t.top - origin.top, left: t.left - origin.left, width: t.width, height: t.height };
+      if (!sameBox(lastRect, next)) {
+        lastRect = next;
+        setRect(next);
+      }
+      if (Math.abs(lastContainerHeight - origin.height) >= 0.5) {
+        lastContainerHeight = origin.height;
         setContainerHeight(origin.height);
-        const navEl = step.navTarget ? document.querySelector(step.navTarget) : null;
-        if (navEl) {
-          const n = navEl.getBoundingClientRect();
-          setNavRect({ top: n.top - origin.top, left: n.left - origin.left, width: n.width, height: n.height });
+      }
+      const navEl = step.navTarget ? document.querySelector(step.navTarget) : null;
+      if (navEl) {
+        const n = navEl.getBoundingClientRect();
+        const nextNav = { top: n.top - origin.top, left: n.left - origin.left, width: n.width, height: n.height };
+        if (!sameBox(lastNavRect, nextNav)) {
+          lastNavRect = nextNav;
+          setNavRect(nextNav);
         }
-      } else if (Date.now() - startedAt < MEASURE_TIMEOUT_MS) {
+      }
+      return true;
+    };
+
+    const measure = () => {
+      if (disposed) return;
+      if (recompute(true)) {
+        watch(); // found it — from here on, stay glued to it
+        return;
+      }
+      if (Date.now() - startedAt < MEASURE_TIMEOUT_MS) {
         raf = requestAnimationFrame(measure);
       } else {
         setStalled(true);
       }
     };
+
+    // Keep the cutout on the target for the WHOLE step, not just at mount —
+    // the same per-frame rect diff components/Walkthrough.tsx uses. The tour's
+    // targets genuinely move after the one-shot measure: the schedule and
+    // medication lists mount behind a Supabase fetch and grow, the profile
+    // section expands, and the font-size step INVITES a live reflow of the
+    // whole page (the slider works through the cutout). A rect diff makes
+    // "glued" true by construction; recompute() only re-renders when the box
+    // actually moved, so the steady-state cost is one getBoundingClientRect
+    // per element per frame.
+    const watch = () => {
+      if (disposed) return;
+      recompute(false);
+      watchRaf = requestAnimationFrame(watch);
+    };
+
     raf = requestAnimationFrame(measure);
-    return () => cancelAnimationFrame(raf);
+    return () => {
+      disposed = true;
+      cancelAnimationFrame(raf);
+      cancelAnimationFrame(watchRaf);
+    };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [index]);
 
@@ -104,7 +155,9 @@ export function GuidedTour({ steps, onFinish }: { steps: TourStep[]; onFinish: (
     // the slider but swallowed every tap, so "change text size" did nothing.
     // Matches the autonomous Walkthrough overlay (components/Walkthrough.tsx).
     <div ref={rootRef} className="absolute inset-0 z-[200] pointer-events-none">
-      {!rect && <div className="absolute inset-0 bg-black/75" />}
+      {/* Same 0.4 as the measured mask below and Walkthrough.tsx's fallback —
+          a darker pre-measure flash read as the overlay "blinking". */}
+      {!rect && <div className="absolute inset-0 bg-black/40" />}
       {rect && (
         <>
           {/* Lightened from 0.75 to 0.4, matching the autonomous Walkthrough

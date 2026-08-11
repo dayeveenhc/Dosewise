@@ -27,7 +27,7 @@ export function NotificationsScreen({ notifications, patient, onMarkAllRead, onD
 
   const iconFor = (type: Notification["type"]) => {
     if (type === "missed") return <AlertTriangle size={16} className="text-missed-fg" />;
-    if (type === "refill") return <RefreshCw size={16} className="text-warn" />;
+    if (type === "refill") return <RefreshCw size={16} className="text-warn-fg" />;
     if (type === "info") return <Brain size={16} className="text-primary" />;
     if (type === "reminder") return <Send size={16} className="text-primary" />;
     return <Bell size={16} className="text-muted-foreground" />;
@@ -58,7 +58,7 @@ export function NotificationsScreen({ notifications, patient, onMarkAllRead, onD
           <div key={n.id} className={`rounded-2xl border p-4 relative ${bgFor(n.type)} ${!n.read ? "shadow-sm" : "opacity-70"}`}>
             {!n.read && <div className="absolute top-3 right-3 w-2 h-2 bg-primary rounded-full" />}
             <div className="flex items-start gap-3">
-              <div className="w-9 h-9 rounded-xl bg-card/80 border border-border/60 flex items-center justify-center shrink-0">
+              <div className="w-9 h-9 rounded-xl bg-secondary flex items-center justify-center shrink-0">
                 {iconFor(n.type)}
               </div>
               <div className="flex-1 min-w-0 pr-4">
@@ -93,7 +93,7 @@ export function NotificationsScreen({ notifications, patient, onMarkAllRead, onD
         {notifs.length === 0 && (
           <div className="flex flex-col items-center gap-3 py-16 text-center">
             <div className="w-16 h-16 bg-muted rounded-full flex items-center justify-center">
-              <CheckCircle2 size={28} className="text-taken" />
+              <CheckCircle2 size={28} className="text-taken-fg" />
             </div>
             <p className="dw-display text-lg text-foreground">{t(language, "common.allClear")}</p>
             <p className="text-sm text-muted-foreground">{t(language, "common.noPendingNotifications")}</p>

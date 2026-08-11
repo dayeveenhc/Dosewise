@@ -119,8 +119,10 @@ test("s01 add-medicine: 'new medicine — Lisinopril, 10mg' -> propose→confirm
   // waitFor, not just the form. Then Submit → Verify (real re-query) → Reveal on
   // the Home timeline; the sheet closes on a proven save and the new dose shows
   // on Home with its "Just added" highlight.
-  await advanceWalkthroughUntil(page, () => page.getByText("tap Save yourself", { exact: false }).isVisible());
-  await expect(page.getByText("tap Save yourself", { exact: false }), "Confirm (recap) step reached").toBeVisible({ timeout: 25_000 });
+  // The confirm recap's copy now points at Next (the real Save tap belongs to
+  // the FOLLOWING waitFor step), so the step marker is the review card itself.
+  await advanceWalkthroughUntil(page, () => page.getByText("Please check these details").isVisible());
+  await expect(page.getByText("when it looks right, tap Next", { exact: false }), "Confirm (recap) step reached").toBeVisible({ timeout: 25_000 });
 
   // The review card: what Mei typed, shown in the callout so the person can
   // actually CHECK it before committing. It must render on this step (Item 5,

@@ -40,7 +40,14 @@ async def test_start_walkthrough_queues_task_and_skips_committed_actions():
 async def test_start_walkthrough_forwards_params_for_autonomous_task():
     tool = get_handler("start_walkthrough")
     ctx = _ctx()
-    params = {"name": "Lisinopril", "dose": "10mg", "purpose": "Blood pressure"}
+    # `times` rides along with the rest (2026-08-10): the client seeds the add
+    # form's time picker from it, instead of the elder's breakfast default.
+    params = {
+        "name": "Lisinopril",
+        "dose": "10mg",
+        "purpose": "Blood pressure",
+        "times": "12:00",
+    }
     await tool(ctx, task_name="add_prescription_auto", params=params)
     # VALUES (never selectors) pass through to the client, which injects them into
     # the walkthrough's fill/verify steps.

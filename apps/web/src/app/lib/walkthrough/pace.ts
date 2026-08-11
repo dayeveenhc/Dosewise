@@ -37,9 +37,15 @@ export interface PaceController {
   // person taps Next (or the run is cancelled) — there is NO timer, so an
   // autonomous step can never advance on its own.
   awaitNext(phase: string): Promise<void>;
+  // The FINAL step's gate (Item 5, 2026-08-09): same open-immediately shape as
+  // awaitNext, but self-resolves after ms so the walkthrough returns to the
+  // app on its own. Also wakes on requestReplay — the orchestrator checks
+  // consumeReplay() before advancing, so waking early can never end the run.
+  awaitNextOrTimeout(phase: string, ms: number): Promise<void>;
   requestNext(): void;
-  // Replay (reveal phase only): re-run the reveal + its dwell. Consumed by the
-  // orchestrator's reveal loop after each paced("reveal", …) completes.
+  // Replay (reveal phase, or the "ready" gate that follows one): re-run the
+  // reveal + its dwell. Consumed by the orchestrator's reveal loop after each
+  // paced("reveal", …) completes, and re-checked at the terminal gate.
   requestReplay(): void;
   consumeReplay(): boolean;
   shouldFastForward(): boolean;
@@ -158,9 +164,31 @@ export function createPaceController(ctx?: { task?: string; stepId?: string }): 
           resolve();
         };
         const waiter = () => {
-          if (cancelled || nextRequested) done();
+          // replayRequested wakes the gate too: the orchestrator's loop
+          // consumes it and re-runs the reveal instead of advancing.
+          if (cancelled || nextRequested || replayRequested) done();
         };
         waiters.add(waiter);
+      });
+    },
+
+    async awaitNextOrTimeout(phaseName: string, ms: number): Promise<void> {
+      if (cancelled) return;
+      phase = phaseName;
+      canAdvance = true; // open from t=0 — Done works immediately
+      fastForward = false;
+      nextRequested = false;
+      publish();
+      const startedAt = now();
+      await interruptibleSleep(ms, () => nextRequested || replayRequested);
+      recordPhase({
+        surface: "walkthrough",
+        task: ctx?.task,
+        stepId: ctx?.stepId,
+        phase: phaseName,
+        minMs: 0, // the window is a ceiling on the wait, not a paced floor
+        startedAt,
+        endedAt: now(),
       });
     },
 
@@ -173,9 +201,12 @@ export function createPaceController(ctx?: { task?: string; stepId?: string }): 
     },
 
     requestReplay(): void {
-      // Only meaningful while the reveal dwell is on screen; extends viewing,
-      // so unlike Next it isn't gated on the minimum having elapsed.
-      if (phase !== "reveal" || cancelled) return;
+      // Meaningful during the reveal dwell AND at the "ready" gate that
+      // follows it — a tap that lands just after the phase flips used to be
+      // silently dropped (the button was still on screen when it was
+      // pressed). Extends viewing, so unlike Next it isn't gated on the
+      // minimum having elapsed.
+      if ((phase !== "reveal" && phase !== "ready") || cancelled) return;
       replayRequested = true;
       wakeAll();
     },

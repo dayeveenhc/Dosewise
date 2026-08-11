@@ -4,7 +4,9 @@ import { Send, TrendingUp, Plane, Check, Sparkles, MessageCircle, Camera, FileTe
 import type { Patient, Screen } from "../types";
 import { ProfileAvatar } from "../components/shared";
 import { agentTurnStream, fileToBase64 } from "../lib/hermes";
-import type { AgentTurnEvent, AgentAction, WalkthroughRisk } from "../lib/hermes";
+import { prepareAttachment, stripBlobImages, MAX_ATTACHMENTS } from "../lib/images";
+import type { Attachment } from "../lib/images";
+import type { AgentTurnEvent, AgentAction, AgentAlert, WalkthroughRisk } from "../lib/hermes";
 import { firstRoutableAction, ACTION_TARGETS } from "../lib/agentActions";
 import { firstHighlightable } from "../lib/changeHighlight";
 import { buttonsFor, lastInteractiveIndex } from "../lib/chatChoices";
@@ -20,10 +22,14 @@ import { t, LANGUAGE_OPTIONS, speechLangFor } from "../lib/language";
 import { speakReply as speakUtterance, stopSpeaking } from "../lib/speech";
 import { ConfirmDialog } from "../components/ConfirmDialog";
 import { PhotoSourceSheet } from "../components/PhotoSourceSheet";
+import { CameraSheet } from "../components/CameraSheet";
 import { BottomSheet } from "../components/BottomSheet";
 import { HandsHeartIcon, PillBottleIcon, ClipboardCheckIcon, SlidersIcon } from "../components/CategoryIcons";
 
-interface ChatMsg { id: number; role: "user" | "agent"; text: string; time: string; isConfirmation?: boolean; isRateLimited?: boolean; image?: string; choices?: { label: string; value: string }[]; awaitingConfirmation?: boolean }
+// `image` is kept alongside `images` because conversations saved before
+// multi-attach are already persisted in that shape — read
+// `images ?? (image ? [image] : [])`, never one without the other.
+interface ChatMsg { id: number; role: "user" | "agent"; text: string; time: string; isConfirmation?: boolean; isRateLimited?: boolean; image?: string; images?: string[]; choices?: { label: string; value: string }[]; awaitingConfirmation?: boolean }
 
 // Chat history survives leaving this screen (it unmounts on every caregiver
 // navigation), via sessionStorage — same contract as the elder chat. Expiry is
@@ -36,12 +42,22 @@ const SESSION_TTL_MS = 30 * 60 * 1000;
 // UI state for one in-flight turn and never history.
 const LIVE_STEP_ID = -1;
 
-function loadChatSession(key: string): { messages: ChatMsg[]; startedAt: number } | null {
+// The saved chat: the transcript, the idle-window stamp, and any photos staged
+// on the composer but not yet sent. `attachments` rides in the SAME record so
+// the idle TTL and its restamping cover it for free — same contract as the
+// elder chat.
+interface SavedChat {
+  messages: ChatMsg[];
+  startedAt: number;
+  attachments?: Attachment[];
+}
+
+function loadChatSession(key: string): SavedChat | null {
   if (typeof window === "undefined") return null;
   try {
     const raw = sessionStorage.getItem(key);
     if (!raw) return null;
-    const parsed = JSON.parse(raw) as { messages: ChatMsg[]; startedAt: number };
+    const parsed = JSON.parse(raw) as SavedChat;
     if (Date.now() - parsed.startedAt > SESSION_TTL_MS) return null;
     return parsed;
   } catch {
@@ -186,7 +202,7 @@ function PatientPicker({ patients, selectedIds, onChange }: {
   );
 }
 
-export function AskMeiScreen({ patient, patients, selectedPatient, onSelectPatient, elderId, onUpdatePatient, onNavigate, onSendReminder, onMedsChanged, onMedAdded, onHighlightChange, onWalkthroughStart, guidedViewActive, openChatView, onOpenChatViewConsumed }: {
+export function AskMeiScreen({ patient, patients, selectedPatient, onSelectPatient, elderId, onUpdatePatient, onNavigate, onSendReminder, onMedsChanged, onMedAdded, onHighlightChange, onAgentAlert, onWalkthroughStart, guidedViewActive, openChatView, onOpenChatViewConsumed }: {
   patient: Patient;
   // Everyone this caregiver looks after, so the chat can be scoped to one or
   // several of them. Falls back to just `patient` when a host doesn't pass it.
@@ -200,6 +216,10 @@ export function AskMeiScreen({ patient, patients, selectedPatient, onSelectPatie
   onMedsChanged?: () => void | Promise<void>;
   onMedAdded?: (name: string) => void;
   onHighlightChange?: (action: AgentAction) => void;
+  // Something Mei judged must be acted on today. Surfaced by the HOST as a
+  // full-screen popup, so it still reaches the caregiver after they navigate
+  // away — the same wiring ElderlyAIScreen has.
+  onAgentAlert?: (alert: AgentAlert) => void;
   // Returns null when the walkthrough started, or a translation key saying
   // why it could not — so this screen can say so instead of doing nothing.
   // `risk` (RiskClassifier, Item 5) rides along only on the real Hermes-turn
@@ -278,7 +298,13 @@ export function AskMeiScreen({ patient, patients, selectedPatient, onSelectPatie
   // afternoon kept serving a stale conversation the TTL had already retired.
   useEffect(() => {
     const id = setInterval(() => {
-      if (Date.now() - startedAtRef.current > SESSION_TTL_MS) setMessages([]);
+      if (Date.now() - startedAtRef.current > SESSION_TTL_MS) {
+        setMessages([]);
+        // The staged photos expire WITH the conversation — left behind they'd
+        // sit on the composer above an empty thread.
+        setPendingImages([]);
+        setAttachNotice(null);
+      }
     }, 60_000);
     return () => clearInterval(id);
   }, []);
@@ -298,8 +324,16 @@ export function AskMeiScreen({ patient, patients, selectedPatient, onSelectPatie
       if (index >= 0 && index !== selectedPatient) onSelectPatient(index);
     }
   };
-  // A photo attached but not yet sent — staged so the caregiver types their intent.
-  const [pendingImage, setPendingImage] = useState<{ base64: string; url: string } | null>(null);
+  // Photos attached but not yet sent — staged so the caregiver types their
+  // intent. Seeded from the restored session, like `messages`: this screen
+  // unmounts on every caregiver navigation, and a photo attached then left
+  // behind to check something else used to vanish.
+  const [pendingImages, setPendingImages] = useState<Attachment[]>(() => restored?.attachments ?? []);
+  // Set by the "Add a medicine from a photo" row and read when the file lands —
+  // `pickerFor` is already cleared by then and can't tell that row apart from
+  // the composer's own camera button. A ref: nothing renders from it.
+  const addMedIntentRef = useRef(false);
+  const [attachNotice, setAttachNotice] = useState<string | null>(null);
   const [sending, setSending] = useState(false);
   const [showSummary, setShowSummary] = useState(false);
   const [showTravel, setShowTravel] = useState(false);
@@ -315,6 +349,7 @@ export function AskMeiScreen({ patient, patients, selectedPatient, onSelectPatie
   const rxCameraRef = useRef<HTMLInputElement>(null);
   const rxLibraryRef = useRef<HTMLInputElement>(null);
   const [pickerFor, setPickerFor] = useState<null | "rx" | "report">(null);
+  const [cameraFor, setCameraFor] = useState<null | "rx" | "report">(null);
   const recognitionRef = useRef<any>(null);
 
   // This screen unmounts when the caregiver leaves it. A chat turn is a live
@@ -338,10 +373,32 @@ export function AskMeiScreen({ patient, patients, selectedPatient, onSelectPatie
     startedAtRef.current = Date.now();
     const persistable = messages
       .filter(m => m.id !== LIVE_STEP_ID)
-      .map(m => (m.image?.startsWith("blob:") ? { ...m, image: undefined } : m));
-    sessionStorage.setItem(storageKey, JSON.stringify({ messages: persistable, startedAt: startedAtRef.current }));
-  }, [messages, storageKey]);
-  const canSend = !!input.trim() || !!pendingImage;
+      // blob: object URLs die on a page reload — persisting one restores a
+      // broken-image icon. Staged attachments are `data:` URLs (lib/images.ts),
+      // but BOTH fields are swept: `images` is what every current path writes,
+      // and any future caller reaching for createObjectURL must not silently
+      // reintroduce the bug this strip exists for. The message text always stays.
+      .map(m => stripBlobImages(m));
+    const record: SavedChat = {
+      messages: persistable,
+      startedAt: startedAtRef.current,
+      attachments: pendingImages,
+    };
+    // Photos are the only thing here big enough to exhaust sessionStorage's
+    // ~5MB origin budget, and a bare setItem would take the TRANSCRIPT down
+    // with them. Drop the photos, keep the conversation.
+    try {
+      sessionStorage.setItem(storageKey, JSON.stringify(record));
+    } catch (err) {
+      console.warn("[dosewise] chat session too large to save with attachments", err);
+      try {
+        sessionStorage.setItem(storageKey, JSON.stringify({ ...record, attachments: [] }));
+      } catch (inner) {
+        console.warn("[dosewise] chat session could not be saved at all", inner);
+      }
+    }
+  }, [messages, pendingImages, storageKey]);
+  const canSend = !!input.trim() || pendingImages.length > 0;
 
   // Fetched once so agent turns can tell Mei which walkthroughs this caregiver
   // has already been shown — a stale read until the next remount is accepted,
@@ -412,14 +469,14 @@ export function AskMeiScreen({ patient, patients, selectedPatient, onSelectPatie
   // show — always at most one at a time, so a fixed id lets us update/replace it
   // in place rather than accumulating one bubble per tool call.
 
-  const send = async (text: string, imageBase64?: string, pdfBase64?: string, displayImage?: string) => {
+  const send = async (text: string, imagesBase64?: string[], pdfBase64?: string, displayImages?: string[]) => {
     const trimmed = text.trim();
     if (!trimmed || sending) return;
     // Leaving a category open would strand its title + back arrow above the
     // conversation that is now what's on screen.
     setMode("chat");
     setCategory(null);
-    setMessages(prev => [...prev, { id: Date.now(), role: "user", text: trimmed, time: nowLabel(), image: displayImage }]);
+    setMessages(prev => [...prev, { id: Date.now(), role: "user", text: trimmed, time: nowLabel(), images: displayImages?.length ? displayImages : undefined }]);
     scrollToBottom();
     setSending(true);
 
@@ -465,11 +522,19 @@ export function AskMeiScreen({ patient, patients, selectedPatient, onSelectPatie
       }
     };
 
-    const { reply, actions, walkthrough, choices, awaiting_confirmation, rateLimited } = await agentTurnStream(outgoing, onEvent, imageBase64, pdfBase64, completedWalkthroughs, "caregiver");
+    const { reply, actions, walkthrough, choices, awaiting_confirmation, alert, rateLimited } = await agentTurnStream(outgoing, onEvent, imagesBase64, pdfBase64, completedWalkthroughs, "caregiver");
     setMessages(prev => [...prev.filter(m => m.id !== LIVE_STEP_ID), { id: Date.now() + 1, role: "agent", text: reply, time: nowLabel(), isRateLimited: rateLimited, choices: choices ?? undefined, awaitingConfirmation: awaiting_confirmation }]);
     if (!mountedRef.current) return;
     setSending(false);
     scrollToBottom();
+
+    // raise_alert reaches the HOST, not the transcript. Mei only calls it for
+    // something that must be acted on TODAY, and the point of the popup is that
+    // it still finds the person after they navigate away — as chat prose it
+    // scrolls off and is gone. `alert` was simply never destructured here, so
+    // the caregiver side discarded every one of them while the elder side
+    // (ElderlyAIScreen -> ElderlyApp -> UrgentAlertPopup) showed them.
+    if (alert) onAgentAlert?.(alert);
     speak(reply);
     // A walkthrough takes over the whole app shell, so drop back to the help
     // view — the conversation would otherwise cover what's being spotlighted.
@@ -523,11 +588,17 @@ export function AskMeiScreen({ patient, patients, selectedPatient, onSelectPatie
 
   const handleSend = () => {
     const text = input.trim();
-    if ((!text && !pendingImage) || sending) return;
-    const img = pendingImage;
+    if ((!text && !pendingImages.length) || sending) return;
+    const imgs = pendingImages;
     setInput("");
-    setPendingImage(null);
-    send(text || t(language, "ai.photoDefaultPrompt"), img?.base64, undefined, img?.url);
+    setPendingImages([]);
+    setAttachNotice(null);
+    send(
+      text || t(language, "ai.photoDefaultPrompt"),
+      imgs.map(a => a.base64),
+      undefined,
+      imgs.map(a => a.dataUrl),
+    );
   };
 
   // Open the composer with a request already typed in — the caregiver still taps
@@ -541,6 +612,8 @@ export function AskMeiScreen({ patient, patients, selectedPatient, onSelectPatie
 
   const clearChat = () => {
     startedAtRef.current = Date.now();
+    setPendingImages([]);
+    setAttachNotice(null);
     // Genuinely EMPTY, matching the elder screen and this file's own "no canned
     // greeting: the screen opens on what Mei can DO" stance a few lines up. It
     // used to re-seed a greeting, which left messages.length > 0 — so with the
@@ -551,28 +624,63 @@ export function AskMeiScreen({ patient, patients, selectedPatient, onSelectPatie
     setMode("help");
   };
 
-  // Attach a photo: stage it so the caregiver can type what they want done with
-  // it, rather than assuming it's a prescription.
-  const onRxPhotoFile = async (e: ChangeEvent<HTMLInputElement>) => {
-    const file = e.target.files?.[0];
+  // Attach one or more photos: stage them so the caregiver can type what they
+  // want done with them, rather than assuming it's a prescription.
+  const onRxPhotoFile = (e: ChangeEvent<HTMLInputElement>) => {
+    const picked = Array.from(e.target.files ?? []);
     e.target.value = "";
-    if (!file) return;
+    void handleRxPhotos(picked);
+  };
+
+  // Split from the change handler so the in-app camera feeds the same path.
+  // The add-a-medicine intent is still read-then-cleared FIRST, before the
+  // empty-selection bail, exactly as it was: a cancelled pick must not leave the
+  // intent set for whatever gets attached next.
+  const handleRxPhotos = async (picked: File[]) => {
+    const fromAddMedRow = addMedIntentRef.current;
+    addMedIntentRef.current = false;
+    if (!picked.length) return;
     setMode("chat");
-    setPendingImage({ base64: await fileToBase64(file), url: URL.createObjectURL(file) });
+    setAttachNotice(null);
+
+    // Room left, not "how many they picked": someone can attach twice.
+    const room = MAX_ATTACHMENTS - pendingImages.length;
+    if (picked.length > room) setAttachNotice(t(language, "ai.photoLimitReached", { count: MAX_ATTACHMENTS }));
+    const staged = await Promise.all(picked.slice(0, Math.max(0, room)).map(prepareAttachment));
+    if (staged.length) setPendingImages(prev => [...prev, ...staged]);
+
+    // They came from the row that says "add a medicine from a photo" — say so
+    // for them, instead of making them re-state what they just tapped. Only
+    // when the box is empty: never overwrite words they typed themselves.
+    if (fromAddMedRow && !input.trim()) {
+      openChatWith(t(language, "ai.prefillAddMedPhoto"));
+      return;
+    }
     inputRef.current?.focus();
   };
 
   // "Update profile": the clinic report goes to the real agent — a PDF's text is
   // extracted server-side; an image goes through the vision path. The agent
   // proposes the profile update and saves only after a confirming "yes".
-  const onReportFile = async (e: ChangeEvent<HTMLInputElement>) => {
+  const onReportFile = (e: ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     e.target.value = "";
-    if (!file) return;
+    if (file) void handleReportFile(file);
+  };
+
+  // Split from the change handler so the in-app camera feeds the same path.
+  const handleReportFile = async (file: File) => {
     const b64 = await fileToBase64(file);
     const msg = t(language, "ai.reportMsg");
-    if (file.type === "application/pdf") send(msg, undefined, b64);
-    else send(msg, b64, undefined, URL.createObjectURL(file));
+    if (file.type === "application/pdf") {
+      send(msg, undefined, b64);
+      return;
+    }
+    // Through prepareAttachment, not URL.createObjectURL: a blob: URL dies with
+    // the page, so persisting one restores a broken-image icon in the thread.
+    // (Single-image on purpose — /profile/extract reads one document.)
+    const shot = await prepareAttachment(file);
+    send(msg, [shot.base64], undefined, [shot.dataUrl]);
   };
 
   const startWalk = (task: WalkthroughTaskName) => {
@@ -594,7 +702,7 @@ export function AskMeiScreen({ patient, patients, selectedPatient, onSelectPatie
       icon: PillBottleIcon,
       title: t(language, "ai.cgCatMedicines"),
       items: [
-        { icon: Camera,      label: t(language, "ai.rowAddMedPhoto"),  run: () => setPickerFor("rx") },
+        { icon: Camera,      label: t(language, "ai.rowAddMedPhoto"),  run: () => { addMedIntentRef.current = true; setPickerFor("rx"); } },
         { icon: Pill,        label: t(language, "ai.rowAddMed"),       run: () => openChatWith(t(language, "ai.prefillAddMed")) },
         { icon: Stethoscope, label: t(language, "ai.askAboutMed"),     run: () => setShowMedPicker(true) },
         { icon: RefreshCw,   label: t(language, "ai.suggestRefills"),  run: () => openChatWith(t(language, "ai.suggestRefills")) },
@@ -722,9 +830,11 @@ export function AskMeiScreen({ patient, patients, selectedPatient, onSelectPatie
                 </div>
               )}
               <div className={`max-w-[82%] flex flex-col gap-1 ${msg.role === "user" ? "items-end" : "items-start"}`}>
-                {msg.image && (
-                  <img src={msg.image} alt={t(language, "ai.attachment")} className="max-w-[70%] rounded-2xl border border-border object-cover" />
-                )}
+                {/* `images` is the current shape; `image` is what conversations
+                    saved before multi-attach still carry. */}
+                {(msg.images ?? (msg.image ? [msg.image] : [])).map((src, ii) => (
+                  <img key={ii} src={src} alt={t(language, "ai.attachment")} className="max-w-[70%] rounded-2xl border border-border object-cover" />
+                ))}
                 <div className={`rounded-2xl px-4 py-3 ${msg.role === "user" ? "bg-primary text-primary-foreground rounded-tr-sm" : "dw-surface rounded-tl-sm"}`}>
                   <p className={`text-[calc(15px*var(--dw-text,1))] leading-relaxed whitespace-pre-line ${msg.role === "user" ? "text-primary-foreground" : "text-foreground"}`}>{renderWithBold(msg.text)}</p>
                 </div>
@@ -740,7 +850,7 @@ export function AskMeiScreen({ patient, patients, selectedPatient, onSelectPatie
                       <button
                         key={ci}
                         onClick={() => send(c.value)}
-                        className="w-full min-h-[44px] px-4 py-2.5 rounded-2xl bg-primary/10 border border-primary/30 text-primary text-[calc(14px*var(--dw-text,1))] font-semibold active:scale-[0.98] transition-transform"
+                        className="w-full min-h-[44px] px-4 py-2.5 rounded-2xl bg-primary text-primary-foreground text-[calc(14px*var(--dw-text,1))] font-semibold active:scale-[0.98] transition-transform"
                       >
                         {c.label}
                       </button>
@@ -864,18 +974,42 @@ export function AskMeiScreen({ patient, patients, selectedPatient, onSelectPatie
           field (as on the elder screen): as outside buttons they left the text
           box barely wider than the buttons themselves. */}
       <div className="px-4 pb-4 pt-2 border-t border-border/60 shrink-0">
-        {pendingImage && (
-          <div className="flex items-center gap-2.5 mb-2 bg-secondary border border-primary/20 rounded-xl p-2">
-            <img src={pendingImage.url} alt={t(language, "ai.attachment")} className="w-12 h-12 rounded-lg object-cover shrink-0" />
-            <span className="flex-1 text-[calc(13px*var(--dw-text,1))] text-secondary-foreground font-semibold">{t(language, "ai.photoAttachedHint")}</span>
-            <button onClick={() => setPendingImage(null)} aria-label={t(language, "common.cancel")} className="w-7 h-7 rounded-full bg-muted flex items-center justify-center text-muted-foreground shrink-0">
-              <X size={14} />
-            </button>
+        {pendingImages.length > 0 && (
+          <div className="mb-2 bg-secondary border border-primary/20 rounded-xl p-2">
+            <div className="flex gap-2 overflow-x-auto scrollbar-none">
+              {pendingImages.map((img, i) => (
+                <div key={i} className="relative shrink-0">
+                  <img src={img.dataUrl} alt={t(language, "ai.attachment")} className="w-12 h-12 rounded-lg object-cover" />
+                  {/* Per-thumbnail remove, so getting one wrong out of four
+                      doesn't mean starting the whole attachment over. */}
+                  <button
+                    onClick={() => setPendingImages(prev => prev.filter((_, j) => j !== i))}
+                    aria-label={t(language, "ai.removePhoto", { n: i + 1 })}
+                    className="absolute -top-1.5 -right-1.5 w-5 h-5 rounded-full bg-muted border border-border flex items-center justify-center text-muted-foreground"
+                  >
+                    <X size={12} />
+                  </button>
+                </div>
+              ))}
+            </div>
+            <p className="mt-1.5 text-[calc(13px*var(--dw-text,1))] text-secondary-foreground font-semibold">
+              {pendingImages.length === 1
+                ? t(language, "ai.photoAttachedHint")
+                : t(language, "ai.photosAttachedHint", { count: pendingImages.length })}
+            </p>
+            {attachNotice && (
+              <p className="mt-1 text-[calc(12px*var(--dw-text,1))] text-muted-foreground">{attachNotice}</p>
+            )}
           </div>
         )}
         <div className="flex gap-2 items-end">
           <div className="flex-1 min-w-0 bg-input-background rounded-2xl border border-border min-h-11 flex items-end gap-0.5 pl-1.5 pr-3 py-1.5">
-            <button onClick={() => setPickerFor("rx")} aria-label={t(language, "common.addPrescription")} className="w-8 h-8 rounded-full flex items-center justify-center text-muted-foreground shrink-0 active:bg-muted transition-colors">
+            {/* Assigns the intent FALSE rather than leaving it: cancelling a
+                native file dialog fires no change event, so a stale `true` from
+                an abandoned "add a medicine from a photo" would otherwise put
+                that prefill on the next plain attach. Both entry points set it,
+                so there is no path that inherits the other's value. */}
+            <button onClick={() => { addMedIntentRef.current = false; setPickerFor("rx"); }} aria-label={t(language, "common.addPrescription")} className="w-8 h-8 rounded-full flex items-center justify-center text-muted-foreground shrink-0 active:bg-muted transition-colors">
               <Camera size={17} />
             </button>
             {SpeechRecognitionImpl && (
@@ -888,7 +1022,7 @@ export function AskMeiScreen({ patient, patients, selectedPatient, onSelectPatie
               value={input}
               onChange={e => setInput(e.target.value)}
               onKeyDown={e => { if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); handleSend(); } }}
-              placeholder={t(language, pendingImage ? "ai.photoNotePlaceholder" : "ai.askAnything")}
+              placeholder={t(language, pendingImages.length ? "ai.photoNotePlaceholder" : "ai.askAnything")}
               className="flex-1 min-w-0 bg-transparent text-foreground text-[calc(15px*var(--dw-text,1))] resize-none outline-none max-h-24 leading-relaxed py-1.5 placeholder:text-muted-foreground"
               rows={1}
             />
@@ -911,18 +1045,46 @@ export function AskMeiScreen({ patient, patients, selectedPatient, onSelectPatie
       <input ref={reportCameraRef} type="file" accept="image/*" capture="environment" className="sr-only" onChange={onReportFile} />
       <input ref={reportLibraryRef} type="file" accept="image/*,application/pdf" className="sr-only" onChange={onReportFile} />
       <input ref={rxCameraRef} type="file" accept="image/*" capture="environment" className="sr-only" onChange={onRxPhotoFile} />
-      <input ref={rxLibraryRef} type="file" accept="image/*" className="sr-only" onChange={onRxPhotoFile} />
+      {/* `multiple` on the library input only: capture="environment" opens the
+          camera, which takes one shot at a time by definition. */}
+      <input ref={rxLibraryRef} type="file" accept="image/*" multiple data-walk="cg-rx-attach-library" className="sr-only" onChange={onRxPhotoFile} />
       {pickerFor && (
         <PhotoSourceSheet
           onTakePhoto={() => {
-            (pickerFor === "rx" ? rxCameraRef : reportCameraRef).current?.click();
+            setCameraFor(pickerFor);
             setPickerFor(null);
           }}
           onChooseFile={() => {
             (pickerFor === "rx" ? rxLibraryRef : reportLibraryRef).current?.click();
             setPickerFor(null);
           }}
-          onClose={() => setPickerFor(null)}
+          onTypeMyself={pickerFor === "report" ? () => {
+            setPickerFor(null);
+            openChatWith(t(language, "ai.prefillUpdateProfile"));
+          } : undefined}
+          // Backing out of the sheet must also drop the add-a-medicine intent,
+          // or it would leak onto whatever the NEXT attach happens to be.
+          onClose={() => { addMedIntentRef.current = false; setPickerFor(null); }}
+        />
+      )}
+
+      {cameraFor && (
+        <CameraSheet
+          facing="environment"
+          onCapture={file => {
+            const which = cameraFor;
+            setCameraFor(null);
+            if (which === "rx") void handleRxPhotos([file]);
+            else void handleReportFile(file);
+          }}
+          // Same rule as the picker sheet's own onClose: backing out must drop
+          // the add-a-medicine intent, or it leaks onto the next attachment.
+          onClose={() => { addMedIntentRef.current = false; setCameraFor(null); }}
+          onFallback={() => {
+            const which = cameraFor;
+            setCameraFor(null);
+            (which === "rx" ? rxCameraRef : reportCameraRef).current?.click();
+          }}
         />
       )}
 

@@ -373,6 +373,44 @@ def test_soul_answers_fully_and_drops_unconditional_doctor_offer():
     assert "offer to queue the question for their doctor" not in SYSTEM_PROMPT
 
 
+def test_soul_rail3_dose_and_course_rules():
+    """Rail 3 must (a) forbid inventing a dose — ask first, fall back to 'as
+    directed' only when the person doesn't know it — and (b) carry the course
+    duration AND the dose times through both the tool call and the walkthrough
+    params."""
+    from hermes.agent.prompts import SYSTEM_PROMPT
+
+    assert "NEVER guess a number" in SYSTEM_PROMPT
+    assert "as directed" in SYSTEM_PROMPT
+    assert "check the label or ask their pharmacist" in SYSTEM_PROMPT
+    # The walkthrough commit template passes the course through (whitespace
+    # normalized so soul.md line wrapping can't break the assertion).
+    flat = " ".join(SYSTEM_PROMPT.split())
+    template = (
+        'start_walkthrough("add_prescription_auto", '
+        "{name, dose, purpose, times, duration_days})"
+    )
+    assert template in flat
+    # `times` is the 2026-08-10 fix: without it in the params the app files
+    # every walkthrough-added medicine at the person's breakfast time, so
+    # "one at 12 pm" became an 8am reminder. It must be a COMMA-SEPARATED
+    # STRING — start_walkthrough str()-coerces params, so a list arrives at
+    # the browser as the literal "['12:00']".
+    assert 'times: "08:00,20:00"' in flat
+    assert "comma-separated" in flat
+    # (c) A PHOTO is not an interview. The reported behaviour was Mei answering
+    # a label upload with "Dosage: how many drops? Frequency: how often?
+    # Purpose: what is it treating?" — three questions whose answers were
+    # printed on the thing just handed to her. Purely additive to the rules
+    # above: every assertion in this test still holds, and a SPOKEN
+    # prescription with no label still asks for what it wasn't told.
+    assert "FROM A PHOTO, FILL IT IN" in SYSTEM_PROMPT
+    assert "the photo is the answer" in flat
+    # `frequency` was named here but reached nothing: it is not in the
+    # start_walkthrough schema and no client step builder reads it.
+    assert "purpose, frequency" not in flat
+
+
 async def test_get_drug_info_unreachable_reports_transient(monkeypatch):
     """When OpenFDA is unreachable (network error), the reply must say 'try again',
     not 'no such drug' — and must not invent facts."""

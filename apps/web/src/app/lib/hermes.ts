@@ -160,7 +160,11 @@ async function postAgentTurn(path: string, jwt: string, body: Record<string, unk
 // error — same pattern as the Telegram channel's try/except around run_agent_turn.
 export async function agentTurn(
   message: string,
-  imageBase64?: string,
+  // Every photo staged on this turn. Sent as `images_base64`, the list form
+  // Hermes added for the web composer's multi-attach; the older single
+  // `image_base64` field still exists server-side for Telegram, so nothing
+  // here needs to fill it.
+  imagesBase64?: string[],
   pdfBase64?: string,
   completedWalkthroughs?: string[],
   // Which shell is asking. Hermes only offers walkthroughs that can actually
@@ -180,7 +184,7 @@ export async function agentTurn(
 
     const resp = await postAgentTurn("/agent/turn", session.access_token, {
       message,
-      image_base64: imageBase64,
+      images_base64: imagesBase64?.length ? imagesBase64 : undefined,
       pdf_base64: pdfBase64,
       reply_language: replyLanguage,
       completed_walkthroughs: completedWalkthroughs ?? [],
@@ -240,7 +244,8 @@ export interface AgentTurnEvent {
 export async function agentTurnStream(
   message: string,
   onEvent: (event: AgentTurnEvent) => void,
-  imageBase64?: string,
+  // See agentTurn above — the list form, one entry per staged photo.
+  imagesBase64?: string[],
   pdfBase64?: string,
   completedWalkthroughs?: string[],
   // Which shell is asking. Hermes only offers walkthroughs that can actually
@@ -258,7 +263,7 @@ export async function agentTurnStream(
 
     const resp = await postAgentTurn("/agent/turn/stream", session.access_token, {
       message,
-      image_base64: imageBase64,
+      images_base64: imagesBase64?.length ? imagesBase64 : undefined,
       pdf_base64: pdfBase64,
       reply_language: replyLanguage,
       completed_walkthroughs: completedWalkthroughs ?? [],
@@ -357,6 +362,62 @@ export async function extractProfile(
     return { fields: data.fields ?? {}, note: data.note ?? undefined };
   } catch (err) {
     console.warn("[dosewise] extractProfile: request failed before a reply", err);
+    return { fields: {} };
+  }
+}
+
+// Structured fields read off a medication label by Hermes's /prescription/extract
+// (snake_case mirrors agent/extract.py::_RX_SCHEMA).
+export interface ExtractedPrescription {
+  name?: string;
+  dose?: string;
+  purpose?: string;
+  /** 24h HH:MM clock times. A real array — see the route's own note. */
+  times?: string[];
+  frequency?: string;
+  duration_days?: number;
+  instructions?: string;
+  /** Fields the model DERIVED rather than read off the label. The form marks
+   *  these "Please check" — the client cannot re-derive this, so it is the only
+   *  signal distinguishing "printed on the box" from "worked out". */
+  inferred?: string[];
+}
+export interface ExtractPrescriptionResult {
+  fields: ExtractedPrescription;
+  note?: string;
+}
+
+// Read a prescription label into fields the add-prescription form pre-fills.
+// The counterpart to extractProfile, and deliberately NOT the chat loop: the
+// AI's job on this path ends at reading the photo, and the person confirms by
+// saving the form. Same failure posture — empty fields on any error, so the
+// sheet falls back to asking Mei in chat rather than dead-ending.
+export async function extractPrescription(
+  imageBase64?: string,
+  pdfBase64?: string
+): Promise<ExtractPrescriptionResult> {
+  try {
+    const { data } = await supabase.auth.getSession();
+    const resp = await fetch(`${HERMES_URL}/prescription/extract`, {
+      method: "POST",
+      headers: hermesHeaders(),
+      body: JSON.stringify({
+        image_base64: imageBase64,
+        pdf_base64: pdfBase64,
+        // Optional on the server; when present it buys a per-user rate-limit
+        // bucket instead of sharing the coarse per-IP one.
+        jwt: data.session?.access_token,
+      }),
+    });
+    if (!resp.ok) {
+      const detail = await resp.text().catch(() => "");
+      console.warn(`[dosewise] extractPrescription: HTTP ${resp.status} from /prescription/extract`, detail);
+      return { fields: {} };
+    }
+    const body = await resp.json();
+    return { fields: body.fields ?? {}, note: body.note ?? undefined };
+  } catch (err) {
+    console.warn("[dosewise] extractPrescription: request failed before a reply", err);
     return { fields: {} };
   }
 }

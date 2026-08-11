@@ -344,7 +344,12 @@ export function TimesPicker({ times, onChange, label, routine, "data-walk": data
                   className={`flex-1 flex items-center gap-2.5 rounded-xl border px-3 py-2.5 text-left transition-colors ${editing === i ? "bg-secondary border-primary" : "bg-input-background border-border"}`}
                 >
                   <Clock size={15} className="text-primary shrink-0" />
-                  <span className="flex-1 text-base font-semibold text-foreground">{formatClock(hhmm, timeFormat)}</span>
+                  {/* data-walk on the VALUE, not the row: the walkthrough's
+                      Confirm recap reads it through WalkthroughReview's
+                      readValues, which falls back to textContent — the row
+                      button would also drag in the "Change" affordance's own
+                      label. */}
+                  <span data-walk="rx-time-value" className="flex-1 text-base font-semibold text-foreground">{formatClock(hhmm, timeFormat)}</span>
                   <span className="text-[calc(11px*var(--dw-text,1))] text-muted-foreground">{t(language, "times.change")}</span>
                 </button>
                 <button

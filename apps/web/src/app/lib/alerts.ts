@@ -16,6 +16,7 @@
  */
 import type { Medication, Message } from "../types";
 import type { NotificationPrefs } from "../accessibility";
+import type { ElderlyTab } from "../screens/elderly/types";
 import type { PendingLinkRequest } from "./careLinks";
 import { isDueOn, isoDate, to24h, courseDaysLeft, lowSupplyMedications, supplyDaysLeft, LOW_SUPPLY_DAYS, REFILL_PROMPT_DAYS } from "./medications";
 
@@ -25,6 +26,14 @@ import { isDueOn, isoDate, to24h, courseDaysLeft, lowSupplyMedications, supplyDa
 // REFILL_PROMPT_DAYS (15) offers the action, LOW_SUPPLY_DAYS (10) turns it red,
 // this one interrupts.
 export const CRITICAL_SUPPLY_DAYS = 3;
+
+// How long past its slot an ORDINARY (non-critical) dose must be before it
+// becomes an alert. Matches ElderlyHomeScreen's DUE_WINDOW_MIN (60): while the
+// Home timeline still calls a dose "due now / a bit late", an interrupt
+// calling it "missed" would contradict the screen it routes to. Critical
+// medicines keep their zero-grace behaviour — the scheduler escalates on
+// exactly that signal.
+export const MISSED_DOSE_GRACE_MIN = 60;
 
 // Quiet hours when the person's own routine doesn't say otherwise. Matches the
 // shape dosing.py::in_quiet_hours reads from care_links.permissions.
@@ -36,6 +45,7 @@ export type AlertKind =
   | "out_of_supply"
   | "low_supply"
   | "missed_critical"
+  | "missed_dose"
   | "care_link_request"
   | "care_message"
   | "course_finished"
@@ -95,11 +105,16 @@ export function buildAlerts({
   medications,
   careMessages = [],
   linkRequests = [],
+  doseSnoozes = [],
   now = new Date(),
 }: {
   medications: Medication[];
   careMessages?: Message[];
   linkRequests?: PendingLinkRequest[];
+  /** Mei's snooze_dose entries (patient.doseSnoozes) — a snoozed slot's due
+   *  time shifts to its `until`, so an alert can never nag someone who just
+   *  told Mei "not yet". */
+  doseSnoozes?: { medication_id: string; slot: string; date: string; until: string }[];
   now?: Date;
 }): Alert[] {
   const out: Alert[] = [];
@@ -140,23 +155,43 @@ export function buildAlerts({
     });
   }
 
-  // --- a missed dose of a CRITICAL medicine -------------------------------
-  // Only critical, deliberately: this is the tier that may interrupt, and the
-  // Hermes scheduler already escalates on exactly this signal
-  // (channels/scheduler.py). Ordinary missed doses stay on the Home timeline.
+  // --- missed doses ---------------------------------------------------------
+  // Two tiers off one loop. CRITICAL medicines interrupt the moment the slot
+  // passes (severity "critical" — the Hermes scheduler escalates to the
+  // caregiver on exactly this signal, channels/scheduler.py). ORDINARY
+  // medicines (2026-08-09) get the gentler "urgent" tier — bell popup once a
+  // day, Reminders card, badge — and only after MISSED_DOSE_GRACE_MIN, so the
+  // Home timeline's "due now" window and this alert can't contradict each
+  // other. Both share the missedDoseAlerts toggle and the day-scoped id shape
+  // (the sessionStorage dedupe key).
   const today = isoDate(now);
   const nowMinutes = now.getHours() * 60 + now.getMinutes();
   for (const med of medications) {
-    if (med.priority !== "critical") continue;
     if (med.status === "taken" || med.status === "skipped") continue;
     if (!isDueOn(med, now)) continue;
-    if (minutesOf(med.time) >= nowMinutes) continue;
+    const critical = med.priority === "critical";
+    // A vague slot ("after breakfast") has no real clock: to24h's "08:00"
+    // fallback would nag at a fictional time, so the ordinary tier skips it.
+    // Critical keeps its long-standing fallback behaviour — a known
+    // limitation, kept rather than silently changing the escalation tier.
+    if (!critical && !/^\d{1,2}:\d{2}\s*(AM|PM)$/i.test(med.time.trim())) continue;
+    // A snooze for this exact (med, slot, today) moves the due time to its
+    // `until` — for BOTH tiers; Mei's snooze_dose is the person's own "not
+    // yet", and an alert that ignores it re-nags them for complying.
+    const snooze = doseSnoozes.find(
+      s => s.medication_id === med.medicationId && s.date === today && s.slot === to24h(med.time),
+    );
+    const dueMinutes = snooze
+      ? (([h, m]) => (h || 0) * 60 + (m || 0))(snooze.until.split(":").map(Number))
+      : minutesOf(med.time);
+    const lateBy = nowMinutes - dueMinutes;
+    if (critical ? lateBy <= 0 : lateBy < MISSED_DOSE_GRACE_MIN) continue;
     out.push({
       id: `missed:${med.medicationId ?? med.name}|${med.time}|${today}`,
-      kind: "missed_critical",
-      severity: "critical",
-      titleKey: "alerts.missedCriticalTitle",
-      bodyKey: "alerts.missedCriticalBody",
+      kind: critical ? "missed_critical" : "missed_dose",
+      severity: critical ? "critical" : "urgent",
+      titleKey: critical ? "alerts.missedCriticalTitle" : "alerts.missedDoseTitle",
+      bodyKey: critical ? "alerts.missedCriticalBody" : "alerts.missedDoseBody",
       params: { med: med.name, time: med.time },
       medicationId: med.medicationId,
       medName: med.name,
@@ -215,24 +250,117 @@ export function buildAlerts({
 }
 
 /**
- * The ONE alert allowed to interrupt with a full-screen popup, or null.
+ * Which alerts share ONE popup.
+ *
+ * Three missed doses are one situation, not three interruptions — the popup
+ * used to show the first, then the second half an hour later, then the third,
+ * each looking identical and none of them saying "three".
+ *
+ * Two kinds are deliberately absent, and must stay absent:
+ *   - `care_link_request` — "2 people want access" behind one Show me is a
+ *     consent prompt that hides who is asking, and care_links is this app's
+ *     consent anchor.
+ *   - `agent` — its title and body are PROSE the model wrote (see ElderlyApp's
+ *     handleAgentAlert), so there is nothing the client could summarise them
+ *     into without inventing text.
+ */
+const POPUP_FAMILY: Partial<Record<AlertKind, string>> = {
+  missed_critical: "missed",
+  missed_dose: "missed",
+  out_of_supply: "supply",
+  low_supply: "supply",
+};
+
+/** One interruption's worth of alerts. */
+export interface AlertGroup {
+  /** Stable per family per day — the dedupe handle AND the escalation key. */
+  id: string;
+  /** The most severe member: drives the tier, the destination and the actions. */
+  lead: Alert;
+  /** Everything folded into this popup, `lead` included, most severe first. */
+  members: Alert[];
+  /** Which interrupt this is, counting from 1 — what the popup's meter shows. */
+  raiseCount: number;
+  /** How many this group gets at all, so the meter can render "n of max". */
+  raiseMax: number;
+}
+
+/**
+ * How long before a group may interrupt AGAIN, indexed by how many times it
+ * already has. Frequency backs off as prominence escalates: the situation is
+ * getting more insistent to look at and less frequent to be hit by.
+ *
+ * The LENGTH of each ladder is the anti-nag guarantee — past its end a group
+ * never interrupts again that day and lives on the Reminders tab and the nav
+ * badge instead. Without a ceiling, an unresolved situation interrupts forever,
+ * which is how a modal becomes wallpaper.
+ */
+const COOLDOWN_LADDER_MS: Record<"urgent" | "critical", number[]> = {
+  urgent: [30 * 60_000, 2 * 3_600_000, 4 * 3_600_000],
+  critical: [20 * 60_000, 45 * 60_000, 90 * 60_000, 3 * 3_600_000, 6 * 3_600_000],
+};
+
+const ladderFor = (severity: AlertSeverity) =>
+  COOLDOWN_LADDER_MS[severity === "critical" ? "critical" : "urgent"];
+
+/** How many times this tier may interrupt in one sitting. */
+export const maxRaisesFor = (severity: AlertSeverity): number => ladderFor(severity).length;
+
+/**
+ * The cooldown to set after an interrupt. `raiseCount` counts from 1.
+ * Returns null once the ladder is exhausted — the caller's signal to mark the
+ * group done for the day rather than schedule another.
+ */
+export function nextCooldownFor(severity: AlertSeverity, raiseCount: number): number | null {
+  const ladder = ladderFor(severity);
+  return raiseCount >= ladder.length ? null : ladder[raiseCount - 1] ?? ladder[0];
+}
+
+/**
+ * Fold a flat alert list into the interruptions it is worth making.
+ *
+ * Order is preserved rather than re-sorted: `buildAlerts` already sorts most
+ * severe first, and the caller prepends agent alerts on purpose, so the first
+ * family encountered is the one holding the most severe alert — and each
+ * group's first member is therefore its lead.
+ */
+export function groupForPopup(alerts: Alert[]): AlertGroup[] {
+  const byFamily = new Map<string, Alert[]>();
+  const order: string[] = [];
+  for (const alert of alerts) {
+    const family = POPUP_FAMILY[alert.kind];
+    const id = family ? `group:${family}` : `group:${alert.id}`;
+    if (!byFamily.has(id)) { byFamily.set(id, []); order.push(id); }
+    byFamily.get(id)!.push(alert);
+  }
+  return order.map(id => {
+    const members = byFamily.get(id)!;
+    return { id, lead: members[0], members, raiseCount: 1, raiseMax: maxRaisesFor(members[0].severity) };
+  });
+}
+
+/**
+ * The ONE group allowed to interrupt with a full-screen popup, or null.
  *
  * An elder app that pops a modal too often is worse than one that never does,
  * so every rule here is a reason NOT to fire. Nothing outside this function
  * decides whether the popup appears.
  */
-export function pickPopupAlert(
-  alerts: Alert[],
+export function pickPopupGroup(
+  groups: AlertGroup[],
   {
     popped,
+    raises = {},
     prefs,
     suppressed = false,
     quiet = false,
     cooldownUntil = 0,
     now = Date.now(),
   }: {
-    /** Alert ids already popped today, persisted across remounts. */
+    /** Alert AND group ids already popped today, persisted across remounts. */
     popped: Set<string>;
+    /** Group id -> how many times it has interrupted this sitting. */
+    raises?: Record<string, number>;
     prefs: NotificationPrefs;
     /** A walkthrough, tour, or sheet is on screen — never stack modals. */
     suppressed?: boolean;
@@ -240,18 +368,117 @@ export function pickPopupAlert(
     cooldownUntil?: number;
     now?: number;
   },
-): Alert | null {
+): AlertGroup | null {
   if (suppressed || now < cooldownUntil) return null;
-  for (const alert of alerts) {
+  for (const group of groups) {
+    const { lead } = group;
     // Only the top two tiers ever interrupt. A notice belongs in the list.
-    if (alert.severity === "notice") continue;
-    if (!prefs[alert.pref]) continue;
-    if (popped.has(alert.id)) continue;
+    if (lead.severity === "notice") continue;
+    if (!prefs[lead.pref]) continue;
+    // The group id is written once its ladder runs out — done for the day.
+    if (popped.has(group.id)) continue;
+    // Nothing in it is new: every member has already had its interrupt. A
+    // fresh member (a fourth dose missed after the first three were dismissed)
+    // re-opens the group, subject to the ladder below.
+    if (group.members.every(m => popped.has(m.id))) continue;
     // Quiet hours are overridden ONLY by the two things that are actually
     // dangerous to sit on overnight — mirroring channels/scheduler.py, which
     // never quiet-suppresses a missed critical dose.
-    if (quiet && !(alert.severity === "critical")) continue;
-    return alert;
+    if (quiet && !(lead.severity === "critical")) continue;
+    const already = raises[group.id] ?? 0;
+    if (already >= maxRaisesFor(lead.severity)) continue;
+    return { ...group, raiseCount: already + 1 };
   }
   return null;
 }
+
+/**
+ * The single alert that would interrupt — `pickPopupGroup`'s lead.
+ *
+ * Kept as the thin wrapper it now is because its test suite is the regression
+ * proof for every rule above (tier, preference toggle, dedupe, cooldown, quiet
+ * hours, suppression); those cases pass unchanged through the grouping.
+ */
+export function pickPopupAlert(
+  alerts: Alert[],
+  opts: Parameters<typeof pickPopupGroup>[1],
+): Alert | null {
+  return pickPopupGroup(groupForPopup(alerts), opts)?.lead ?? null;
+}
+
+/** Where an alert is actually actionable, and on what. */
+export interface AlertDestination {
+  tab: ElderlyTab;
+  /** The medicine to open (Medications) or scroll to (Home) once there.
+   *  Both are carried because `medicationId` is absent on demo/local rows —
+   *  buildAlerts falls back to the name in the alert id for the same reason —
+   *  so consumers match on the id first and the name second. Undefined on
+   *  alerts with no backing medicine (care messages, link requests, agent
+   *  notices), which is also what makes `canTellCaregiver` below decidable. */
+  focusMedicationId?: string;
+  focusMedName?: string;
+}
+
+/**
+ * Alert kind → where to land, so "something is wrong" and "here is the thing
+ * that is wrong" are never two different answers.
+ *
+ * Same job as lib/changeHighlight.ts's ENTITY_TARGETS and lib/agentActions.ts's
+ * ACTION_TARGETS — a table in lib/, not a ternary at a call site. It lived as an
+ * inline ternary inside ElderlyApp's popup until 2026-08-09, which is why only
+ * the popup could route at all and the Reminders cards were inert.
+ *
+ * Elder-only, deliberately: the caregiver shell has its own unrelated
+ * `Notification` type and its own screens.
+ */
+export function destinationFor(alert: Alert): AlertDestination {
+  const med = { focusMedicationId: alert.medicationId, focusMedName: alert.medName };
+  switch (alert.kind) {
+    // Supply and a finished course are both answered on the medicine itself.
+    case "out_of_supply":
+    case "low_supply":
+    case "course_finished":
+      return { tab: "prescriptions", ...med };
+    // A missed dose is ticked off on the Home timeline, not in the med list.
+    case "missed_critical":
+    case "missed_dose":
+      return { tab: "home", ...med };
+    // Link requests and care messages are answered where they already are, and
+    // an agent notice has no backing entity at all — see UrgentAlertPopup's
+    // "absent when the alert has nowhere specific to go" contract, which the
+    // `tab === "notifications"` test below is what finally makes real.
+    default:
+      return { tab: "notifications" };
+  }
+}
+
+/** True when there is somewhere else to travel to — the person is already
+ *  looking at the card when an alert's destination is the Reminders tab. */
+export function canViewAlert(alert: Alert): boolean {
+  return destinationFor(alert).tab !== "notifications";
+}
+
+/** True when the alert is about a MEDICINE, i.e. there is something concrete to
+ *  tell a caregiver about. Never offered on a care message — that one already
+ *  came FROM them. */
+export function canTellCaregiver(alert: Alert): boolean {
+  const dest = destinationFor(alert);
+  return !!(dest.focusMedicationId || dest.focusMedName);
+}
+
+/**
+ * WHY THE POPUP NO LONGER OFFERS "Tell my caregiver" (2026-08-11).
+ *
+ * `canTellCaregiver` is still live — the Reminders cards
+ * (ElderlyNotificationsScreen) call it, and an inbox somebody chose to open can
+ * afford more options than an interruption. But the POPUP's copy of it is gone,
+ * and it turns out that removes the button entirely rather than narrowing it:
+ * the only kinds it was ever true for are the medicine-backed ones (missed
+ * doses, low/out of supply), which are precisely the ones a person answers
+ * themselves on a screen one tap away. Every other kind that can interrupt —
+ * a link request, a care message, an `agent` alert — already got `false` here,
+ * because destinationFor gives none of them a focusMedication.
+ *
+ * So there is deliberately no `popupActionsFor` table: it would have exactly
+ * one live field. UrgentAlertPopup simply has no onTellCaregiver prop now.
+ */

@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { CheckCircle2, AlertTriangle, Circle, X, ChevronDown, Plus, QrCode, User } from "lucide-react";
+import { CheckCircle2, AlertTriangle, Circle, X, ChevronDown, Plus, QrCode } from "lucide-react";
 import type { MedStatus, Patient } from "../types";
 import type { TimeFormat } from "../accessibility";
 import { formatClockAt } from "../lib/medications";
@@ -46,10 +46,21 @@ export function ProfileAvatar({ photo, size, className = "" }: { photo?: string;
           `translate` property rather than `transform: translate(...)`, which
           is real but newer and not guaranteed everywhere `transform` is —
           this keeps centering on the one mechanism every renderer supports. */}
-      <User
-        size={Math.round(size * 0.55)}
+      {/* Hand-rolled FILLED silhouette, not lucide's User — lucide ships
+          outline glyphs, and an empty avatar should read as the familiar
+          solid placeholder person (same rationale as the status-bar icons
+          below). currentColor keeps it on text-muted-foreground. */}
+      <svg
+        width={Math.round(size * 0.55)}
+        height={Math.round(size * 0.55)}
+        viewBox="0 0 24 24"
+        fill="currentColor"
+        aria-hidden="true"
         style={{ position: "absolute", top: "50%", left: "50%", transform: "translate(-50%, -50%)" }}
-      />
+      >
+        <circle cx="12" cy="7.2" r="4.4" />
+        <path d="M12 13.4c-5.2 0-8.4 2.7-8.4 6.4 0 .9.7 1.6 1.6 1.6h13.6c.9 0 1.6-.7 1.6-1.6 0-3.7-3.2-6.4-8.4-6.4z" />
+      </svg>
     </div>
   );
 }
@@ -281,7 +292,7 @@ export function PatientSwitcher({ patients, selected, onSelect, onAdd, onScan }:
             <>
               {onScan && (
                 <button onClick={() => { setOpen(false); onScan(); }} data-walk="patientswitcher-scan-qr" className="flex items-center gap-3 w-full px-3 py-2.5 text-left hover:bg-muted border-t border-border">
-                  <div className="w-8 h-8 rounded-full bg-primary/10 flex items-center justify-center">
+                  <div className="w-8 h-8 rounded-xl bg-secondary flex items-center justify-center">
                     <QrCode size={14} className="text-primary" />
                   </div>
                   <span className="text-xs text-foreground font-medium">{t(language, "patientSwitcher.scanQr")}</span>

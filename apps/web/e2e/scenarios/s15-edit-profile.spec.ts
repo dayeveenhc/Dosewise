@@ -97,8 +97,8 @@ test("s15 edit-profile: 'update my weight to 64 kilos' -> edit_profile_auto fill
   // verify/reveal tail runs after that.
   // Each autonomous step now holds at its commit gate until the person taps
   // Next, so tap through the fills to reach the Confirm recap step.
-  await advanceWalkthroughUntil(page, () => page.getByText("tap Save yourself", { exact: false }).isVisible());
-  await expect(page.getByText("tap Save yourself", { exact: false }), "Confirm (recap) step reached").toBeVisible({ timeout: 20_000 });
+  await advanceWalkthroughUntil(page, () => page.getByText("when it looks right, tap Next", { exact: false }).isVisible());
+  await expect(page.getByText("when it looks right, tap Next", { exact: false }), "Confirm (recap) step reached").toBeVisible({ timeout: 20_000 });
   await tapWalkthroughNext(page); // onto the real Submit waitFor step
   await page.locator('[data-walk="elder-profile-save"]').click();
 
@@ -190,8 +190,8 @@ test("s15 edit-profile: a blocked profile write is CAUGHT by Verify — honest e
   // false success, never a reveal.
   await advanceWalkthroughToStep(page, 3);
   await expect(page.locator('[data-walk="elder-profile-weight"]')).toHaveValue(WEIGHT, { timeout: 15_000 });
-  await advanceWalkthroughUntil(page, () => page.getByText("tap Save yourself", { exact: false }).isVisible());
-  await expect(page.getByText("tap Save yourself", { exact: false }), "Confirm (recap) step reached").toBeVisible({ timeout: 20_000 });
+  await advanceWalkthroughUntil(page, () => page.getByText("when it looks right, tap Next", { exact: false }).isVisible());
+  await expect(page.getByText("when it looks right, tap Next", { exact: false }), "Confirm (recap) step reached").toBeVisible({ timeout: 20_000 });
   await tapWalkthroughNext(page); // onto the real Submit waitFor step
   await page.locator('[data-walk="elder-profile-save"]').click();
   await expect(page.getByText("I couldn't confirm that saved", { exact: false }), "honest walk.verifyFailed shown").toBeVisible({ timeout: 25_000 });

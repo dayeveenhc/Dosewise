@@ -67,7 +67,10 @@ export type WaitFor =
   | { type: "automatic-detection"; source: "app-event"; event: string }
   | { type: "agent-action-committed"; source: "app-event"; tool: string }
   | { type: "write-committed"; source: "app-event"; event: string }
-  | { type: "acknowledge"; source: "dom" };
+  // `selector` widens the LISTENER when the spotlight narrows to a landmark
+  // inside a bigger surface (the schedule's "now" line) — the tap still counts
+  // anywhere on the surface itself.
+  | { type: "acknowledge"; source: "dom"; selector?: string };
 
 // Real VALUES (never selectors) passed from Mei's start_walkthrough tool into an
 // autonomous walkthrough's fill/verify steps — e.g. {name, dose, purpose} for

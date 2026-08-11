@@ -18,18 +18,19 @@ import { isoDate } from "./medications";
 
 const KEY_PREFIX = "dosewise:alertsPopped";
 
-// Two urgent things at once should not be two modals. The second is still on
-// the Reminders tab and still badged; it just doesn't interrupt.
-export const ALERT_POPUP_COOLDOWN_MS = 30 * 60 * 1000;
-
 export interface AlertPopupState {
   /** `${alertId}|${YYYY-MM-DD}` — day-scoped so a genuinely new day re-alerts. */
   popped: string[];
   /** Epoch ms; nothing may interrupt before this. */
   cooldownUntil: number;
+  /** `${groupId}|${YYYY-MM-DD}` -> how many times that group has interrupted.
+   *  Drives BOTH ladders in lib/alerts.ts: the cooldown that follows, and the
+   *  insistence meter the popup shows. "One sitting" needs no extra concept —
+   *  this whole record is sessionStorage, so a session IS a sitting. */
+  raises: Record<string, number>;
 }
 
-const EMPTY: AlertPopupState = { popped: [], cooldownUntil: 0 };
+const EMPTY: AlertPopupState = { popped: [], cooldownUntil: 0, raises: {} };
 
 const key = (shell: string, userId?: string | null) => `${KEY_PREFIX}:${shell}:${userId ?? "anon"}`;
 
@@ -42,6 +43,7 @@ export function loadAlertState(shell: string, userId?: string | null): AlertPopu
     return {
       popped: Array.isArray(parsed.popped) ? parsed.popped : [],
       cooldownUntil: typeof parsed.cooldownUntil === "number" ? parsed.cooldownUntil : 0,
+      raises: parsed.raises && typeof parsed.raises === "object" ? parsed.raises : {},
     };
   } catch {
     return EMPTY;
@@ -57,5 +59,37 @@ export function saveAlertState(shell: string, userId: string | null | undefined,
   }
 }
 
-/** The day-scoped dedupe handle for one alert. */
-export const poppedKey = (alertId: string, now = new Date()) => `${alertId}|${isoDate(now)}`;
+/** The day-scoped dedupe handle for one alert or group. */
+export const poppedKey = (id: string, now = new Date()) => `${id}|${isoDate(now)}`;
+
+/**
+ * TODAY's popped ids, with the day suffix stripped — the shape
+ * `lib/alerts.ts::pickPopupGroup` compares against.
+ *
+ * This exists because the two halves disagreed. The store wrote
+ * `poppedKey(alert.id)` (`"supply:m1|2026-08-11"`) while pickPopupAlert asked
+ * `popped.has(alert.id)` (`"supply:m1"`), so the once-per-day dedupe never
+ * matched anything and the only thing limiting repeat popups was the flat
+ * 30-minute cooldown. The unit tests passed throughout, because they hand in
+ * bare ids — which is exactly the shape this returns, so they still do.
+ *
+ * Filtering by day rather than just splitting on "|" is the load-bearing half:
+ * yesterday's entries must not suppress today's alert, and an id can contain
+ * "|" of its own (`missed:{medId}|{time}|{date}`).
+ */
+export function poppedIdsFor(state: AlertPopupState, now = new Date()): Set<string> {
+  const suffix = `|${isoDate(now)}`;
+  return new Set(
+    state.popped.filter(k => k.endsWith(suffix)).map(k => k.slice(0, -suffix.length)),
+  );
+}
+
+/** Today's raise counts, keyed by bare group id. */
+export function raisesFor(state: AlertPopupState, now = new Date()): Record<string, number> {
+  const suffix = `|${isoDate(now)}`;
+  const out: Record<string, number> = {};
+  for (const [key, count] of Object.entries(state.raises)) {
+    if (key.endsWith(suffix)) out[key.slice(0, -suffix.length)] = count;
+  }
+  return out;
+}

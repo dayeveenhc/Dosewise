@@ -4,6 +4,8 @@ import { Volume2, Mic, Send, AlertTriangle, MessageCircle, Check, Trash2, Camera
 import type { Patient } from "../../types";
 import type { EMsg, ElderlyTab } from "./types";
 import { agentTurnStream, extractProfile, fileToBase64 } from "../../lib/hermes";
+import { prepareAttachment, stripBlobImages, MAX_ATTACHMENTS } from "../../lib/images";
+import type { Attachment } from "../../lib/images";
 import type { AgentTurnEvent, AgentAction, AgentAlert, WalkthroughRisk } from "../../lib/hermes";
 import { firstHighlightable } from "../../lib/changeHighlight";
 import { buttonsFor, lastInteractiveIndex } from "../../lib/chatChoices";
@@ -19,6 +21,7 @@ import { t, LANGUAGE_OPTIONS, speechLangFor } from "../../lib/language";
 import { speakReply as speakUtterance, stopSpeaking } from "../../lib/speech";
 import { ConfirmDialog } from "../../components/ConfirmDialog";
 import { PhotoSourceSheet } from "../../components/PhotoSourceSheet";
+import { CameraSheet } from "../../components/CameraSheet";
 import { BottomSheet } from "../../components/BottomSheet";
 import { HandsHeartIcon, PillBottleIcon, PaletteBrushIcon, PersonIcon } from "../../components/CategoryIcons";
 
@@ -48,12 +51,22 @@ const SESSION_TTL_MS = 30 * 60 * 1000;
 // the persist effect can strip it (it is UI state, never history).
 const LIVE_STEP_ID = -1;
 
-function loadChatSession(key: string): { messages: EMsg[]; startedAt: number } | null {
+// The saved chat: the transcript, the idle-window stamp, and any photos staged
+// on the composer but not yet sent. `attachments` rides in the SAME record so
+// the idle TTL and its restamping cover it for free — a photo attached five
+// minutes ago is exactly as live as a message sent five minutes ago.
+interface SavedChat {
+  messages: EMsg[];
+  startedAt: number;
+  attachments?: Attachment[];
+}
+
+function loadChatSession(key: string): SavedChat | null {
   if (typeof window === "undefined") return null;
   try {
     const raw = sessionStorage.getItem(key);
     if (!raw) return null;
-    const parsed = JSON.parse(raw) as { messages: EMsg[]; startedAt: number };
+    const parsed = JSON.parse(raw) as SavedChat;
     if (Date.now() - parsed.startedAt > SESSION_TTL_MS) return null;
     return parsed;
   } catch {
@@ -198,9 +211,18 @@ export function ElderlyAIScreen({ patient, elderId, onNavigate, onMedsChanged, o
     openChatView ? "chat" : guidedViewActive ? "help" : restored?.messages?.length ? "chat" : "help",
   );
   const [query, setQuery] = useState("");
-  // A photo the user attached but hasn't sent yet — staged so they can type what
-  // they want done with it, instead of us sending a fixed "here's my prescription".
-  const [pendingImage, setPendingImage] = useState<{ base64: string; url: string } | null>(null);
+  // Photos the user attached but hasn't sent yet — staged so they can type what
+  // they want done with them, instead of us sending a fixed "here's my
+  // prescription". Seeded from the restored session for the same reason
+  // `messages` is: this screen unmounts on every bottom-nav switch, and a photo
+  // someone attached and then went to look something up over used to vanish.
+  const [pendingImages, setPendingImages] = useState<Attachment[]>(() => restored?.attachments ?? []);
+  // A photo picked from the "Add a medicine from a photo" row, rather than the
+  // composer's own camera button. Set at tap time and read when the file lands:
+  // `pickerFor` is already cleared by then, and the two entry points otherwise
+  // look identical. A ref, not state — nothing renders from it.
+  const addMedIntentRef = useRef(false);
+  const [attachNotice, setAttachNotice] = useState<string | null>(null);
   const [sending, setSending] = useState(false);
   const [isListening, setIsListening] = useState(false);
   const [isSpeaking, setIsSpeaking] = useState(false);
@@ -215,6 +237,7 @@ export function ElderlyAIScreen({ patient, elderId, onNavigate, onMedsChanged, o
   const rxCameraRef = useRef<HTMLInputElement>(null);
   const rxLibraryRef = useRef<HTMLInputElement>(null);
   const [pickerFor, setPickerFor] = useState<null | "rx" | "report">(null);
+  const [cameraFor, setCameraFor] = useState<null | "rx" | "report">(null);
   const recognitionRef = useRef<any>(null);
   const inputRef = useRef<HTMLTextAreaElement>(null);
   // This screen unmounts on every bottom-nav tab switch. A chat turn is a live
@@ -242,7 +265,7 @@ export function ElderlyAIScreen({ patient, elderId, onNavigate, onMedsChanged, o
     setCategory(null);
     setQuery("");
   }, [guidedViewActive]);
-  const canSend = !!input.trim() || !!pendingImage;
+  const canSend = !!input.trim() || pendingImages.length > 0;
   // The refill walkthrough spotlights a per-medicine button that now only
   // exists below half supply. With nothing low it would dim the screen and
   // point at nothing, so fall back to asking Mei — which always works.
@@ -301,10 +324,31 @@ export function ElderlyAIScreen({ patient, elderId, onNavigate, onMedsChanged, o
       // turn's filter then deleted from under the reader.
       .filter(m => m.id !== LIVE_STEP_ID)
       // blob: object URLs (attached photos) die on a page reload — persisting one
-      // restores a broken-image icon. Drop the ref on save; the message text stays.
-      .map(m => (m.image?.startsWith("blob:") ? { ...m, image: undefined } : m));
-    sessionStorage.setItem(storageKey, JSON.stringify({ messages: persistable, startedAt: startedAtRef.current }));
-  }, [messages, storageKey]);
+      // restores a broken-image icon. Drop the ref on save; the message text
+      // stays. Staged attachments are `data:` URLs (lib/images.ts); this still
+      // catches the report path's one-off URL.createObjectURL, and sweeps
+      // `images` too so no future caller can quietly reintroduce the bug.
+      .map(m => stripBlobImages(m));
+    const record: SavedChat = {
+      messages: persistable,
+      startedAt: startedAtRef.current,
+      attachments: pendingImages,
+    };
+    // sessionStorage is a ~5MB budget for the whole origin and photos are the
+    // only thing here big enough to hit it. A bare setItem would take the
+    // TRANSCRIPT down with the attachments; drop the photos and keep the
+    // conversation instead, which is the half that can't be re-created.
+    try {
+      sessionStorage.setItem(storageKey, JSON.stringify(record));
+    } catch (err) {
+      console.warn("[dosewise] chat session too large to save with attachments", err);
+      try {
+        sessionStorage.setItem(storageKey, JSON.stringify({ ...record, attachments: [] }));
+      } catch (inner) {
+        console.warn("[dosewise] chat session could not be saved at all", inner);
+      }
+    }
+  }, [messages, pendingImages, storageKey]);
 
   // Grow the input with its content instead of staying pinned to one row —
   // without this, once text wraps to a second line the textarea's fixed
@@ -327,6 +371,11 @@ export function ElderlyAIScreen({ patient, elderId, onNavigate, onMedsChanged, o
       if (Date.now() - startedAtRef.current > SESSION_TTL_MS) {
         startedAtRef.current = Date.now();
         setMessages([]);
+        // The staged photos expire WITH the conversation. Left behind they'd
+        // sit on the composer above an empty thread — an attachment with no
+        // remaining context, on a device that may since have changed hands.
+        setPendingImages([]);
+        setAttachNotice(null);
       }
     }, 60_000);
     return () => clearInterval(interval);
@@ -362,14 +411,14 @@ export function ElderlyAIScreen({ patient, elderId, onNavigate, onMedsChanged, o
     rec.start();
   };
 
-  const send = async (text: string, imageBase64?: string, pdfBase64?: string, displayImage?: string) => {
+  const send = async (text: string, imagesBase64?: string[], pdfBase64?: string, displayImages?: string[]) => {
     const trimmed = text.trim();
     if (!trimmed || sending) return;
     // Leaving a category open would strand its title + back arrow in the app
     // header while the conversation is what's actually on screen.
     setMode("chat");
     setCategory(null);
-    setMessages(prev => [...prev, { id: Date.now(), role: "user", text: trimmed, time: nowLabel(), image: displayImage }]);
+    setMessages(prev => [...prev, { id: Date.now(), role: "user", text: trimmed, time: nowLabel(), images: displayImages?.length ? displayImages : undefined }]);
     scrollToBottom(mode === "help"); // sending from the buttons view arrives cold, with no scroll to glide
     setSending(true);
 
@@ -411,7 +460,7 @@ export function ElderlyAIScreen({ patient, elderId, onNavigate, onMedsChanged, o
       }
     };
 
-    const { reply, actions, walkthrough, choices, alert, awaiting_confirmation, rateLimited } = await agentTurnStream(trimmed, onEvent, imageBase64, pdfBase64, completedWalkthroughs, "elder");
+    const { reply, actions, walkthrough, choices, alert, awaiting_confirmation, rateLimited } = await agentTurnStream(trimmed, onEvent, imagesBase64, pdfBase64, completedWalkthroughs, "elder");
     // User switched tabs mid-turn: this screen is gone. Don't touch parent state
     // or navigate/highlight a screen they're no longer on (the callbacks below
     // are parent-owned and survive this unmount).
@@ -476,27 +525,57 @@ export function ElderlyAIScreen({ patient, elderId, onNavigate, onMedsChanged, o
     }
   };
 
-  // Attach a photo: stage it on the composer so the person can type what they
-  // want done with it ("what is this pill?", "add this to my list", …) rather
-  // than us assuming it's a prescription.
-  const onRxPhotoFile = async (e: ChangeEvent<HTMLInputElement>) => {
-    const file = e.target.files?.[0];
+  // Attach one or more photos: stage them on the composer so the person can type
+  // what they want done with them ("what is this pill?", "add this to my list",
+  // …) rather than us assuming it's a prescription.
+  const onRxPhotoFile = (e: ChangeEvent<HTMLInputElement>) => {
+    const picked = Array.from(e.target.files ?? []);
     e.target.value = "";
-    if (!file) return;
+    void handleRxPhotos(picked);
+  };
+
+  // Split from the change handler so the in-app camera feeds the same path.
+  // The add-a-medicine intent is still read-then-cleared FIRST, before the
+  // empty-selection bail, exactly as it was: a cancelled pick must not leave the
+  // intent set for whatever gets attached next.
+  const handleRxPhotos = async (picked: File[]) => {
+    const fromAddMedRow = addMedIntentRef.current;
+    addMedIntentRef.current = false;
+    if (!picked.length) return;
     setMode("chat");
     setCategory(null);
-    setPendingImage({ base64: await fileToBase64(file), url: URL.createObjectURL(file) });
+    setAttachNotice(null);
+
+    // Room left, not "how many they picked": someone can attach twice.
+    const room = MAX_ATTACHMENTS - pendingImages.length;
+    if (picked.length > room) setAttachNotice(t(language, "ai.photoLimitReached", { count: MAX_ATTACHMENTS }));
+    const staged = await Promise.all(picked.slice(0, Math.max(0, room)).map(prepareAttachment));
+    if (staged.length) setPendingImages(prev => [...prev, ...staged]);
+
+    // They came from the row that says "add a medicine from a photo" — say so
+    // for them, instead of making them re-state what they just tapped. Only
+    // when the box is empty: never overwrite words they typed themselves.
+    if (fromAddMedRow && !input.trim()) {
+      openChatWith(t(language, "ai.prefillAddMedPhoto"));
+      return;
+    }
     inputRef.current?.focus();
   };
 
   const handleSend = () => {
     const text = input.trim();
-    if ((!text && !pendingImage) || sending) return;
-    const img = pendingImage;
+    if ((!text && !pendingImages.length) || sending) return;
+    const imgs = pendingImages;
     setInput("");
-    setPendingImage(null);
-    // If they attached a photo but typed nothing, fall back to a neutral prompt.
-    send(text || t(language, "ai.photoDefaultPrompt"), img?.base64, undefined, img?.url);
+    setPendingImages([]);
+    setAttachNotice(null);
+    // If they attached photos but typed nothing, fall back to a neutral prompt.
+    send(
+      text || t(language, "ai.photoDefaultPrompt"),
+      imgs.map(a => a.base64),
+      undefined,
+      imgs.map(a => a.dataUrl),
+    );
   };
 
   // Open the chat with a request already typed in — the elder still taps Send,
@@ -563,6 +642,8 @@ export function ElderlyAIScreen({ patient, elderId, onNavigate, onMedsChanged, o
   const clearChat = () => {
     startedAtRef.current = Date.now();
     setMessages([]);
+    setPendingImages([]);
+    setAttachNotice(null);
     setShowClearConfirm(false);
     setMode("help");
     scrollToBottom();
@@ -573,10 +654,14 @@ export function ElderlyAIScreen({ patient, elderId, onNavigate, onMedsChanged, o
   // profile (existing values kept; new conditions/allergies unioned). We then
   // redirect to Settings so the change is visible + auditable. If nothing
   // structured comes back, fall back to the conversational agent path.
-  const onReportFile = async (e: ChangeEvent<HTMLInputElement>) => {
+  const onReportFile = (e: ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     e.target.value = "";
-    if (!file) return;
+    if (file) void handleReportFile(file);
+  };
+
+  // Split from the change handler so the in-app camera feeds the same path.
+  const handleReportFile = async (file: File) => {
     const b64 = await fileToBase64(file);
     const isPdf = file.type === "application/pdf";
     const msg = t(language, "ai.reportMsgMine");
@@ -587,7 +672,7 @@ export function ElderlyAIScreen({ patient, elderId, onNavigate, onMedsChanged, o
 
     // No identity yet → can't persist; let the agent handle it conversationally.
     if (!elderId) {
-      send(msg, isPdf ? undefined : b64, isPdf ? b64 : undefined);
+      send(msg, isPdf ? undefined : [b64], isPdf ? b64 : undefined);
       return;
     }
 
@@ -598,7 +683,7 @@ export function ElderlyAIScreen({ patient, elderId, onNavigate, onMedsChanged, o
       if (Object.keys(details).length === 0) {
         setSending(false);
         // Nothing structured we can save — fall back to the conversational agent.
-        send(msg, isPdf ? undefined : b64, isPdf ? b64 : undefined);
+        send(msg, isPdf ? undefined : [b64], isPdf ? b64 : undefined);
         return;
       }
       const prof = await fetchProfile(elderId);
@@ -623,7 +708,7 @@ export function ElderlyAIScreen({ patient, elderId, onNavigate, onMedsChanged, o
     } catch (err) {
       console.warn("[dosewise] profile autofill failed:", err);
       setSending(false);
-      send(msg, isPdf ? undefined : b64, isPdf ? b64 : undefined);
+      send(msg, isPdf ? undefined : [b64], isPdf ? b64 : undefined);
     }
   };
 
@@ -649,7 +734,7 @@ export function ElderlyAIScreen({ patient, elderId, onNavigate, onMedsChanged, o
       icon: PillBottleIcon,
       title: t(language, "ai.catMedicines"),
       items: [
-        { icon: Camera,       label: t(language, "ai.rowAddMedPhoto"),           run: () => setPickerFor("rx") },
+        { icon: Camera,       label: t(language, "ai.rowAddMedPhoto"),           run: () => { addMedIntentRef.current = true; setPickerFor("rx"); } },
         { icon: Pill,         label: t(language, "ai.rowAddMed"),                run: () => openChatWith(t(language, "ai.prefillAddMed")) },
         { icon: RefreshCw,    label: t(language, "prescription.requestRefill"),  run: () => (anyRunningLow ? startWalk("request_refill") : openChatWith(t(language, "ai.suggestRefills"))) },
         { icon: Stethoscope,  label: t(language, "ai.askAboutMed"),              run: () => setShowMedPicker(true) },
@@ -768,9 +853,11 @@ export function ElderlyAIScreen({ patient, elderId, onNavigate, onMedsChanged, o
                 </div>
               )}
               <div className={`max-w-[82%] flex flex-col gap-1 ${msg.role === "user" ? "items-end" : "items-start"}`}>
-                {msg.image && (
-                  <img src={msg.image} alt={t(language, "ai.attachment")} onLoad={handleImageLoad} className="max-w-[70%] rounded-2xl border border-border object-cover" />
-                )}
+                {/* `images` is the current shape; `image` is what conversations
+                    saved before multi-attach still carry. */}
+                {(msg.images ?? (msg.image ? [msg.image] : [])).map((src, ii) => (
+                  <img key={ii} src={src} alt={t(language, "ai.attachment")} onLoad={handleImageLoad} className="max-w-[70%] rounded-2xl border border-border object-cover" />
+                ))}
                 <div className={`rounded-2xl px-4 py-3 ${msg.role === "user" ? "bg-primary text-primary-foreground rounded-tr-sm" : "dw-surface rounded-tl-sm"}`}>
                   <p className={`text-[calc(15px*var(--dw-text,1))] leading-relaxed whitespace-pre-line ${msg.role === "user" ? "text-primary-foreground" : "text-foreground"}`}>{renderWithBold(msg.text)}</p>
                   {msg.isClinic && <p className="text-[calc(13px*var(--dw-text,1))] mt-2 opacity-70 italic">{t(language, "ai.verifyWithDoctor")}</p>}
@@ -791,7 +878,7 @@ export function ElderlyAIScreen({ patient, elderId, onNavigate, onMedsChanged, o
                       <button
                         key={ci}
                         onClick={() => send(c.value)}
-                        className="w-full min-h-[44px] px-4 py-2.5 rounded-2xl bg-primary/10 border border-primary/30 text-primary text-[calc(15px*var(--dw-text,1))] font-bold active:scale-[0.98] transition-transform"
+                        className="w-full min-h-[44px] px-4 py-2.5 rounded-2xl bg-primary text-primary-foreground text-[calc(15px*var(--dw-text,1))] font-bold active:scale-[0.98] transition-transform"
                       >
                         {c.label}
                       </button>
@@ -909,13 +996,32 @@ export function ElderlyAIScreen({ patient, elderId, onNavigate, onMedsChanged, o
 
       {/* Composer — always present, in both modes. */}
       <div className="px-4 pb-3 pt-2 border-t border-border/60 shrink-0">
-        {pendingImage && (
-          <div className="flex items-center gap-2.5 mb-2 bg-secondary border border-primary/20 rounded-xl p-2">
-            <img src={pendingImage.url} alt={t(language, "ai.attachment")} className="w-12 h-12 rounded-lg object-cover shrink-0" />
-            <span className="flex-1 text-[calc(14px*var(--dw-text,1))] text-secondary-foreground font-semibold">{t(language, "ai.photoAttachedHint")}</span>
-            <button onClick={() => setPendingImage(null)} aria-label={t(language, "common.cancel")} className="w-8 h-8 rounded-full bg-muted flex items-center justify-center text-muted-foreground shrink-0">
-              <X size={16} />
-            </button>
+        {pendingImages.length > 0 && (
+          <div className="mb-2 bg-secondary border border-primary/20 rounded-xl p-2">
+            <div className="flex gap-2 overflow-x-auto scrollbar-none">
+              {pendingImages.map((img, i) => (
+                <div key={i} className="relative shrink-0">
+                  <img src={img.dataUrl} alt={t(language, "ai.attachment")} className="w-14 h-14 rounded-lg object-cover" />
+                  {/* Per-thumbnail remove, so getting one wrong out of four
+                      doesn't mean starting the whole attachment over. */}
+                  <button
+                    onClick={() => setPendingImages(prev => prev.filter((_, j) => j !== i))}
+                    aria-label={t(language, "ai.removePhoto", { n: i + 1 })}
+                    className="absolute -top-1.5 -right-1.5 w-6 h-6 rounded-full bg-muted border border-border flex items-center justify-center text-muted-foreground"
+                  >
+                    <X size={13} />
+                  </button>
+                </div>
+              ))}
+            </div>
+            <p className="mt-1.5 text-[calc(14px*var(--dw-text,1))] text-secondary-foreground font-semibold">
+              {pendingImages.length === 1
+                ? t(language, "ai.photoAttachedHint")
+                : t(language, "ai.photosAttachedHint", { count: pendingImages.length })}
+            </p>
+            {attachNotice && (
+              <p className="mt-1 text-[calc(13px*var(--dw-text,1))] text-muted-foreground">{attachNotice}</p>
+            )}
           </div>
         )}
         {/* Camera and mic sit INSIDE the field: as three outside buttons they
@@ -923,7 +1029,12 @@ export function ElderlyAIScreen({ patient, elderId, onNavigate, onMedsChanged, o
             three still need to be reachable at once. */}
         <div className="flex gap-2 items-end">
           <div className="flex-1 min-w-0 bg-input-background rounded-2xl border border-border min-h-12 flex items-end gap-0.5 pl-1.5 pr-3 py-1.5">
-            <button onClick={() => setPickerFor("rx")} aria-label={t(language, "common.addPrescription")} className="w-9 h-9 rounded-full flex items-center justify-center text-muted-foreground shrink-0 active:bg-muted transition-colors">
+            {/* Assigns the intent FALSE rather than leaving it: cancelling a
+                native file dialog fires no change event, so a stale `true` from
+                an abandoned "add a medicine from a photo" would otherwise put
+                that prefill on the next plain attach. Both entry points set it,
+                so there is no path that inherits the other's value. */}
+            <button onClick={() => { addMedIntentRef.current = false; setPickerFor("rx"); }} aria-label={t(language, "common.addPrescription")} className="w-9 h-9 rounded-full flex items-center justify-center text-muted-foreground shrink-0 active:bg-muted transition-colors">
               <Camera size={19} />
             </button>
             {SpeechRecognitionImpl && (
@@ -937,7 +1048,7 @@ export function ElderlyAIScreen({ patient, elderId, onNavigate, onMedsChanged, o
               value={input}
               onChange={e => setInput(e.target.value)}
               onKeyDown={e => { if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); handleSend(); } }}
-              placeholder={t(language, pendingImage ? "ai.photoNotePlaceholder" : "ai.askAnything")}
+              placeholder={t(language, pendingImages.length ? "ai.photoNotePlaceholder" : "ai.askAnything")}
               className="flex-1 min-w-0 bg-transparent text-foreground text-[calc(15px*var(--dw-text,1))] resize-none outline-none max-h-40 leading-relaxed py-2 placeholder:text-muted-foreground"
               rows={1}
             />
@@ -1007,18 +1118,46 @@ export function ElderlyAIScreen({ patient, elderId, onNavigate, onMedsChanged, o
       <input ref={reportCameraRef} type="file" accept="image/*" capture="environment" className="sr-only" onChange={onReportFile} />
       <input ref={reportLibraryRef} type="file" accept="image/*,application/pdf" className="sr-only" onChange={onReportFile} />
       <input ref={rxCameraRef} type="file" accept="image/*" capture="environment" className="sr-only" onChange={onRxPhotoFile} />
-      <input ref={rxLibraryRef} type="file" accept="image/*" data-walk="rx-attach-library" className="sr-only" onChange={onRxPhotoFile} />
+      {/* `multiple` on the library input only: capture="environment" opens the
+          camera, which takes one shot at a time by definition. */}
+      <input ref={rxLibraryRef} type="file" accept="image/*" multiple data-walk="rx-attach-library" className="sr-only" onChange={onRxPhotoFile} />
       {pickerFor && (
         <PhotoSourceSheet
           onTakePhoto={() => {
-            (pickerFor === "rx" ? rxCameraRef : reportCameraRef).current?.click();
+            setCameraFor(pickerFor);
             setPickerFor(null);
           }}
           onChooseFile={() => {
             (pickerFor === "rx" ? rxLibraryRef : reportLibraryRef).current?.click();
             setPickerFor(null);
           }}
-          onClose={() => setPickerFor(null)}
+          onTypeMyself={pickerFor === "report" ? () => {
+            setPickerFor(null);
+            openChatWith(t(language, "ai.prefillUpdateProfile"));
+          } : undefined}
+          // Backing out of the sheet must also drop the add-a-medicine intent,
+          // or it would leak onto whatever the NEXT attach happens to be.
+          onClose={() => { addMedIntentRef.current = false; setPickerFor(null); }}
+        />
+      )}
+
+      {cameraFor && (
+        <CameraSheet
+          facing="environment"
+          onCapture={file => {
+            const which = cameraFor;
+            setCameraFor(null);
+            if (which === "rx") void handleRxPhotos([file]);
+            else void handleReportFile(file);
+          }}
+          // Same rule as the picker sheet's own onClose: backing out must drop
+          // the add-a-medicine intent, or it leaks onto the next attachment.
+          onClose={() => { addMedIntentRef.current = false; setCameraFor(null); }}
+          onFallback={() => {
+            const which = cameraFor;
+            setCameraFor(null);
+            (which === "rx" ? rxCameraRef : reportCameraRef).current?.click();
+          }}
         />
       )}
 

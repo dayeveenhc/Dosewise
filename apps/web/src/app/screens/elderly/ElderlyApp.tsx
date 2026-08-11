@@ -18,17 +18,18 @@ import { GuidedTour } from "../../components/GuidedTour";
 import type { TourStep } from "../../components/GuidedTour";
 import { useContentZoom } from "../../accessibility";
 import { ConfirmDialog } from "../../components/ConfirmDialog";
-import { buildAlerts, pickPopupAlert, inQuietHours, type Alert } from "../../lib/alerts";
-import { loadAlertState, saveAlertState, poppedKey, ALERT_POPUP_COOLDOWN_MS } from "../../lib/alertState";
+import { buildAlerts, groupForPopup, pickPopupGroup, nextCooldownFor, inQuietHours, destinationFor, canViewAlert, type Alert, type AlertGroup } from "../../lib/alerts";
+import { loadAlertState, saveAlertState, poppedKey, poppedIdsFor, raisesFor } from "../../lib/alertState";
 import { UrgentAlertPopup } from "../../components/UrgentAlertPopup";
-import { logDoseTaken, unlogDoseTaken, addMedication, updateMedication, archiveMedication, fetchElderMedications, fetchArchivedMedications, to24h, anyMedicationRunningLow, isDueOn } from "../../lib/medications";
-import { defaultDoseTime } from "../../components/TimesPicker";
+import { logDoseTaken, unlogDoseTaken, addMedication, updateMedication, archiveMedication, logRefill, fetchElderMedications, fetchArchivedMedications, to24h, anyMedicationRunningLow, isDueOn } from "../../lib/medications";
+import { defaultDoseTime, toDisplayTime } from "../../components/TimesPicker";
 import { MED_COLOURS, localizeCatalogValue } from "../../data/medications";
 import { useLanguage } from "../../lib/languageContext";
 import { useAccessibility } from "../../accessibility.tsx";
 import { t } from "../../lib/language";
 import { Walkthrough } from "../../components/Walkthrough";
 import { resolveWalkthroughSteps, walkthroughShellFor } from "../../lib/walkthrough/steps";
+import { parseTimesParam } from "../../lib/walkthrough/steps/add_prescription_auto";
 import { AUTONOMOUS_TASKS } from "../../lib/walkthrough/types";
 import { PACING, TRUST_MODE_THRESHOLD } from "../../lib/walkthrough/pacing";
 import { highlightableEntities } from "../../lib/changeHighlight";
@@ -73,6 +74,12 @@ export function ElderlyApp({ patient, elderId, onUpdatePatient, onSignOut, start
   // Pre-fills Ask Mei's input box WITHOUT sending — the elder still taps Send
   // themselves (unlike pendingAIMessage above, which auto-sends).
   const [pendingPrefill, setPendingPrefill] = useState<string | undefined>();
+  // "Once you're on that tab, this is the medicine it's about" — Medications
+  // opens its detail card, Home scrolls its timeline to the dose. Same
+  // nullable-value-the-child-clears shape as the three pendings above, NOT a
+  // counter: it carries a payload, and re-sending the same medicine twice must
+  // work. Both id and name, because a demo/local row has no medicationId.
+  const [focusMed, setFocusMed] = useState<{ medicationId?: string; name?: string } | null>(null);
   const [walkthroughTask, setWalkthroughTask] = useState<WalkthroughTaskName | null>(null);
   const [walkthroughStepIndex, setWalkthroughStepIndex] = useState(0);
   const [walkthroughParams, setWalkthroughParams] = useState<WalkthroughParams>({});
@@ -180,8 +187,12 @@ export function ElderlyApp({ patient, elderId, onUpdatePatient, onSignOut, start
   // have.
   const [medsLoaded, setMedsLoaded] = useState(false);
   const [linkRequests, setLinkRequests] = useState<PendingLinkRequest[]>([]);
+  // Mirrors medsLoaded: the accept_caregiver_link gate below must only refuse
+  // once we KNOW there is no pending request, not during the fetch window.
+  const [linkRequestsLoaded, setLinkRequestsLoaded] = useState(false);
   const [acknowledgedAlerts, setAcknowledgedAlerts] = useState<Set<string>>(new Set());
-  const [popupAlert, setPopupAlert] = useState<Alert | null>(null);
+  // The whole interruption, not one alert: three missed doses are one popup.
+  const [popupGroup, setPopupGroup] = useState<AlertGroup | null>(null);
   const [agentAlerts, setAgentAlerts] = useState<Alert[]>([]);
   const [alertNow, setAlertNow] = useState(() => new Date());
   const alerts = useMemo(
@@ -190,10 +201,10 @@ export function ElderlyApp({ patient, elderId, onUpdatePatient, onSignOut, start
       // medication state, so they don't wait on the fetch.
       ...agentAlerts,
       ...(medsLoaded
-        ? buildAlerts({ medications: patient.medications, careMessages, linkRequests, now: alertNow })
+        ? buildAlerts({ medications: patient.medications, careMessages, linkRequests, doseSnoozes: patient.doseSnoozes, now: alertNow })
         : []),
     ],
-    [agentAlerts, medsLoaded, patient.medications, careMessages, linkRequests, alertNow],
+    [agentAlerts, medsLoaded, patient.medications, careMessages, linkRequests, patient.doseSnoozes, alertNow],
   );
   const liveAlerts = alerts.filter(a => !acknowledgedAlerts.has(a.id));
   const urgentCount = liveAlerts.filter(a => a.severity !== "notice").length;
@@ -235,18 +246,52 @@ export function ElderlyApp({ patient, elderId, onUpdatePatient, onSignOut, start
     });
   };
 
+  // "Take me to the thing this alert is about." The tab AND the medicine, so a
+  // low-supply warning lands on that medicine's card rather than a list the
+  // person then has to search. Every surface that offers to route — the popup's
+  // Show me, each Reminders card's — goes through here, so they can't drift.
+  const goToAlert = (alert: Alert) => {
+    const dest = destinationFor(alert);
+    setTab(dest.tab);
+    if (dest.focusMedicationId || dest.focusMedName)
+      setFocusMed({ medicationId: dest.focusMedicationId, name: dest.focusMedName });
+  };
+
+  // The "what do I do next" half: hand the alert to Mei as a ready-to-send
+  // message about telling the caregiver. Prefill, never auto-send — the elder
+  // still decides, exactly like the Request-refill path.
+  const tellCaregiverAbout = (alert: Alert) => {
+    openAIPrefill(t(language, "alerts.tellCaregiverMsg", { name: alert.medName ?? "" }));
+  };
+
   const dismissPopupAlert = () => {
-    const alert = popupAlert;
-    setPopupAlert(null);
-    if (!alert) return;
-    // Recorded as seen for the rest of the day AND acknowledged in the list, so
-    // dismissing here doesn't leave the same item shouting from the badge.
+    const group = popupGroup;
+    setPopupGroup(null);
+    if (!group) return;
     const state = loadAlertState("elder", elderId);
+    const raiseKey = poppedKey(group.id);
+    const raiseCount = (state.raises[raiseKey] ?? 0) + 1;
+    // Frequency backs off as the meter climbs; null means the ladder is spent,
+    // and the GROUP id joins `popped` so it is done for the day rather than
+    // waiting on a cooldown that will never expire into anything.
+    const cooldown = nextCooldownFor(group.lead.severity, raiseCount);
     saveAlertState("elder", elderId, {
-      popped: [...new Set([...state.popped, poppedKey(alert.id)])],
-      cooldownUntil: Date.now() + ALERT_POPUP_COOLDOWN_MS,
+      // EVERY member, not just the lead. Dismissing "3 doses missed" used to
+      // acknowledge one, leaving the other two shouting from the badge behind
+      // a popup the person had just answered.
+      popped: [...new Set([
+        ...state.popped,
+        ...group.members.map(m => poppedKey(m.id)),
+        ...(cooldown === null ? [raiseKey] : []),
+      ])],
+      cooldownUntil: Date.now() + (cooldown ?? 0),
+      raises: { ...state.raises, [raiseKey]: raiseCount },
     });
-    setAcknowledgedAlerts(prev => new Set(prev).add(alert.id));
+    setAcknowledgedAlerts(prev => {
+      const next = new Set(prev);
+      for (const m of group.members) next.add(m.id);
+      return next;
+    });
   };
   useEffect(() => {
     if (typeof window === "undefined") return;
@@ -311,19 +356,24 @@ export function ElderlyApp({ patient, elderId, onUpdatePatient, onSignOut, start
     // Swallowing it because a walkthrough happened to start is the opposite
     // failure to the one being fixed.
     if (alertsSuppressed) {
-      if (popupAlert) setPopupAlert(null);
+      if (popupGroup) setPopupGroup(null);
       return;
     }
-    if (popupAlert) return;
+    if (popupGroup) return;
     const state = loadAlertState("elder", elderId);
-    const next = pickPopupAlert(liveAlerts, {
-      popped: new Set(state.popped),
+    const next = pickPopupGroup(groupForPopup(liveAlerts), {
+      // poppedIdsFor, not `new Set(state.popped)`: the store writes day-scoped
+      // keys and pickPopupGroup compares bare ids, so passing the raw array
+      // meant the once-per-day dedupe never matched a single entry and the flat
+      // cooldown was the only thing limiting repeats.
+      popped: poppedIdsFor(state, alertNow),
+      raises: raisesFor(state, alertNow),
       prefs: notifyPrefs,
       suppressed: alertsSuppressed,
       quiet: inQuietHours(alertNow, { start: patient.sleepTime, end: patient.wakeTime }),
       cooldownUntil: state.cooldownUntil,
     });
-    if (next) setPopupAlert(next);
+    if (next) setPopupGroup(next);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [liveAlerts, alertsSuppressed, notifyPrefs, elderId, alertNow]);
 
@@ -445,6 +495,15 @@ export function ElderlyApp({ patient, elderId, onUpdatePatient, onSignOut, start
       console.warn("[dosewise] walkthrough \"emergency_contact_tour\" needs a linked caregiver — not starting it");
       return "walk.refused.noCaregiver";
     }
+    // Same shape again: step 2 waits on the per-request Accept button
+    // ([data-walk^="care-link-accept-"]), which renders once per PENDING
+    // request. With none, the tour 4s-stalls into "can't find it" — refuse
+    // honestly instead. `linkRequestsLoaded &&` is load-bearing exactly like
+    // medsLoaded above: only refuse once the fetch has actually resolved.
+    if (taskName === "accept_caregiver_link" && linkRequestsLoaded && linkRequests.length === 0) {
+      console.warn("[dosewise] walkthrough \"accept_caregiver_link\" needs a pending caregiver request — not starting it");
+      return "walk.refused.noPendingRequest";
+    }
     // Shell guard. Hermes offers every task name to both shells with no role
     // filter, so an elder can be offered a caregiver-only tour — whose very
     // first target can never exist here. Decline honestly instead of mounting
@@ -492,32 +551,52 @@ export function ElderlyApp({ patient, elderId, onUpdatePatient, onSignOut, start
   // name-keyed "Just added" card highlight (flagJustAdded); this generic pulse
   // covers the rest (a condition chip's field, a saved travel plan, etc.).
   const handleWalkthroughReveal = (reveal: RevealDirective) => {
+    const alreadyThere = reveal.screen.mode !== "elderly" || tab === reveal.screen.tab;
     if (reveal.screen.mode === "elderly") setTab(reveal.screen.tab);
     if (reveal.pulse === false) return;
     // Defer one paced screen-settle so the destination has mounted before we
-    // find + pulse the target.
+    // find + pulse the target — but only when the tab actually changes: a
+    // Replay on the already-current screen used to sit through a silent
+    // NAVIGATE_MS defer that read as "the button did nothing".
     setTimeout(() => {
-      const el = document.querySelector<HTMLElement>(reveal.selector);
-      if (!el) return;
-      el.scrollIntoView({ block: "center", behavior: "smooth" });
-      el.classList.add("walk-reveal-pulse");
-      // Teardown matches the CSS animation exactly: one iteration of
-      // var(--dw-pulse-ms) = PACING.REVEAL_PULSE_MS (applyPacingCssVars).
-      setTimeout(() => el.classList.remove("walk-reveal-pulse"), PACING.REVEAL_PULSE_MS);
-      // Show the same changed-fields-style caption ChangeHighlight uses, tracked
-      // to the element while the pulse is up.
-      if (reveal.caption) {
-        const track = () => {
-          setRevealCaption({ rect: el.getBoundingClientRect(), ...reveal.caption! });
-          revealCaptionRaf.current = requestAnimationFrame(track);
-        };
-        track();
-        setTimeout(() => {
-          window.cancelAnimationFrame(revealCaptionRaf.current!);
-          setRevealCaption(null);
-        }, PACING.REVEAL_PULSE_MS);
-      }
-    }, PACING.NAVIGATE_MS);
+      // Bounded poll (same 4000ms budget as actor.ts::waitForEl): a target
+      // that mounts a beat late (data-driven rows behind a fetch) used to
+      // lose its pulse to a single silent querySelector miss.
+      const deadline = Date.now() + 4000;
+      const attempt = () => {
+        const el = document.querySelector<HTMLElement>(reveal.selector);
+        if (!el) {
+          if (Date.now() < deadline) setTimeout(attempt, 150);
+          else console.error(`[dosewise] reveal target never mounted: ${reveal.selector}`);
+          return;
+        }
+        el.scrollIntoView({ block: "center", behavior: "smooth" });
+        // remove + forced reflow first so a Replay re-run restarts the CSS
+        // animation even when the class removal and re-add land in the same
+        // frame (class re-addition alone doesn't restart a finished run).
+        el.classList.remove("walk-reveal-pulse");
+        void el.offsetWidth;
+        el.classList.add("walk-reveal-pulse");
+        // Teardown matches the CSS animation exactly: one iteration of
+        // var(--dw-pulse-ms) = PACING.REVEAL_PULSE_MS (applyPacingCssVars).
+        setTimeout(() => el.classList.remove("walk-reveal-pulse"), PACING.REVEAL_PULSE_MS);
+        // Show the same changed-fields-style caption ChangeHighlight uses,
+        // tracked to the element while the pulse is up.
+        if (reveal.caption) {
+          if (revealCaptionRaf.current) window.cancelAnimationFrame(revealCaptionRaf.current);
+          const track = () => {
+            setRevealCaption({ rect: el.getBoundingClientRect(), ...reveal.caption! });
+            revealCaptionRaf.current = requestAnimationFrame(track);
+          };
+          track();
+          setTimeout(() => {
+            window.cancelAnimationFrame(revealCaptionRaf.current!);
+            setRevealCaption(null);
+          }, PACING.REVEAL_PULSE_MS);
+        }
+      };
+      attempt();
+    }, alreadyThere ? 0 : PACING.NAVIGATE_MS);
   };
 
   // Fallback when the add-prescription walkthrough can't prove the save (Verify
@@ -525,6 +604,12 @@ export function ElderlyApp({ patient, elderId, onUpdatePatient, onSignOut, start
   // highlight it (never double-insert); if it's genuinely absent, save it directly
   // from Mei's params and land on Home. A real write failure (addMedication throws)
   // leaves the honest walk.verifyFailed message up rather than faking success.
+  // The dose times Mei was told about, as the sheet's own 12h display strings.
+  // One derivation, three consumers (the sheet's seed, the verify-failed direct
+  // save, and nothing else may re-parse the param) — the point of the fix is
+  // that no path quietly falls back to breakfast any more.
+  const walkthroughTimes = parseTimesParam(walkthroughParams.times).map(toDisplayTime);
+
   const handleWalkthroughVerifyFailed = async (verify: VerifyDirective) => {
     if (verify.kind !== "medication-exists" || !elderId) return;
     const wanted = verify.name.trim().toLowerCase();
@@ -539,8 +624,8 @@ export function ElderlyApp({ patient, elderId, onUpdatePatient, onSignOut, start
           dose: p.dose || "",
           purpose: p.purpose || "",
           colour: MED_COLOURS[0].hex,
-          time: defaultDoseTime({ ...patient.mealTimes, sleepTime: patient.sleepTime }),
-          times: [],
+          time: walkthroughTimes[0] ?? defaultDoseTime({ ...patient.mealTimes, sleepTime: patient.sleepTime }),
+          times: walkthroughTimes,
         });
       }
       setTab("home");
@@ -699,7 +784,10 @@ export function ElderlyApp({ patient, elderId, onUpdatePatient, onSignOut, start
   // unanswered consent request matters.
   useEffect(() => {
     if (!elderId) return;
-    void fetchPendingLinkRequests(elderId).then(setLinkRequests);
+    void fetchPendingLinkRequests(elderId).then(reqs => {
+      setLinkRequests(reqs);
+      setLinkRequestsLoaded(true);
+    });
   }, [elderId, tab]);
 
   useEffect(() => {
@@ -760,6 +848,15 @@ export function ElderlyApp({ patient, elderId, onUpdatePatient, onSignOut, start
   const handleArchivePrescription = async (med: GroupedMed) => {
     if (!elderId || !med.medicationId) return;
     await archiveMedication(med.medicationId);
+    await refreshMeds();
+  };
+
+  // "I've refilled it" — records the supply on hand. `med.times.length` is the
+  // same divisor supplyDaysLeft uses at the render site, so the days the sheet
+  // previewed and the forecast that gets stored agree by construction.
+  const handleAddRefill = async (med: GroupedMed, pillsRemaining: number) => {
+    if (!elderId || !med.medicationId) return;
+    await logRefill(med.medicationId, elderId, { pillsRemaining, dosesPerDay: med.times.length });
     await refreshMeds();
   };
 
@@ -857,7 +954,12 @@ export function ElderlyApp({ patient, elderId, onUpdatePatient, onSignOut, start
       {/* Header — app name centred, help and profile in the corners. The screen
           title moved into each screen, so this bar stays one constant, always
           recognisable anchor rather than text that changes under you. */}
-      <div className="px-3 py-1 bg-background/70 backdrop-blur-md border-b border-border/50 shrink-0">
+      {/* `relative z-30` for the same reason the caregiver header carries it —
+          see App.tsx's own comment above its header: backdrop-blur creates a
+          stacking context with no z-index of its own, so the "Screen content"
+          sibling BELOW (later in the DOM, and holding opaque `relative z-20`
+          bars like ElderlyHomeScreen's day-nav) paints over the whole header. */}
+      <div className="relative z-30 px-3 py-1.5 bg-background/70 backdrop-blur-md border-b border-border/50 shrink-0">
         {headerOverride ? (
           <div className="flex items-center gap-2.5">
             <button
@@ -883,9 +985,20 @@ export function ElderlyApp({ patient, elderId, onUpdatePatient, onSignOut, start
             <button
               onClick={() => setTab("settings")}
               aria-label={t(language, "header.profile")}
-              className="w-11 h-11 rounded-full overflow-hidden border-2 border-primary/30 shrink-0 active:opacity-80 transition-opacity"
+              className="w-11 h-11 rounded-full shrink-0 flex items-center justify-center active:opacity-80 transition-opacity"
             >
-              <ProfileAvatar photo={patient.photo} size={44} />
+              {/* Border lives on the avatar, not this button: border-box would
+                  otherwise shrink the content box and clip the avatar off-centre
+                  (the "person out of place" bug).
+
+                  36px inside a 44px button, NOT a 44px button shrunk: the tap
+                  target stays the same size every other header control uses,
+                  while the face itself stops crowding the divider. Note that
+                  this alone does NOT shorten the header — the 44px button still
+                  sets its height, so the py-1.5 above is what buys the vertical
+                  clearance. Don't "simplify" one away thinking the other covers
+                  it; they answer two different complaints. */}
+              <ProfileAvatar photo={patient.photo} size={36} className="rounded-full border-2 border-primary/30" />
             </button>
           </div>
         )}
@@ -893,8 +1006,8 @@ export function ElderlyApp({ patient, elderId, onUpdatePatient, onSignOut, start
 
       {/* Screen content */}
       <div className="flex-1 min-h-0 overflow-hidden flex flex-col" style={{ zoom: contentZoom } as React.CSSProperties}>
-        {tab === "home"          && <ElderlyHomeScreen         patient={patient} elderId={elderId} onLogDose={handleLogDose} onUnlogDose={handleUnlogDose} onOpenTravel={() => setShowTravel(true)} justAddedMed={justAddedMed} onAskMei={openAIPrefill} />}
-        {tab === "prescriptions" && <ElderlyPrescriptionScreen patient={patient} onAddRx={() => setAddRx("manual")} onRequestRefill={name => openAIPrefill(t(language, "ai.refillRequestMsg", { name }))} onEditRx={med => { setEditingMed(med); setAddRx("manual"); }} onArchiveRx={handleArchivePrescription} justAddedMed={justAddedMed} highlightIds={highlightEntityIds} />}
+        {tab === "home"          && <ElderlyHomeScreen         patient={patient} elderId={elderId} onLogDose={handleLogDose} onUnlogDose={handleUnlogDose} onOpenTravel={() => setShowTravel(true)} justAddedMed={justAddedMed} onAskMei={openAIPrefill} focusMed={focusMed} onFocusMedConsumed={() => setFocusMed(null)} />}
+        {tab === "prescriptions" && <ElderlyPrescriptionScreen patient={patient} onAddRx={() => setAddRx("manual")} onRequestRefill={name => openAIPrefill(t(language, "ai.refillRequestMsg", { name }))} onEditRx={med => { setEditingMed(med); setAddRx("manual"); }} onArchiveRx={handleArchivePrescription} onAddRefill={handleAddRefill} walkthroughResetSignal={screenResetSignal} justAddedMed={justAddedMed} highlightIds={highlightEntityIds} focusMed={focusMed} onFocusMedConsumed={() => setFocusMed(null)} />}
         {tab === "ai"            && (
           <ElderlyAIScreen
             patient={patient}
@@ -937,6 +1050,8 @@ export function ElderlyApp({ patient, elderId, onUpdatePatient, onSignOut, start
             alerts={liveAlerts}
             onAcknowledgeAlert={id => setAcknowledgedAlerts(prev => new Set(prev).add(id))}
             onRequestRefill={name => openAIPrefill(t(language, "ai.refillRequestMsg", { name }))}
+            onAlertNavigate={goToAlert}
+            onTellCaregiver={tellCaregiverAbout}
             linkRequests={linkRequests}
             onLinkRequestsChanged={() => { if (elderId) void fetchPendingLinkRequests(elderId).then(setLinkRequests); }}
           />
@@ -986,12 +1101,24 @@ export function ElderlyApp({ patient, elderId, onUpdatePatient, onSignOut, start
                       active tab's glyph is scale-125 and grows from its centre,
                       so a column-anchored badge shifts relative to the icon
                       exactly when the tab is selected. The wrapper is not
-                      scaled, so the offset is constant in both states. */}
+                      scaled, so the offset is constant in both states.
+
+                      `z-10` is what puts the digits ON TOP of the bell rather
+                      than under it, and it is NOT interchangeable with moving
+                      the badge later in the DOM. The sibling glyph carries a
+                      scale-* class, and any `scale` other than `none` creates a
+                      stacking context that paints as if it were `z-index: 0` —
+                      so an unpositioned badge lands in the SAME paint step and
+                      tree order decides, which the bell wins by being second.
+                      This is a paint-order fix; the overlap itself is intended
+                      (see above) — do not "fix" the position instead. Not
+                      conditional on isActive either: scale-100 is still not
+                      `none`, so the inactive tab has the same context. */}
                   <span className="relative inline-flex">
                     {item.id === "notifications" && liveAlerts.length > 0 && (
                       <span
                         aria-label={t(language, "alerts.badgeLabel", { count: liveAlerts.length })}
-                        className={`absolute -top-1.5 -right-2.5 min-w-[18px] h-[18px] px-1 rounded-full flex items-center justify-center text-[calc(10px*var(--dw-text,1))] font-bold text-white ring-2 ring-background ${
+                        className={`absolute z-10 -top-1.5 -right-2.5 min-w-[18px] h-[18px] px-1 rounded-full flex items-center justify-center text-[calc(10px*var(--dw-text,1))] font-bold text-white ring-2 ring-background ${
                           urgentCount > 0 ? "bg-missed-fg" : "bg-primary"
                         }`}
                       >
@@ -1019,6 +1146,10 @@ export function ElderlyApp({ patient, elderId, onUpdatePatient, onSignOut, start
           // Renders an extra preset only; nothing is pre-selected, so Mei still
           // performs the taps in view.
           initialDurationDays={Number.parseInt(walkthroughParams.duration_days ?? "", 10) || undefined}
+          // Unlike the duration above this IS pre-selected — see the prop's own
+          // comment: the quick chips toggle, so there is no chip to click that
+          // would REPLACE the breakfast default rather than add to it.
+          initialTimes={walkthroughTimes}
           onClose={() => { setAddRx(null); setEditingMed(null); }}
           onAdd={med => editingMed ? handleEditPrescription(editingMed, med) : handleAddPrescription(med)}
           onAdded={() => { setEditingMed(null); if (!walkthroughTask) setTab("prescriptions"); }}
@@ -1043,20 +1174,25 @@ export function ElderlyApp({ patient, elderId, onUpdatePatient, onSignOut, start
           onSaved={plan => onUpdatePatient({ ...patient, travelPlan: plan })}
         />
       )}
-      {popupAlert && (
+      {popupGroup && (
         <UrgentAlertPopup
-          alert={popupAlert}
+          alert={popupGroup.lead}
+          members={popupGroup.members}
+          raiseCount={popupGroup.raiseCount}
+          raiseMax={popupGroup.raiseMax}
           onDismiss={dismissPopupAlert}
-          // "Show me" is offered only when there is somewhere specific to land.
-          onView={() => {
-            const target = popupAlert.kind === "low_supply" || popupAlert.kind === "out_of_supply"
-              ? "prescriptions" as const
-              : "notifications" as const;
+          // Which buttons this popup offers is decided by ONE table in
+          // lib/alerts.ts, so it cannot drift from the Reminders cards' own
+          // rules the way three inline ternaries here already had. Notably a
+          // missed dose and a low supply no longer offer "Tell my caregiver":
+          // both are answered by the person themselves, one tap away.
+          onView={canViewAlert(popupGroup.lead) ? () => {
+            const alert = popupGroup.lead;
             dismissPopupAlert();
-            setTab(target);
-          }}
+            goToAlert(alert);
+          } : undefined}
           onTalkToMei={() => {
-            const alert = popupAlert;
+            const alert = popupGroup.lead;
             dismissPopupAlert();
             openAIPrefill(t(language, alert.titleKey, alert.params));
           }}

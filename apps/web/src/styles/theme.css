@@ -571,7 +571,9 @@
    themselves, so this button is the ONLY way forward — and a grey button merely
    turning coloured is far too quiet a signal for that. One arrival beat (never a
    loop: a button that keeps pulsing reads as an alarm on a screen someone is
-   trying to read), then a resting ring so it stays the obvious thing on screen. */
+   trying to read), then a resting ring so it stays the obvious thing on screen.
+   .dw-spotlight-glow-wait below is the ONE deliberate exception to the no-loop
+   rule; read its comment for why before looping anything else here. */
 @keyframes dw-gate-in {
   0%   { transform: scale(0.94); box-shadow: 0 0 0 0 color-mix(in srgb, var(--primary) 55%, transparent); }
   55%  { transform: scale(1.04); box-shadow: 0 0 0 8px color-mix(in srgb, var(--primary) 22%, transparent); }
@@ -618,10 +620,19 @@
    slightly off the page on a soft diffuse shadow — rather than an outline
    ring, so it reads as "about to be touched" without competing with the
    ring-shaped cues used elsewhere (.dw-gate-ready, .change-highlight). `both`
-   holds the risen end state for as long as the class stays applied. */
+   holds the risen end state for as long as the class stays applied.
+   Uses the individual `translate` property, NOT `transform`: a running/filled
+   animation on `transform` overrides inline styles, and targetLiftPx
+   (Walkthrough.tsx) writes its repositioning lift as an inline
+   `transform: translateY(-Npx)` on the same [data-walk] node this class often
+   lands on — animating `transform` here silently pinned that lift to -3px for
+   the whole pre-highlight window (the keyframe sibling of the pressPulse
+   scale-composition fix in actor.ts). `translate` composes with `transform`
+   instead of replacing it, and getComputedStyle().transform doesn't include
+   it, so the lift's own DOMMatrix read stays clean. */
 @keyframes walk-lift-in {
-  from { transform: translateY(0); box-shadow: 0 0 0 rgba(16, 48, 43, 0); }
-  to   { transform: translateY(-3px); box-shadow: 0 10px 18px -4px rgba(16, 48, 43, 0.24), 0 3px 8px -2px rgba(16, 48, 43, 0.16); }
+  from { translate: 0 0; box-shadow: 0 0 0 rgba(16, 48, 43, 0); }
+  to   { translate: 0 -3px; box-shadow: 0 10px 18px -4px rgba(16, 48, 43, 0.24), 0 3px 8px -2px rgba(16, 48, 43, 0.16); }
 }
 .walk-field-prehighlight {
   animation: walk-lift-in 220ms cubic-bezier(0.16, 1, 0.3, 1) both;
@@ -641,8 +652,52 @@
 @media (prefers-reduced-motion: reduce) {
   .walk-field-prehighlight {
     animation: none;
-    transform: translateY(-3px);
+    translate: 0 -3px;
     box-shadow: 0 10px 18px -4px rgba(16, 48, 43, 0.24), 0 3px 8px -2px rgba(16, 48, 43, 0.16);
+  }
+}
+
+/* Walkthrough waitFor steps: the run is waiting for the PERSON's own tap on
+   the spotlighted control (consent taps, the final Save), and nothing else on
+   screen advances — so the spotlight itself must carry the "tap THIS" signal
+   (this replaced the old "Waiting for you: X" pill in the callout, which
+   named the control in words while the control itself stayed quietly lit).
+   Layered over .dw-spotlight-glow on the same overlay div, so it only
+   overrides the box-shadow.
+
+   A BREATHING ring, and the one deliberate exception to .dw-gate-ready's "one
+   arrival beat, never a loop" rule above. The distinction is that the gate is
+   one control among many on a screen someone is still reading, whereas here
+   the run is BLOCKED: nothing at all advances until this exact control is
+   tapped, so a cue that persists is the affordance rather than an alarm. Its
+   first shape got that half right and the weight badly wrong — a 4px near-solid
+   ring plus a 9px halo plus a 28px blur, on top of the overlay div's own 6px
+   inflation, read as roughly 19px of chrome swallowing the button. This is the
+   same 2px-core-plus-breathing-halo geometry as .change-highlight below, about
+   a fifth of the ink.
+
+   Its own duration, NOT var(--dw-pulse-ms): that variable is
+   PACING.REVEAL_PULSE_MS (2800ms), tuned for a ONE-SHOT proof-of-change pulse.
+   Borrowed here it gives a 2.8s cycle that reads as barely moving on a cue the
+   run is waiting behind. Every other ring in this file does share that clock —
+   the divergence is the point, not an oversight. */
+@keyframes dw-wait-breathe {
+  0%, 100% { box-shadow: 0 0 0 2px color-mix(in srgb, var(--ring) 70%, transparent),
+                         0 0 0 6px color-mix(in srgb, var(--ring) 16%, transparent); }
+  50%      { box-shadow: 0 0 0 2px color-mix(in srgb, var(--ring) 45%, transparent),
+                         0 0 0 10px color-mix(in srgb, var(--ring) 7%, transparent); }
+}
+.dw-spotlight-glow-wait {
+  animation: dw-wait-breathe 1800ms ease-in-out infinite;
+}
+/* Reduced motion: the ring IS the affordance — keep it, drop only the breath.
+   Must sit AFTER the base rule above (source-order tiebreak; see
+   .walk-field-prehighlight's note). */
+@media (prefers-reduced-motion: reduce) {
+  .dw-spotlight-glow-wait {
+    animation: none;
+    box-shadow: 0 0 0 2px color-mix(in srgb, var(--ring) 70%, transparent),
+                0 0 0 6px color-mix(in srgb, var(--ring) 16%, transparent);
   }
 }
 

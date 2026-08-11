@@ -111,8 +111,8 @@ test("s14 travel-mode: 'set up travel mode' -> travel_mode_auto walkthrough save
   // Each autonomous step now holds at its commit gate until the person taps
   // Next, so tap through the fills + timezone select to reach the Confirm
   // recap step.
-  await advanceWalkthroughUntil(page, () => page.getByText("tap Save yourself", { exact: false }).isVisible());
-  await expect(page.getByText("tap Save yourself", { exact: false }), "Confirm (recap) step reached").toBeVisible({ timeout: 40_000 });
+  await advanceWalkthroughUntil(page, () => page.getByText("when it looks right, tap Next", { exact: false }).isVisible());
+  await expect(page.getByText("when it looks right, tap Next", { exact: false }), "Confirm (recap) step reached").toBeVisible({ timeout: 40_000 });
 
   // The timezone really landed on a real option — a value matching no <option>
   // used to blank the field, and the old Verify (startDate only) called that a

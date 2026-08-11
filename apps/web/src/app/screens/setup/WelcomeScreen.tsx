@@ -22,7 +22,7 @@ export function WelcomeScreen({ onSignIn, onGetStarted }: { onSignIn: () => void
           <div className="absolute -top-1 -right-1 w-7 h-7 rounded-full bg-secondary border-2 border-background flex items-center justify-center">
             <Heart size={13} className="text-accent" />
           </div>
-          <div className="absolute -bottom-1 -left-1 w-7 h-7 rounded-full bg-teal-100 border-2 border-background flex items-center justify-center">
+          <div className="absolute -bottom-1 -left-1 w-7 h-7 rounded-full bg-secondary border-2 border-background flex items-center justify-center">
             <Shield size={13} className="text-primary" />
           </div>
         </div>

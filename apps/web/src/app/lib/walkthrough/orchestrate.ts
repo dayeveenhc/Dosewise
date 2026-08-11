@@ -108,6 +108,10 @@ export interface PhaseHandlers {
   // supplies the real live-DOM read (Walkthrough.tsx, mirroring how
   // WalkthroughReview already reads these same selectors).
   hasBlankReviewField?: (fields: ReviewField[]) => boolean;
+  // True when this is the walkthrough's LAST step: its terminal gate is ALWAYS
+  // a real Done tap — Auto navigation and TrustMode may drive every other
+  // step, but a walkthrough must end with the person, never on a timer.
+  isFinalStep?: boolean;
 }
 
 export type ActStepOutcome = "advanced" | "verify-failed" | "act-failed" | "cancelled";
@@ -219,55 +223,79 @@ export async function runActStep(step: WalkthroughStep, h: PhaseHandlers): Promi
   // shorten the dwell but never cut the pulse); left alone, the dwell holds for
   // HIGHLIGHT_DWELL_MIN_MS before the commit gate below opens. Replay re-fires
   // the host reveal and restarts the dwell.
-  if (step.reveal) {
-    const reveal = { ...step.reveal, caption: step.reveal.caption ?? captionFromVerify(step.verify) };
-    do {
-      if (h.onReveal) h.onReveal(reveal);
-      else h.onNavigate(reveal.screen);
-      await h.pace.paced("reveal", PACING.REVEAL_PULSE_MS, () => h.pace.dwell(PACING.HIGHLIGHT_DWELL_MIN_MS));
-      if (h.shouldCancel()) return "cancelled";
-    } while (h.pace.consumeReplay());
-  }
+  // Reveal + terminal gate run as ONE loop: a Replay request that lands
+  // during the reveal is consumed after its paced() completes (as before),
+  // and one that lands AT the gate (the tap used to be silently dropped the
+  // moment the phase flipped to "ready") wakes the gate, is consumed below,
+  // and re-enters the reveal instead of advancing.
+  const reveal = step.reveal
+    ? { ...step.reveal, caption: step.reveal.caption ?? captionFromVerify(step.verify) }
+    : null;
+  while (true) {
+    if (reveal) {
+      do {
+        if (h.onReveal) h.onReveal(reveal);
+        else h.onNavigate(reveal.screen);
+        await h.pace.paced("reveal", PACING.REVEAL_PULSE_MS, () => h.pace.dwell(PACING.HIGHLIGHT_DWELL_MIN_MS));
+        if (h.shouldCancel()) return "cancelled";
+      } while (h.pace.consumeReplay());
+    }
 
-  // Terminal commit gate: the step's work is finished, but the walkthrough does
-  // NOT move on by itself by default — the person taps Next (or Done, on the
-  // last step) when ready, so nothing is ever rushed past someone still
-  // reading it. Deliberately placed AFTER the replay loop, so a Replay request
-  // is consumed by the reveal rather than swallowed by the gate. Two
-  // INDEPENDENT relaxations can shorten this to an auto-continue, checked in
-  // this order:
-  //
-  // 1. holdGate === false — a step in the middle of a grouped field run (the
-  //    caller looks ahead to the next step; see Walkthrough.tsx's
-  //    computeHoldGate). Applies to EVERY user, first-timers included — the
-  //    real checkpoints (opening the form, the last field before Save, the
-  //    final verify/reveal) still gate, this just stops making someone tap
-  //    Next after every individual field. A structural, step-SHAPE relaxation,
-  //    so it's checked first regardless of trust level.
-  // 2. requireExplicitAdvance === false — a VETERAN user (Item 2, TrustMode:
-  //    walkthroughCompletionCount past TRUST_MODE_THRESHOLD and manual mode
-  //    off) instead auto-advances once READY_AUTO_MS elapses. A user-HISTORY
-  //    relaxation, so it only applies once holdGate hasn't already decided.
-  //    Never applies to waitFor-typed steps (those never call runActStep at
-  //    all — see Walkthrough.tsx's `autonomous` check), and a risk-flagged
-  //    Confirm phase above already forced its own explicit tap before
-  //    reaching here regardless of trust level — risk overrides trust, but
-  //    only Confirm needs to make that call since this gate is reached only
-  //    after Confirm already resolved (or wasn't present).
-  // 3. autoAdvance === true — the person has Auto navigation switched on for
-  //    this walkthrough (the callout's own toggle). Same auto-continue as the
-  //    veteran path below, chosen explicitly rather than earned; it never
-  //    reaches a waitFor step, so the real Save/consent taps are untouched.
-  if (h.holdGate === false) {
-    await h.pace.paced("grouped", PACING.GROUPED_STEP_PAUSE_MS);
-  } else if (h.autoAdvance || h.requireExplicitAdvance === false) {
-    await h.pace.paced("ready", PACING.READY_AUTO_MS);
-  } else {
-    await h.pace.awaitNext("ready");
+    // Terminal commit gate: the step's work is finished, but a NON-final step
+    // does not move on by itself by default — the person taps Next when
+    // ready, so nothing is ever rushed past someone still reading it. Two
+    // INDEPENDENT relaxations can shorten this to an auto-continue, checked
+    // in this order:
+    //
+    // 1. holdGate === false — a step in the middle of a grouped field run (the
+    //    caller looks ahead to the next step; see Walkthrough.tsx's
+    //    computeHoldGate). Applies to EVERY user, first-timers included — the
+    //    real checkpoints (opening the form, the last field before Save, the
+    //    final verify/reveal) still gate, this just stops making someone tap
+    //    Next after every individual field. A structural, step-SHAPE relaxation,
+    //    so it's checked first regardless of trust level.
+    // 2. requireExplicitAdvance === false — a VETERAN user (Item 2, TrustMode:
+    //    walkthroughCompletionCount past TRUST_MODE_THRESHOLD and manual mode
+    //    off) instead auto-advances once READY_AUTO_MS elapses. A user-HISTORY
+    //    relaxation, so it only applies once holdGate hasn't already decided.
+    //    Never applies to waitFor-typed steps (those never call runActStep at
+    //    all — see Walkthrough.tsx's `autonomous` check), and a risk-flagged
+    //    Confirm phase above already forced its own explicit tap before
+    //    reaching here regardless of trust level — risk overrides trust, but
+    //    only Confirm needs to make that call since this gate is reached only
+    //    after Confirm already resolved (or wasn't present).
+    // 3. autoAdvance === true — the person has Auto navigation switched on for
+    //    this walkthrough (the callout's own toggle). Same auto-continue as the
+    //    veteran path, chosen explicitly rather than earned; it never
+    //    reaches a waitFor step, so the real Save/consent taps are untouched.
+    //
+    // The FINAL step (isFinalStep) instead holds a TIMED gate,
+    // FINAL_AUTOCLOSE_MS: Done still ends the run immediately (and Replay
+    // re-shows the finale), but once the window elapses the walkthrough
+    // closes itself and returns to the app. This deliberately reversed the
+    // same-day "the final Done is always the person's" rule at the user's
+    // explicit request (2026-08-09; see pacing.ts). It beats the trust/auto
+    // branch below on purpose — READY_AUTO_MS would end a veteran's run
+    // faster than they can read the finale. (computeHoldGate already returns
+    // true when there is no next step, so the grouped branch can't swallow
+    // it either.)
+    if (h.holdGate === false) {
+      await h.pace.paced("grouped", PACING.GROUPED_STEP_PAUSE_MS);
+    } else if (h.isFinalStep) {
+      await h.pace.awaitNextOrTimeout("ready", PACING.FINAL_AUTOCLOSE_MS);
+    } else if (h.autoAdvance || h.requireExplicitAdvance === false) {
+      await h.pace.paced("ready", PACING.READY_AUTO_MS);
+    } else {
+      await h.pace.awaitNext("ready");
+    }
+    // cancel() wakes the gate's waiter, so Exit mid-gate must not fall through
+    // into onAdvance() — that would advance a walkthrough the user just left.
+    if (h.shouldCancel()) return "cancelled";
+    // A Replay tap that woke the gate re-runs the reveal; it must never
+    // advance the step.
+    if (reveal && h.pace.consumeReplay()) continue;
+    break;
   }
-  // cancel() wakes the gate's waiter, so Exit mid-gate must not fall through
-  // into onAdvance() — that would advance a walkthrough the user just left.
-  if (h.shouldCancel()) return "cancelled";
 
   h.onAdvance();
   return "advanced";

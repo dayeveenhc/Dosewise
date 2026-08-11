@@ -18,6 +18,7 @@ import { normalizeAllergies, slugify } from "../../lib/changeHighlight";
 import { TagList, GenderPicker, withCatalogLabels } from "../setup/GuidedSetupWizard";
 import { MedAvatar, ProfileAvatar } from "../../components/shared";
 import { PhotoSourceSheet } from "../../components/PhotoSourceSheet";
+import { CameraSheet } from "../../components/CameraSheet";
 import { MeiSuggestButton } from "../../components/MeiSuggestButton";
 import { TimeField } from "../../components/TimesPicker";
 
@@ -248,6 +249,7 @@ export function ElderlySettingsScreen({ patient, elderId, onUpdatePatient, onSig
   // there is what makes the fields editable.
   const [profileEditing, setProfileEditing] = useState(false);
   const [showPhotoSource, setShowPhotoSource] = useState(false);
+  const [showCamera, setShowCamera] = useState(false);
   const cameraRef = useRef<HTMLInputElement>(null);
   const libraryRef = useRef<HTMLInputElement>(null);
 
@@ -628,11 +630,15 @@ export function ElderlySettingsScreen({ patient, elderId, onUpdatePatient, onSig
   // Applies immediately (like the rest of patient.photo's local-only, cosmetic
   // history) rather than waiting on the DOB/weight/etc. Save button below,
   // which only writes the separate profile-jsonb draft fields.
+  // Split from the change handler so the in-app camera feeds the same path.
+  const handlePhotoFile = (file: File) => {
+    void fileToDataUrl(file).then(photo => onUpdatePatient({ ...patient, photo }));
+  };
+
   const onPhotoFile = (e: ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     e.target.value = "";
-    if (!file) return;
-    void fileToDataUrl(file).then(photo => onUpdatePatient({ ...patient, photo }));
+    if (file) handlePhotoFile(file);
   };
 
   // A search hit scrolls to the section that owns it — unless that section is
@@ -706,9 +712,17 @@ export function ElderlySettingsScreen({ patient, elderId, onUpdatePatient, onSig
           <input ref={libraryRef} type="file" accept="image/*" className="sr-only" onChange={onPhotoFile} />
           {showPhotoSource && (
             <PhotoSourceSheet
-              onTakePhoto={() => { setShowPhotoSource(false); cameraRef.current?.click(); }}
+              onTakePhoto={() => { setShowPhotoSource(false); setShowCamera(true); }}
               onChooseFile={() => { setShowPhotoSource(false); libraryRef.current?.click(); }}
               onClose={() => setShowPhotoSource(false)}
+            />
+          )}
+          {showCamera && (
+            <CameraSheet
+              facing="user"
+              onCapture={file => { setShowCamera(false); handlePhotoFile(file); }}
+              onClose={() => setShowCamera(false)}
+              onFallback={() => { setShowCamera(false); cameraRef.current?.click(); }}
             />
           )}
           {/* Editing keeps the SAME record layout — same sections, same rows,

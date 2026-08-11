@@ -159,6 +159,40 @@ function startOfLocalDayIso(): string {
   return d.toISOString();
 }
 
+/**
+ * Attribute today's taken doses to a medication's time slots.
+ *
+ * One taken row used to mark EVERY slot of a multi-time medication "taken" —
+ * so a twice-daily medicine with the morning dose logged could never read
+ * missed for the evening slot, exactly the case missed-dose alerts exist for.
+ * Primary rule: a dose whose `scheduled_at` local HH:MM equals a slot belongs
+ * to that slot (both write paths record a real per-slot scheduled_at).
+ * Fallback for rows matching no slot: consume the earliest unclaimed slots
+ * first — the same rule as services/hermes tools/doses.py::_missed_doses_today.
+ */
+export function assignTakenSlots(
+  times: string[],
+  takenDoses: { scheduled_at?: string | null; logged_at?: string | null }[],
+): Map<string, { logged_at?: string | null }> {
+  const bySlot = new Map<string, { logged_at?: string | null }>();
+  const unmatched: { logged_at?: string | null }[] = [];
+  for (const d of takenDoses) {
+    const at = d.scheduled_at ? new Date(d.scheduled_at) : null;
+    const hhmm = at && !Number.isNaN(at.getTime())
+      ? `${String(at.getHours()).padStart(2, "0")}:${String(at.getMinutes()).padStart(2, "0")}`
+      : null;
+    if (hhmm && times.includes(hhmm) && !bySlot.has(hhmm)) bySlot.set(hhmm, d);
+    else unmatched.push(d);
+  }
+  for (const slot of [...times].sort()) {
+    if (bySlot.has(slot)) continue;
+    const d = unmatched.shift();
+    if (!d) break;
+    bySlot.set(slot, d);
+  }
+  return bySlot;
+}
+
 // A user row is required before any medications/doses can be written — schema FKs
 // point at profiles(id), not auth.users(id) directly. Sign-in doesn't create one,
 // so bootstrap it lazily on first real data access.
@@ -170,14 +204,15 @@ export async function ensureProfile(elderId: string): Promise<void> {
 
 // Fetches this elder's active medications, joined with today's logged doses and
 // any refill forecast, into the same per-time-slot Medication shape the UI already
-// expects. Note: a medication with more than one schedule.times entry will show
-// every slot as "taken" once any one dose is logged today — the app itself only
-// ever writes single-time schedules, so this doesn't occur from data created here.
+// expects. Taken doses are attributed PER SLOT via assignTakenSlots — Hermes/
+// Telegram write real multi-time schedules, so "any dose today marks every
+// slot taken" (the shape this had until 2026-08-09) hid genuinely-missed
+// later slots from every screen and from buildAlerts.
 export async function fetchElderMedications(elderId: string): Promise<Medication[]> {
   const [medsRes, dosesRes, refillsRes] = await Promise.all([
     supabase.from("medications").select("id,name,purpose,dosage,schedule,priority")
       .eq("elder_id", elderId).eq("archived", false),
-    supabase.from("doses").select("medication_id,status,logged_at")
+    supabase.from("doses").select("medication_id,status,logged_at,scheduled_at")
       .eq("elder_id", elderId).gte("scheduled_at", startOfLocalDayIso()),
     supabase.from("refills").select("medication_id,run_out_forecast,pills_remaining").eq("elder_id", elderId),
   ]);
@@ -196,13 +231,18 @@ export async function fetchElderMedications(elderId: string): Promise<Medication
     // case would make every screen render a pointless "Mon, Tue, Wed…" line.
     const days = sched?.days?.length && sched.days.length < 7 ? sched.days : undefined;
     const intervalDays = (sched?.interval_days ?? 1) > 1 ? sched!.interval_days : undefined;
-    const takenDose = doses.find(d => d.medication_id === med.id && d.status === "taken");
+    const slotTimes = times.length ? times : ["08:00"];
+    const takenBySlot = assignTakenSlots(
+      slotTimes,
+      doses.filter(d => d.medication_id === med.id && d.status === "taken"),
+    );
     const refill = refills.find(r => r.medication_id === med.id);
     const refillDaysLeft = refill?.run_out_forecast
       ? Math.max(0, Math.ceil((new Date(refill.run_out_forecast).getTime() - Date.now()) / 86_400_000))
       : undefined;
 
-    for (const hhmm of times.length ? times : ["08:00"]) {
+    for (const hhmm of slotTimes) {
+      const takenDose = takenBySlot.get(hhmm);
       const status: MedStatus = takenDose ? "taken" : "upcoming";
       out.push({
         id: slotId(med.id, hhmm),
@@ -248,6 +288,16 @@ export async function fetchDoseHistory(elderId: string, fromDate: Date, toDate: 
   return new Set((data ?? []).map(d => `${d.medication_id}|${isoDate(new Date(d.scheduled_at))}`));
 }
 
+// How many days a count of pills/doses buys at `dosesPerDay`. Integer floor,
+// mirroring `pills_remaining // per_day` in services/hermes/src/hermes/tools/
+// refills.py::log_refill — the app and Hermes write the same forecast from the
+// same count, so the two can never disagree about one medicine's supply.
+// A zero/absent doses-per-day is treated as once daily rather than dividing by
+// zero: a medicine with no parsed times still gets a truthful "N days".
+export function daysOfSupply(pillsRemaining: number, dosesPerDay: number): number {
+  return Math.floor(pillsRemaining / Math.max(1, dosesPerDay));
+}
+
 // Days of supply left, from the pills actually remaining and how many are taken
 // per day — 30 pills taken twice daily is 15 days, not 30. Falls back to the
 // refill row's own run-out forecast when the pill count is unknown, and returns
@@ -257,7 +307,7 @@ export function supplyDaysLeft(
   med: { pillsRemaining?: number; refillDaysLeft?: number },
   dosesPerDay: number,
 ): number | undefined {
-  if (med.pillsRemaining != null && dosesPerDay > 0) return Math.floor(med.pillsRemaining / dosesPerDay);
+  if (med.pillsRemaining != null && dosesPerDay > 0) return daysOfSupply(med.pillsRemaining, dosesPerDay);
   return med.refillDaysLeft;
 }
 
@@ -387,20 +437,85 @@ export async function unlogDoseTaken(medicationId: string, elderId: string): Pro
   await shiftSupply(medicationId, +1);
 }
 
-// Logging a dose taken uses up a day of supply — pull the refill forecast one
-// day closer so "days remaining" reflects actual consumption; undoing pushes it
-// back out by the same day. No-op if this medication has no refill row (refill
-// tracking is optional).
+// Logging a dose taken uses up a day of supply; undoing puts it back. No-op if
+// this medication has no refill row (refill tracking is optional).
+//
+// TWO BRANCHES, because `refills` carries supply in two different units and
+// supplyDaysLeft PREFERS the count. Once `pills_remaining` is set (by logRefill
+// below, or by Hermes's log_refill), the forecast is no longer what the bar
+// reads — shifting only the date would make taking a dose stop moving the bar
+// at all. So: decrement the count when there is one, shift the date when there
+// isn't. These two must stay in step with logRefill; changing one without the
+// other silently freezes a medicine's supply bar.
 async function shiftSupply(medicationId: string, days: number): Promise<void> {
   const { data } = await supabase.from("refills")
-    .select("id,run_out_forecast").eq("medication_id", medicationId).limit(1);
+    .select("id,run_out_forecast,pills_remaining").eq("medication_id", medicationId).limit(1);
   const refill = data?.[0];
-  if (!refill?.run_out_forecast) return;
+  if (!refill) return;
+  if (refill.pills_remaining != null) {
+    // `days` is -1 on take / +1 on undo, so the sign carries straight over to
+    // the count. Clamped at 0: a supply that has run out cannot go negative.
+    await supabase.from("refills")
+      .update({ pills_remaining: Math.max(0, refill.pills_remaining + days) })
+      .eq("id", refill.id);
+    return;
+  }
+  if (!refill.run_out_forecast) return;
   const forecast = new Date(refill.run_out_forecast);
   forecast.setDate(forecast.getDate() + days);
   await supabase.from("refills").update({
-    run_out_forecast: forecast.toISOString().slice(0, 10),
+    run_out_forecast: isoDate(forecast),
   }).eq("id", refill.id);
+}
+
+// The run-out date a count of pills buys, as a LOCAL calendar day.
+// isoDate, not `toISOString().slice(0,10)`: this app's users are at UTC+8, so
+// the UTC form lands a day early for every evening hour.
+export function forecastFromPills(pillsRemaining: number, dosesPerDay: number, from = new Date()): string {
+  const out = new Date(from);
+  out.setDate(out.getDate() + daysOfSupply(pillsRemaining, dosesPerDay));
+  return isoDate(out);
+}
+
+export interface RefillInput {
+  /** Pills or doses now on hand. */
+  pillsRemaining: number;
+  /** How many are taken per day — what days-left divides by. */
+  dosesPerDay: number;
+  threshold?: number;
+}
+
+/**
+ * Record the supply a person has at home.
+ *
+ * Writes BOTH `pills_remaining` and `run_out_forecast`, exactly as Hermes's
+ * `log_refill` does, so a refill logged in the app and one logged in chat leave
+ * the row in the same state.
+ *
+ * SELECT-then-UPDATE-or-INSERT, never a bare insert. `refills` has no unique
+ * constraint on `medication_id`, both readers take the first match
+ * (fetchElderMedications's `.find(...)`, shiftSupply's `.limit(1)`), and
+ * migration 0004 denies DELETE — so a duplicate row is a permanently wrong
+ * number with no way to clean it up. addMedication already inserts a row
+ * whenever `refillDays` was given, which is exactly when a naive insert here
+ * would create that duplicate.
+ *
+ * `updated_at` is deliberately not set: trg_refills_updated_at owns it.
+ */
+export async function logRefill(medicationId: string, elderId: string, input: RefillInput): Promise<void> {
+  const patch: Record<string, unknown> = {
+    pills_remaining: input.pillsRemaining,
+    run_out_forecast: forecastFromPills(input.pillsRemaining, input.dosesPerDay),
+  };
+  if (input.threshold != null) patch.threshold = input.threshold;
+
+  const { data } = await supabase.from("refills")
+    .select("id").eq("medication_id", medicationId).limit(1);
+  const existing = data?.[0];
+  const { error } = existing
+    ? await supabase.from("refills").update(patch).eq("id", existing.id)
+    : await supabase.from("refills").insert({ medication_id: medicationId, elder_id: elderId, ...patch });
+  if (error) throw error;
 }
 
 interface MedicationInput {
@@ -445,9 +560,11 @@ export async function addMedication(elderId: string, input: MedicationInput): Pr
   if (input.refillDays) {
     const forecast = new Date();
     forecast.setDate(forecast.getDate() + input.refillDays);
+    // isoDate, not toISOString(): a UTC+8 evening lands the forecast a day
+    // early. Same reason forecastFromPills uses it.
     await supabase.from("refills").insert({
       medication_id: medicationId, elder_id: elderId,
-      run_out_forecast: forecast.toISOString().slice(0, 10),
+      run_out_forecast: isoDate(forecast),
     });
   }
   return medicationId;

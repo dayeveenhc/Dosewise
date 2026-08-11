@@ -28,9 +28,15 @@ export const checkScheduleSteps: WalkthroughStep[] = [
     id: "schedule.readTimeline",
     screen: ON_HOME,
     onEnter: ON_HOME,
-    selector: '[data-tour="elder-schedule"]',
+    // Spotlight the "now" line (always rendered on today — it clamps to the
+    // first/last hour row outside 6am–11pm) rather than the whole timeline,
+    // which is taller than the viewport band so the callout could never clear
+    // it. The acknowledge tap stays on the full timeline: tapping anywhere on
+    // it advances, and it also covers the non-today edge where the now line
+    // isn't rendered.
+    selector: '[data-walk="elder-timeline-now"]',
     instructionKey: "walk.schedule.readTimeline",
-    waitFor: { type: "acknowledge", source: "dom" },
+    waitFor: { type: "acknowledge", source: "dom", selector: '[data-tour="elder-schedule"]' },
   },
   {
     id: "schedule.now",

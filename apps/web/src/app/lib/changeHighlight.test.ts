@@ -311,6 +311,25 @@ describe("findEntityElement — exact then suffix-by-id fallback", () => {
     const a: AgentAction = { tool: "x", entity_type: "medication", entity_id: "missing" };
     expect(findEntityElement(a)).toBeNull();
   });
+
+  // The rule the medication detail page has to obey. The suffix fallback takes
+  // candidates[0] in DOCUMENT ORDER, so ANY second element whose data-testid
+  // ends in the medicine's uuid silently steals the ring — with no test failure
+  // until an sNN scenario spec runs. The detail page therefore identifies
+  // itself with a plain `data-med-id` attribute, which neither the exact match,
+  // the suffix fallback, nor the `[data-testid^="medication-"]` cardinality
+  // assertions in e2e can see.
+  it("ignores a non-testid data-med-id, so the detail page cannot steal the ring", () => {
+    document.body.innerHTML =
+      `<div data-testid="med-detail" data-med-id="uuid-7">detail page</div>` +
+      `<div data-testid="medication-uuid-7">card</div>`;
+    const a: AgentAction = { tool: "update_medication_dosage", entity_type: "medication", entity_id: "uuid-7" };
+    expect(findEntityElement(a)?.getAttribute("data-testid")).toBe("medication-uuid-7");
+
+    // And via the suffix path too, where document order would decide it.
+    const s: AgentAction = { tool: "set_medication_reminder", entity_type: "schedule_entry", entity_id: "uuid-7" };
+    expect(findEntityElement(s)?.getAttribute("data-testid")).toBe("medication-uuid-7");
+  });
 });
 
 describe("describeChange — 2026-07 tool verbs (undo/discontinue/snooze/severity/symptom)", () => {

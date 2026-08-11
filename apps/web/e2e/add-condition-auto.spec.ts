@@ -1,6 +1,6 @@
 import { expect, test } from "@playwright/test";
 import { mkdirSync } from "node:fs";
-import { anonClient, createThrowawayElder, signIn, startWalkthroughAuto } from "./helpers";
+import { anonClient, createThrowawayElder, signIn, startWalkthroughAuto, useAutoWalkthroughNav } from "./helpers";
 
 // Guided Auto-Navigation — autonomous "add a medical condition", end to end
 // against REAL Supabase. This is the fix for the reported bug: the condition
@@ -15,6 +15,8 @@ test("autonomous add-condition: type → add → save → verify in conditions[]
   mkdirSync(SHOTS, { recursive: true });
   const creds = await createThrowawayElder();
 
+  // This spec asserts on a run driving ITSELF; step-by-step is now the default.
+  await useAutoWalkthroughNav(page);
   await signIn(page, creds);
   await startWalkthroughAuto(page, "add_condition_auto", { condition: "High blood pressure" });
 

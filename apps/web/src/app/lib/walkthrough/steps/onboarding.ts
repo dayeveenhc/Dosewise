@@ -37,8 +37,12 @@ export const onboardingSteps: WalkthroughStep[] = [
   // ---- profile ----
   { id: "wizard.profile.dob", screen: ON_WIZARD, selector: '[data-walk="wizard-dob"]',
     instructionKey: "walk.wizard.dob", waitFor: { type: "input", source: "dom", on: "change", validate: "nonEmpty" } },
-  { id: "wizard.profile.gender", screen: ON_WIZARD, selector: '[data-walk="wizard-gender-picker"] button',
-    instructionKey: "walk.wizard.gender", waitFor: { type: "click", source: "dom" } },
+  // Spotlight the whole picker (the first-button-only cutout looked like only
+  // one gender was on offer); the listener arms every button, so any choice
+  // satisfies the step.
+  { id: "wizard.profile.gender", screen: ON_WIZARD, selector: '[data-walk="wizard-gender-picker"]',
+    instructionKey: "walk.wizard.gender",
+    waitFor: { type: "click", source: "dom", selector: '[data-walk="wizard-gender-picker"] button' } },
   { id: "wizard.profile.weight", screen: ON_WIZARD, selector: '[data-walk="wizard-weight"]',
     instructionKey: "walk.wizard.weight", waitFor: { type: "input", source: "dom", on: "blur", validate: "nonEmpty" } },
   { id: "wizard.profile.height", screen: ON_WIZARD, selector: '[data-walk="wizard-height"]',

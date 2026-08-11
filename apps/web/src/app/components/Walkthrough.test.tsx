@@ -166,66 +166,31 @@ describe("Walkthrough — never strands the user", () => {
   });
 });
 
-// The consent-frame contract: a user-driven step must show the SAME action row
-// as an autonomous one — but the indicator must never be a control Mei (or a
-// test) can press to advance past consent.
-describe("Walkthrough — wait pill on user-driven steps", () => {
-  it("names the real control, derived from the target's accessible name", async () => {
-    const btn = mountTarget("wt-target") as HTMLButtonElement;
-    btn.textContent = "Add Lisinopril";
-    const { queryByText } = renderWalkthrough(step({ waitFor: { type: "click", source: "dom" } }));
-
-    await waitFor(() => expect(queryByText("Exit walkthrough")).not.toBeNull());
-    await waitFor(() => expect(queryByText("Waiting for you: Add Lisinopril")).not.toBeNull());
-  });
-
-  it("prefers aria-label over text, so icon-only buttons still read", async () => {
-    const btn = mountTarget("wt-target");
-    btn.setAttribute("aria-label", "Call Mary Tan");
-    btn.textContent = "";
-    const { queryByText } = renderWalkthrough(step({ waitFor: { type: "acknowledge", source: "dom" } }));
-    await waitFor(() => expect(queryByText("Waiting for you: Call Mary Tan")).not.toBeNull());
-  });
-
-  // A <select>'s textContent is every option concatenated; a wrapper's is its
-  // whole subtree. Both would render garbage, so both are guarded.
-  it("never dumps a select's options into the pill", async () => {
-    const wrap = document.createElement("div");
-    wrap.setAttribute("data-testid", "wt-target");
-    const sel = document.createElement("select");
-    sel.setAttribute("aria-label", "Language");
-    for (const o of ["English", "Mandarin", "Hokkien"]) {
-      const opt = document.createElement("option");
-      opt.textContent = o;
-      sel.appendChild(opt);
-    }
-    wrap.appendChild(sel);
-    document.body.appendChild(wrap);
-
-    const { queryByText } = renderWalkthrough(step({ waitFor: { type: "select-change", source: "dom" } }));
-    await waitFor(() => expect(queryByText("Waiting for you: Language")).not.toBeNull());
-    expect(queryByText(/EnglishMandarin/)).toBeNull();
-  });
-
-  it("falls back to type-specific copy when the target has no name (a bare toggle)", async () => {
-    const btn = mountTarget("wt-target");
-    btn.textContent = "";
-    const { queryByText } = renderWalkthrough(step({ waitFor: { type: "toggle", source: "dom" } }));
-    await waitFor(() => expect(queryByText("Waiting for the switch")).not.toBeNull());
+// The consent-frame contract: a user-driven step carries NO advance control at
+// all. The "tap THIS" cue is the strengthened spotlight glow on the target
+// itself (.dw-spotlight-glow-wait) — which replaced the old "Waiting for you"
+// pill — so the cue can never be a control Mei (or a test) presses to advance
+// past consent.
+describe("Walkthrough — wait glow on user-driven steps", () => {
+  it("strengthens the spotlight glow on a waitFor step", async () => {
+    mountTarget("wt-target");
+    renderWalkthrough(step({ waitFor: { type: "click", source: "dom" } }));
+    await waitFor(() => expect(document.querySelector(".dw-spotlight-glow-wait")).not.toBeNull());
+    // Layered onto the base glow overlay, not a separate element.
+    expect(document.querySelector(".dw-spotlight-glow-wait")!.className).toContain("dw-spotlight-glow");
   });
 
   // THE invariant. Every spec that proves consent steps can't be auto-advanced
-  // asserts on the button role; the pill must stay outside it forever.
-  it("is NOT a button — Mei can never advance a consent step", async () => {
+  // asserts on the button role; the wait cue must stay outside it forever.
+  it("offers no advance-shaped control — Mei can never advance a consent step", async () => {
     const btn = mountTarget("wt-target");
     btn.textContent = "Accept";
     const { queryByText, queryAllByRole } = renderWalkthrough(step({ waitFor: { type: "click", source: "dom" } }));
 
-    await waitFor(() => expect(queryByText("Waiting for you: Accept")).not.toBeNull());
-    // The pill must not sit inside a <button>. A disabled button would still be
-    // matched by getByRole("button"), which is exactly what the consent specs
-    // (s10/s22/s24/s26) use to prove no advance control exists on these steps.
-    expect(queryByText("Waiting for you: Accept")!.closest("button")).toBeNull();
+    await waitFor(() => expect(queryByText("Exit walkthrough")).not.toBeNull());
+    // The wait cue is a pointer-events-none overlay div, never inside a button.
+    await waitFor(() => expect(document.querySelector(".dw-spotlight-glow-wait")).not.toBeNull());
+    expect(document.querySelector(".dw-spotlight-glow-wait")!.closest("button")).toBeNull();
     // The only ADVANCE-shaped control in the callout is... none; Exit is all
     // that's left. Controls that provably cannot advance a consent step are
     // excluded BY data-walk rather than by class, so the invariant can't be
@@ -243,13 +208,14 @@ describe("Walkthrough — wait pill on user-driven steps", () => {
     expect(inCallout.map(b => b.textContent?.trim())).toEqual(["Exit walkthrough"]);
   });
 
-  it("is absent on autonomous steps (they have Next instead)", async () => {
+  it("keeps the plain steady glow on autonomous steps (they have Next instead)", async () => {
     mountTarget("wt-target", "input");
     const { queryByText } = renderWalkthrough(
       step({ act: { kind: "fill", selector: '[data-testid="wt-target"]', value: "x" } }),
     );
     await waitFor(() => expect(queryByText("Exit walkthrough")).not.toBeNull());
-    expect(queryByText(/^Waiting for/)).toBeNull();
+    await waitFor(() => expect(document.querySelector(".dw-spotlight-glow")).not.toBeNull());
+    expect(document.querySelector(".dw-spotlight-glow-wait")).toBeNull();
   });
 });
 
@@ -620,5 +586,79 @@ describe("Walkthrough — AutoNav toggle", () => {
     // The label fills that fixed column rather than sizing to its own text.
     const label = column().querySelector("span") as HTMLElement;
     expect(label.className).toContain("w-full");
+  });
+});
+
+// The final step closes ITSELF after FINAL_AUTOCLOSE_MS (2026-08-09 reversal
+// of the same-day final-hold rule, at the user's request): Done still ends the
+// run immediately, and an errored final step gets a first-class close button
+// (orchestrate.ts's isFinalStep — these are the component-level halves).
+describe("Walkthrough — final step auto-closes", () => {
+  beforeEach(() => {
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+  });
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  const finalStep = () =>
+    step({ act: { kind: "fill", selector: '[data-testid="wt-target"]', value: "x" } });
+
+  it("auto-closes after FINAL_AUTOCLOSE_MS; Done is available and enabled the whole window", async () => {
+    mountTarget("wt-target", "input");
+    const onAdvance = vi.fn();
+    // A single-step run, so the step under test IS the last one.
+    const { queryByText } = renderWalkthrough([finalStep()], 0, {
+      requireExplicitAdvance: false,
+      onAdvance,
+    });
+    await waitFor(() => expect(queryByText("Exit walkthrough")).not.toBeNull());
+
+    // Reach the gate: inside the window the run is still up and Done works.
+    await vi.advanceTimersByTimeAsync(PACING.FIELD_MIN_MS + PACING.READY_AUTO_MS);
+    await waitFor(() => expect(queryByText("Done")).not.toBeNull());
+    expect((queryByText("Done") as HTMLButtonElement).disabled).toBe(false);
+    expect(onAdvance).not.toHaveBeenCalled();
+
+    // The window elapsing finishes the run on its own — no tap.
+    await vi.advanceTimersByTimeAsync(PACING.FINAL_AUTOCLOSE_MS + 1000);
+    await waitFor(() => expect(onAdvance).toHaveBeenCalledOnce());
+  });
+
+  it("Done inside the window closes immediately", async () => {
+    mountTarget("wt-target", "input");
+    const onAdvance = vi.fn();
+    const { queryByText } = renderWalkthrough([finalStep()], 0, {
+      requireExplicitAdvance: true,
+      autoNavDefault: false,
+      onAdvance,
+    });
+    await waitFor(() => expect(queryByText("Exit walkthrough")).not.toBeNull());
+
+    await vi.advanceTimersByTimeAsync(PACING.FIELD_MIN_MS + 2000);
+    await waitFor(() => expect(queryByText("Done")).not.toBeNull());
+    fireEvent.click(queryByText("Done")!);
+    await waitFor(() => expect(onAdvance).toHaveBeenCalledOnce());
+  });
+
+  it("an errored final step renders a primary Done that exits — never advances", async () => {
+    // No target mounted: the act fails and the step stalls.
+    const onAdvance = vi.fn();
+    const onExit = vi.fn();
+    const { queryAllByText, queryByText } = renderWalkthrough([finalStep()], 0, {
+      onAdvance,
+      onExit,
+    });
+    await waitFor(() => expect(queryByText("Exit walkthrough")).not.toBeNull());
+    // waitForEl's 4000ms budget must elapse before the stall is declared.
+    await vi.advanceTimersByTimeAsync(10_000);
+    const done = await waitFor(() => {
+      const btn = queryAllByText("Done").find(b => b.closest("button"));
+      expect(btn).not.toBeUndefined();
+      return btn!.closest("button") as HTMLButtonElement;
+    });
+    fireEvent.click(done);
+    expect(onExit).toHaveBeenCalled();
+    expect(onAdvance).not.toHaveBeenCalled();
   });
 });

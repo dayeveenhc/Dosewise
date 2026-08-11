@@ -39,9 +39,11 @@ export const caregiverLinkRequestSteps: WalkthroughStep[] = [
   {
     id: "link.cg.pick-relationship",
     screen: { mode: "caregiver", screen: "dashboard" },
-    selector: '[data-walk="scanlink-relationship-chips"] button',
+    // Spotlight the whole chip row; the listener arms every chip, so any
+    // relationship choice satisfies the step (not just the first chip).
+    selector: '[data-walk="scanlink-relationship-chips"]',
     instructionKey: "walk.link.pickRelationship",
-    waitFor: { type: "click", source: "dom" },
+    waitFor: { type: "click", source: "dom", selector: '[data-walk="scanlink-relationship-chips"] button' },
   },
   {
     id: "link.cg.send-request",

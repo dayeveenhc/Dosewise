@@ -70,7 +70,12 @@ async def run_agent_turn(
     ctx: ToolContext,
     user_text: str,
     *,
+    # One attachment (Telegram, the CLI) or several (the web composer, which
+    # lets someone attach a few pages at once). `image_bytes` is kept as the
+    # single-image spelling every existing caller already uses — `images` is
+    # purely the additive list form, and wins when both are given.
     image_bytes: bytes | None = None,
+    images: list[bytes] | None = None,
     image_media_type: str = "image/jpeg",
     history: list | None = None,
     reply_language: str | None = None,
@@ -79,6 +84,7 @@ async def run_agent_turn(
     on_event: OnEvent | None = None,
 ) -> tuple[str, list[str], list]:
     """Run one turn. Returns (reply_text, tools_used, updated_messages)."""
+    imgs = images if images else ([image_bytes] if image_bytes is not None else [])
     dialect = await _elder_dialect(ctx)
     slang = await _elder_slang(ctx, dialect)
     await _elder_voice_pref(ctx)
@@ -104,17 +110,17 @@ async def run_agent_turn(
     eff = llm.effective_provider()
     if eff == "openai":
         reply, tools_used, messages = await _run_openai(
-            client, ctx, system, user_text, image_bytes, image_media_type, history,
+            client, ctx, system, user_text, imgs, image_media_type, history,
             on_event=on_event,
         )
     elif eff == "gemini":
         reply, tools_used, messages = await _run_gemini(
-            client, ctx, system, user_text, image_bytes, image_media_type, history,
+            client, ctx, system, user_text, imgs, image_media_type, history,
             on_event=on_event,
         )
     else:
         reply, tools_used, messages = await _run_anthropic(
-            client, ctx, system, user_text, image_bytes, image_media_type, history,
+            client, ctx, system, user_text, imgs, image_media_type, history,
             on_event=on_event,
         )
 
@@ -258,15 +264,15 @@ def _parse_tool_args(raw: str | None) -> dict:
 
 
 async def _run_openai(
-    client, ctx, system, user_text, image_bytes, image_media_type, history,
+    client, ctx, system, user_text, images, image_media_type, history,
     *, on_event: OnEvent | None = None,
 ) -> tuple[str, list[str], list]:
     settings = get_settings()
     messages: list[dict] = list(history or [])
 
     user_content: list[dict] = []
-    if image_bytes is not None:
-        data = base64.standard_b64encode(image_bytes).decode()
+    for image in images:
+        data = base64.standard_b64encode(image).decode()
         user_content.append(
             {"type": "image_url", "image_url": {"url": f"data:{image_media_type};base64,{data}"}}
         )
@@ -339,21 +345,21 @@ async def _run_openai(
 # Anthropic (Claude) — messages API with tool_use / tool_result blocks
 # ---------------------------------------------------------------------------
 async def _run_anthropic(
-    anthropic, ctx, system, user_text, image_bytes, image_media_type, history,
+    anthropic, ctx, system, user_text, images, image_media_type, history,
     *, on_event: OnEvent | None = None,
 ) -> tuple[str, list[str], list]:
     settings = get_settings()
     messages: list[dict] = list(history or [])
 
     user_content: list[dict] = []
-    if image_bytes is not None:
+    for image in images:
         user_content.append(
             {
                 "type": "image",
                 "source": {
                     "type": "base64",
                     "media_type": image_media_type,
-                    "data": base64.standard_b64encode(image_bytes).decode(),
+                    "data": base64.standard_b64encode(image).decode(),
                 },
             }
         )
@@ -452,7 +458,7 @@ def _anthropic_text(response) -> str:
 # Gemini (Google) — generate_content with functionCall / functionResponse parts
 # ---------------------------------------------------------------------------
 async def _run_gemini(
-    client, ctx, system, user_text, image_bytes, image_media_type, history,
+    client, ctx, system, user_text, images, image_media_type, history,
     *, on_event: OnEvent | None = None,
 ) -> tuple[str, list[str], list]:
     from google.genai import types
@@ -461,8 +467,8 @@ async def _run_gemini(
     contents: list = list(history or [])
 
     parts = []
-    if image_bytes is not None:
-        parts.append(types.Part.from_bytes(data=image_bytes, mime_type=image_media_type))
+    for image in images:
+        parts.append(types.Part.from_bytes(data=image, mime_type=image_media_type))
     parts.append(types.Part.from_text(text=user_text))
     contents.append(types.Content(role="user", parts=parts))
 

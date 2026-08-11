@@ -1,16 +1,20 @@
 import { useState, useRef, useEffect } from "react";
 import type { ReactNode, ChangeEvent } from "react";
-import { X, Check, Plus, Minus, Pill, Camera, PenLine, Image as ImageIcon, Sparkles } from "lucide-react";
+import { X, Check, Plus, Minus, Pill, Camera, PenLine, Sparkles } from "lucide-react";
 import type { Medication } from "../types";
 import { WEEKDAY_TOKENS, courseDaysLeft, isoDate } from "../lib/medications";
-import { MED_COLOURS, MEDICATION_CATALOG, COMMON_CONDITIONS, MED_PHOTOS, localizeCatalogValue } from "../data/medications";
-import { TimesPicker, defaultDoseTime } from "../components/TimesPicker";
+import { MED_COLOURS, MEDICATION_CATALOG, COMMON_CONDITIONS, localizeCatalogValue } from "../data/medications";
+import { TimesPicker, defaultDoseTime, toDisplayTime } from "../components/TimesPicker";
 import type { RoutineTimes } from "../components/TimesPicker";
-import { agentTurn, fileToBase64 } from "../lib/hermes";
+import { agentTurn, extractPrescription, fileToBase64 } from "../lib/hermes";
+import type { ExtractedPrescription } from "../lib/hermes";
+import { parseTimesParam } from "../lib/walkthrough/steps/add_prescription_auto";
 import { withCatalogLabels } from "./setup/GuidedSetupWizard";
 import { PhotoSourceSheet } from "../components/PhotoSourceSheet";
+import { CameraSheet } from "../components/CameraSheet";
 import { ConfirmDialog } from "../components/ConfirmDialog";
 import { checkDoseSafety } from "../lib/doseSafety";
+import { emitWalkthroughEvent } from "../lib/walkthrough/bus";
 import { useLanguage } from "../lib/languageContext";
 import { t } from "../lib/language";
 
@@ -43,6 +47,14 @@ interface AddPrescriptionSheetProps {
   // rewriting a doctor's instruction. Deliberately does NOT pre-select anything:
   // Mei still performs both taps visibly, which is the point of the walkthrough.
   initialDurationDays?: number;
+  // The dose times Mei was told about (12h display strings, the form
+  // `Medication.times` uses), from the chat request the walkthrough was started
+  // for. Seeds the picker INSTEAD of the elder's breakfast default — without
+  // it, "one at 12 pm" was silently filed as 8:00 AM, because the times never
+  // survived the chat→walkthrough handoff at all. Unlike initialDurationDays
+  // this DOES pre-select: the quick chips toggle, so a step that clicked "noon"
+  // would add a second dose beside the default rather than replace it.
+  initialTimes?: string[];
   // HOOK POINT for the Confirm phase (plan doc: "Item 5 — ConfirmBack-Phase",
   // not yet built). Once a walkthrough's own Confirm step has risk-gated and
   // tapped through the SAME dosage-jump signal checkDoseSafety detects here,
@@ -99,7 +111,20 @@ function TypeAhead<T>({ value, onChange, onPick, items, filter, label, render, p
   );
 }
 
-export function AddPrescriptionSheet({ onClose, onAdd, onAdded, initialTab = "manual", routine, onAgentAdded, editing, suppressDoseConfirm = false, initialDurationDays }: AddPrescriptionSheetProps) {
+// "This one wasn't printed on your label." Tokens, not a raw palette class —
+// theme.css's contrast and colour-vision modes override the variables, and a
+// hardcoded amber would keep its hue in all of them.
+function InferredBadge({ show }: { show: boolean }) {
+  const { language } = useLanguage();
+  if (!show) return null;
+  return (
+    <span className="inline-flex items-center rounded-full border border-warn-border bg-warn-bg px-1.5 py-0.5 text-[calc(10px*var(--dw-text,1))] font-bold text-warn-fg">
+      {t(language, "prescription.inferredBadge")}
+    </span>
+  );
+}
+
+export function AddPrescriptionSheet({ onClose, onAdd, onAdded, initialTab = "manual", routine, onAgentAdded, editing, suppressDoseConfirm = false, initialDurationDays, initialTimes }: AddPrescriptionSheetProps) {
   const { language } = useLanguage();
   const [tab, setTab] = useState<"scan" | "manual">(editing ? "manual" : initialTab);
   const [scannedPhoto, setScannedPhoto] = useState<string | null>(null);
@@ -112,15 +137,42 @@ export function AddPrescriptionSheet({ onClose, onAdd, onAdded, initialTab = "ma
   const cameraRef = useRef<HTMLInputElement>(null);
   const libraryRef = useRef<HTMLInputElement>(null);
   const [showPhotoSource, setShowPhotoSource] = useState(false);
+  const [showCamera, setShowCamera] = useState(false);
+  // Fields the label did NOT state, so the form can mark them "Please check".
+  // Compared at RENDER time against seededRef rather than cleared by an effect:
+  // the neighbouring [dose, selectedTimes.length] effect fires on mount, and
+  // setTab("manual") does not remount this sheet, so an effect-cleared mark
+  // would be wiped the moment the scan set it. Editing a field changes its
+  // value, so the mark clears itself with no bookkeeping.
+  const [inferred, setInferred] = useState<Set<string>>(new Set());
+  const seededRef = useRef<Record<string, string>>({});
+  // The label's own words for cadence / "with food". Shown read-only: there is
+  // no column for either on `medications`, and adding one is a supabase change.
+  const [labelSays, setLabelSays] = useState("");
+  const [scanNote, setScanNote] = useState<string | null>(null);
+  // Held so the ask-Mei fallback can re-send the SAME photo the extractor
+  // couldn't read, rather than making someone take it again.
+  const [scanFile, setScanFile] = useState<{ blob: Blob; isPdf: boolean } | null>(null);
 
   const [name, setName] = useState(editing?.name ?? "");
   const [dose, setDose] = useState(editing?.dose ?? "");
   const [purpose, setPurpose] = useState(editing?.purpose ?? "");
-  const [selectedTimes, setSelectedTimes] = useState<string[]>(editing?.times ?? (editing?.time ? [editing.time] : [defaultDoseTime(routine)]));
+  const [selectedTimes, setSelectedTimes] = useState<string[]>(
+    editing?.times
+      ?? (editing?.time ? [editing.time] : undefined)
+      ?? (initialTimes?.length ? initialTimes : undefined)
+      ?? [defaultDoseTime(routine)],
+  );
   const [cadence, setCadence] = useState<Cadence>(editing?.days?.length ? "days" : (editing?.intervalDays ?? 1) > 1 ? "interval" : "daily");
   const [weekDays, setWeekDays] = useState<string[]>(editing?.days ?? []);
   const [intervalDays, setIntervalDays] = useState(editing?.intervalDays ?? 2);
-  const [refillDays, setRefillDays] = useState(editing?.refillDaysLeft ? String(editing.refillDaysLeft) : "");
+  // Deliberately NOT seeded from `editing?.refillDaysLeft`. Supply lives in the
+  // `refills` table and updateMedication documents that it never touches it, so
+  // seeding-then-passing-back silently discarded whatever was typed. Worse, the
+  // seed is itself DERIVED (fetchElderMedications ceils run_out_forecast minus
+  // today), so writing it back would walk the date a day on every repeated
+  // edit. The supply field is now add-only; editing points at "I've refilled it".
+  const [refillDays, setRefillDays] = useState("");
   // The stored truth is the END DATE, not a duration: presets and the stepper
   // SET it, the summary DERIVES days-remaining from it. That is what makes
   // re-opening an existing medicine show the course's remaining days rather
@@ -195,6 +247,13 @@ export function AddPrescriptionSheet({ onClose, onAdd, onAdded, initialTab = "ma
         intervalDays: cadence === "interval" ? intervalDays : undefined,
         endDate: courseMode === "fixed" ? endDate : undefined,
       });
+      // The autonomous walkthrough's Save step waits on THIS, not on the click
+      // that started it (WaitFor "write-committed", types.ts). The click fires
+      // while we are still inside the await above — and doesn't fire at all
+      // when the dose-safety dialog returned early — so a click-driven step
+      // either raced its own Verify or hung forever. Emitted inside the try,
+      // after the write really resolved: a save that throws must emit nothing.
+      emitWalkthroughEvent("medication-saved");
       setSubmitState("success");
       window.setTimeout(() => {
         onAdded?.();
@@ -207,25 +266,110 @@ export function AddPrescriptionSheet({ onClose, onAdd, onAdded, initialTab = "ma
     }
   };
 
+  // What the local catalog knows about a medicine by name, so the type-ahead and
+  // the label scan fill the blanks from one place. A pure lookup on purpose:
+  // the scan needs the values BEFORE it decides what to mark, and a version
+  // that called the setters could not report back (an updater runs after the
+  // function has already returned).
+  const catalogEntry = (n: string) =>
+    MEDICATION_CATALOG.find(c => c.name.toLowerCase() === n.trim().toLowerCase());
+
   const pickMedication = (m: { name: string; purpose: string; purposeKey: string; dose: string }) => {
     setName(m.name);
     if (!purpose.trim()) setPurpose(m.purpose);
     if (!dose.trim()) setDose(m.dose);
   };
 
-  // Real label scan: the photo or PDF goes to Hermes, whose add_prescription tool
-  // reads the label and proposes the details (propose→confirm; nothing is saved
-  // until the person confirms below, and the write happens server-side).
+  /**
+   * Seed the manual form from what Hermes read off the label.
+   *
+   * Returns the set of fields to mark "Please check", or null when the label
+   * was unreadable (nothing usable came back) — the caller then falls back to
+   * the chat propose→confirm path rather than dropping someone into a blank form.
+   */
+  const applyExtraction = (fields: ExtractedPrescription): Set<string> | null => {
+    const marks = new Set<string>(fields.inferred ?? []);
+    const seeded: Record<string, string> = {};
+    if (!fields.name && !fields.dose && !fields.times?.length) return null;
+
+    const nextName = fields.name ?? "";
+    let nextDose = fields.dose ?? "";
+    let nextPurpose = fields.purpose ?? "";
+
+    // Whatever the label didn't print, filled from what the app knows about the
+    // drug — and MARKED, always. A catalog dose is a typical dose, not this
+    // person's. Hermes deliberately omits a dose it couldn't read rather than
+    // guessing one, which is exactly what leaves the blank for this to fill.
+    const cat = nextName ? catalogEntry(nextName) : undefined;
+    if (cat) {
+      if (!nextDose.trim()) { nextDose = cat.dose; marks.add("dose"); }
+      if (!nextPurpose.trim()) { nextPurpose = cat.purpose; marks.add("purpose"); }
+    }
+
+    if (nextName) { setName(nextName); seeded.name = nextName; }
+    if (nextDose) { setDose(nextDose); seeded.dose = nextDose; }
+    if (nextPurpose) { setPurpose(nextPurpose); seeded.purpose = nextPurpose; }
+
+    if (fields.times?.length) {
+      // parseTimesParam, not to24h: it drops anything it can't parse, where
+      // to24h answers "08:00" for junk — which would file the medicine at
+      // breakfast while looking like it read a real time off the label.
+      const times = parseTimesParam(fields.times.join(",")).map(toDisplayTime);
+      if (times.length) { setSelectedTimes(times); seeded.times = times.join(","); }
+    }
+    if (fields.duration_days && fields.duration_days > 0) {
+      setCourseMode("fixed");
+      setEndDate(endDateAfter(fields.duration_days));
+    }
+    seededRef.current = seeded;
+    return marks;
+  };
+
+  // Real label scan. The AI's job ENDS at reading the photo: it returns
+  // structured fields, the form is pre-filled, and the person reviews and saves.
+  // It used to go through agentTurn (the chat loop), which answered a label
+  // upload by asking what the dose, frequency and purpose were — three questions
+  // whose answers were printed on the thing just handed over.
   const runScan = async (photoUrl: string | null, file: Blob, isPdf: boolean) => {
     setScannedPhoto(photoUrl);
     setScanning(true);
     setProposal(null);
+    setScanNote(null);
+    // Cleared with the rest: a Retake, or a second medicine added without
+    // closing the sheet, would otherwise keep the PREVIOUS label's "The label
+    // says…" line sitting under the dose field.
+    setLabelSays("");
+    setInferred(new Set());
     setCommitted(false);
     const b64 = await fileToBase64(file);
+    const { fields, note } = await extractPrescription(
+      isPdf ? undefined : b64,
+      isPdf ? b64 : undefined,
+    );
+    const marks = applyExtraction(fields);
+    setScanning(false);
+    if (!marks) {
+      // Unreadable: stay on the SCAN tab, where the retake button and the
+      // ask-Mei fallback live. Switching to the form here would hide both.
+      setScanNote(note ?? t(language, "prescription.scanNothingRead"));
+      return;
+    }
+    setInferred(marks);
+    setLabelSays([fields.frequency, fields.instructions].filter(Boolean).join(" · "));
+    setTab("manual");
+  };
+
+  // The chat propose→confirm path, kept as the fallback for a label the
+  // extractor couldn't read. Same turn the scan used to make on every upload.
+  const askMeiToRead = async () => {
+    if (!scanFile) return;
+    setScanning(true);
+    setScanNote(null);
+    const b64 = await fileToBase64(scanFile.blob);
     const { reply } = await agentTurn(
       "Here is a photo of my prescription.",
-      isPdf ? undefined : b64,
-      isPdf ? b64 : undefined
+      scanFile.isPdf ? undefined : [b64],
+      scanFile.isPdf ? b64 : undefined,
     );
     setProposal(reply);
     setScanning(false);
@@ -245,19 +389,25 @@ export function AddPrescriptionSheet({ onClose, onAdd, onAdded, initialTab = "ma
     }
   };
 
+  // Split from the change handler so the in-app camera can feed the same path
+  // with a File it produced itself.
+  const handlePickedFile = (file: File, dataUrl?: string) => {
+    const isPdf = file.type === "application/pdf";
+    setScanFile({ blob: file, isPdf });
+    runScan(isPdf ? null : dataUrl ?? URL.createObjectURL(file), file, isPdf);
+  };
+
   const onFile = (e: ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     e.target.value = "";
-    if (!file) return;
-    const isPdf = file.type === "application/pdf";
-    runScan(isPdf ? null : URL.createObjectURL(file), file, isPdf);
+    if (file) handlePickedFile(file);
   };
 
-  const onSamplePhoto = async () => {
-    // The bundled sample image, routed through the same real agent path.
-    const blob = await (await fetch(MED_PHOTOS["Metformin"])).blob();
-    runScan(MED_PHOTOS["Metformin"], blob, false);
-  };
+  // Derived at RENDER, never from an effect — see the `inferred` state's own
+  // note. A field still holding exactly what the scan put there is still
+  // unreviewed; the moment it is edited the value diverges and the mark goes.
+  const isInferred = (key: string, current: string) =>
+    inferred.has(key) && seededRef.current[key] === current;
 
   const inputCls = "w-full bg-input-background border border-border rounded-xl px-3.5 py-2.5 text-sm text-foreground placeholder:text-muted-foreground outline-none focus:border-primary transition-colors";
 
@@ -362,20 +512,48 @@ export function AddPrescriptionSheet({ onClose, onAdd, onAdded, initialTab = "ma
                     <p className="text-[calc(15px*var(--dw-text,1))] font-semibold text-foreground">{t(language, "prescription.takePhotoOrUpload")}</p>
                     <p className="text-xs text-muted-foreground leading-relaxed">{t(language, "prescription.snapOrUploadDesc")}</p>
                   </button>
-                  <button
-                    onClick={onSamplePhoto}
-                    className="w-full flex items-center justify-center gap-2 py-2.5 rounded-xl bg-muted text-sm font-semibold text-foreground active:bg-muted/70"
-                  >
-                    <ImageIcon size={15} />{t(language, "prescription.trySamplePhoto")}
-                  </button>
+
+                  {/* The extractor couldn't read it. Two ways out, both better
+                      than a blank form: another photo, or hand this one to Mei
+                      in chat — the propose→confirm path this tab used to take
+                      on EVERY upload, now the fallback rather than the default. */}
+                  {scanNote && (
+                    <div className="rounded-xl border border-warn-border bg-warn-bg px-3.5 py-3 space-y-2.5">
+                      <p className="text-[calc(13px*var(--dw-text,1))] text-warn-fg leading-relaxed">{scanNote}</p>
+                      {scanFile && (
+                        <button
+                          onClick={askMeiToRead}
+                          className="w-full h-11 rounded-xl bg-primary text-primary-foreground text-sm font-semibold flex items-center justify-center gap-2 dw-press"
+                        >
+                          <Sparkles size={15} />{t(language, "prescription.scanAskMei")}
+                        </button>
+                      )}
+                    </div>
+                  )}
+
                   <p className="text-center text-[calc(11px*var(--dw-text,1))] text-muted-foreground">{t(language, "prescription.preferToType")}{" "}
-                    <button onClick={() => setTab("manual")} className="text-primary font-semibold underline">{t(language, "prescription.enterManuallyTab")}</button>
+                    <button onClick={() => setTab("manual")} className="text-[calc(11px*var(--dw-text,1))] text-primary font-semibold underline">{t(language, "prescription.enterManuallyTab")}</button>
                   </p>
                 </>
               )}
             </div>
           ) : (
             <>
+              {/* What Mei read, and what she worked out. The banner is the
+                  honest half of autofill: a form that silently arrives full
+                  invites a save without a read. */}
+              {inferred.size > 0 && (
+                <div className="rounded-xl border border-warn-border bg-warn-bg px-3.5 py-3">
+                  <p className="text-[calc(13px*var(--dw-text,1))] font-bold text-warn-fg mb-0.5">{t(language, "prescription.scanFilledTitle")}</p>
+                  <p className="text-[calc(12px*var(--dw-text,1))] text-warn-fg leading-relaxed">{t(language, "prescription.inferredHint")}</p>
+                </div>
+              )}
+              {labelSays && (
+                <p className="text-[calc(12px*var(--dw-text,1))] text-muted-foreground leading-relaxed">
+                  <span className="font-semibold">{t(language, "prescription.labelSays")}:</span> {labelSays}
+                </p>
+              )}
+
               {/* Medication name — type-ahead */}
               <div data-walk="rx-name">
                 <label className="block text-xs font-semibold text-foreground mb-1.5">{t(language, "wizard.medicationName")} <span className="text-destructive">*</span></label>
@@ -398,13 +576,19 @@ export function AddPrescriptionSheet({ onClose, onAdd, onAdded, initialTab = "ma
 
               {/* Dose */}
               <div>
-                <label className="block text-xs font-semibold text-foreground mb-1.5">{t(language, "prescription.dose")} <span className="text-destructive">*</span></label>
+                <label className="flex items-center gap-1.5 text-xs font-semibold text-foreground mb-1.5">
+                  {t(language, "prescription.dose")} <span className="text-destructive">*</span>
+                  <InferredBadge show={isInferred("dose", dose)} />
+                </label>
                 <input data-walk="rx-dose" value={dose} onChange={e => setDose(e.target.value)} placeholder={t(language, "prescription.dosePlaceholder")} className={inputCls} />
               </div>
 
               {/* Purpose / condition — type-ahead */}
               <div data-walk="rx-purpose">
-                <label className="block text-xs font-semibold text-foreground mb-1.5">{t(language, "prescription.purposeCondition")} <span className="text-destructive">*</span></label>
+                <label className="flex items-center gap-1.5 text-xs font-semibold text-foreground mb-1.5">
+                  {t(language, "prescription.purposeCondition")} <span className="text-destructive">*</span>
+                  <InferredBadge show={isInferred("purpose", purpose)} />
+                </label>
                 <TypeAhead
                   value={purpose}
                   onChange={setPurpose}
@@ -417,7 +601,7 @@ export function AddPrescriptionSheet({ onClose, onAdd, onAdded, initialTab = "ma
               </div>
 
               {/* Time */}
-              <TimesPicker times={selectedTimes} onChange={setSelectedTimes} label={t(language, "prescription.scheduledTimes")} routine={routine} />
+              <TimesPicker data-walk="rx-times" times={selectedTimes} onChange={setSelectedTimes} label={t(language, "prescription.scheduledTimes")} routine={routine} />
 
               {/* Which days — plenty of medicines aren't daily (alternate-day
                   anti-inflammatories, a weekly bisphosphonate). Tap-only, like
@@ -579,12 +763,20 @@ export function AddPrescriptionSheet({ onClose, onAdd, onAdded, initialTab = "ma
                 )}
               </div>
 
-              {/* Refill supply */}
-              <div>
-                <label className="block text-xs font-semibold text-foreground mb-1.5">{t(language, "prescription.currentSupply")}</label>
-                <input type="number" value={refillDays} onChange={e => setRefillDays(e.target.value)} placeholder={t(language, "prescription.supplyPlaceholder")} min={1} className={inputCls} />
-                <p className="text-[calc(11px*var(--dw-text,1))] text-muted-foreground mt-1">{t(language, "prescription.alertedWhenLow")}</p>
-              </div>
+              {/* Refill supply — add-only. See the refillDays note above: there
+                  is exactly one writer for `refills` (lib/medications.ts::
+                  logRefill, behind "I've refilled it"), and an edit form that
+                  appears to accept supply but drops it is worse than not
+                  offering it. */}
+              {editing ? (
+                <p className="text-[calc(11px*var(--dw-text,1))] text-muted-foreground">{t(language, "prescription.supplyEditHint")}</p>
+              ) : (
+                <div>
+                  <label className="block text-xs font-semibold text-foreground mb-1.5">{t(language, "prescription.currentSupply")}</label>
+                  <input type="number" value={refillDays} onChange={e => setRefillDays(e.target.value)} placeholder={t(language, "prescription.supplyPlaceholder")} min={1} className={inputCls} />
+                  <p className="text-[calc(11px*var(--dw-text,1))] text-muted-foreground mt-1">{t(language, "prescription.alertedWhenLow")}</p>
+                </div>
+              )}
 
               {/* Colour */}
               <div>
@@ -664,9 +856,17 @@ export function AddPrescriptionSheet({ onClose, onAdd, onAdded, initialTab = "ma
       )}
       {showPhotoSource && (
         <PhotoSourceSheet
-          onTakePhoto={() => { setShowPhotoSource(false); cameraRef.current?.click(); }}
+          onTakePhoto={() => { setShowPhotoSource(false); setShowCamera(true); }}
           onChooseFile={() => { setShowPhotoSource(false); libraryRef.current?.click(); }}
           onClose={() => setShowPhotoSource(false)}
+        />
+      )}
+      {showCamera && (
+        <CameraSheet
+          facing="environment"
+          onCapture={(file, dataUrl) => { setShowCamera(false); handlePickedFile(file, dataUrl); }}
+          onClose={() => setShowCamera(false)}
+          onFallback={() => { setShowCamera(false); cameraRef.current?.click(); }}
         />
       )}
     </div>

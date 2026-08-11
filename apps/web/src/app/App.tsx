@@ -28,7 +28,9 @@ import { EditProfileSheet } from "./screens/EditProfileSheet";
 import { EditCaregiverAccountSheet } from "./screens/EditCaregiverAccountSheet";
 import { ElderlyApp } from "./screens/elderly/ElderlyApp";
 import { ChangeHighlight } from "./components/ChangeHighlight";
-import type { AgentAction } from "./lib/hermes";
+import { UrgentAlertPopup } from "./components/UrgentAlertPopup";
+import type { Alert } from "./lib/alerts";
+import type { AgentAction, AgentAlert } from "./lib/hermes";
 import { AccessibilityProvider, useContentZoom, useAccessibility } from "./accessibility.tsx";
 import { GuidedTour } from "./components/GuidedTour";
 import type { TourStep } from "./components/GuidedTour";
@@ -42,11 +44,12 @@ import { t } from "./lib/language";
 import type { AppLanguage } from "./lib/language";
 import { Walkthrough } from "./components/Walkthrough";
 import { resolveWalkthroughSteps, walkthroughShellFor } from "./lib/walkthrough/steps";
+import { parseTimesParam } from "./lib/walkthrough/steps/add_prescription_auto";
 import { AUTONOMOUS_TASKS } from "./lib/walkthrough/types";
 import { buildVerifyRunner } from "./lib/walkthrough/verify";
 import { PACING, TRUST_MODE_THRESHOLD } from "./lib/walkthrough/pacing";
 import type { WalkthroughScreen, WalkthroughTaskName, WalkthroughParams, VerifyDirective, RevealDirective } from "./lib/walkthrough/types";
-import { defaultDoseTime } from "./components/TimesPicker";
+import { defaultDoseTime, toDisplayTime } from "./components/TimesPicker";
 import { MED_COLOURS } from "./data/medications";
 import { loadWalkthroughSession, saveWalkthroughSession, clearWalkthroughSession } from "./lib/walkthroughState";
 import { markWalkthroughCompleted } from "./lib/profile";
@@ -119,6 +122,10 @@ export default function App() {
   // Sign-in-or-Get-started -> Caregiver-or-Myself -> HealthHub-or-Guided -> wizard.
   const [preAuthStage, setPreAuthStage] = useState<"welcome" | "signin" | "mode" | "method" | "wizard">("welcome");
   const [pendingMode, setPendingMode] = useState<"caregiver" | "elderly">("elderly");
+  // A loved one's QR scanned on the setup-method screen, held across the wizard's
+  // account step. The care_links insert needs caregiver_id = auth.uid() (RLS 0005),
+  // and there is no session yet at scan time, so the write waits for signup.
+  const [pendingCareLink, setPendingCareLink] = useState<{ elderId: string; name?: string; relationship: string } | null>(null);
   // Set right before an already-onboarded user previews the other mode from
   // Settings, so backing out of the picker can restore what they were on
   // instead of stranding them mid-"onboarding".
@@ -174,6 +181,48 @@ export default function App() {
   // The committed change being pulse-highlighted caregiver-side (mirrors
   // ElderlyApp's proof layer — the caregiver app previously had none).
   const [highlightChange, setHighlightChange] = useState<AgentAction | null>(null);
+  // Mei raised something that must be acted on TODAY. The caregiver shell had
+  // no host for these at all — AskMeiScreen never even destructured `alert`, so
+  // every raise_alert was discarded here while the elder shell showed it. Kept
+  // deliberately simple next to ElderlyApp's version: there is no derived-alert
+  // engine on this side (no buildAlerts, no Reminders tab), so there is nothing
+  // to dedupe against and no ladder to climb — one agent alert, shown once,
+  // dismissed by the person.
+  const [caregiverAlert, setCaregiverAlert] = useState<Alert | null>(null);
+  // NEVER STACK MODALS. Straight from ElderlyApp's own hard-won version: a
+  // popup left on screen when a walkthrough starts puts its z-[120] backdrop
+  // over every control the walkthrough needs to click, including its Save
+  // button (elder-side, that was found by s15-edit-profile). A caregiver turn
+  // can return BOTH a walkthrough and an alert, so this is reachable in one
+  // turn, not just by unlucky timing.
+  const caregiverAlertsSuppressed =
+    walkthroughTask !== null || showCaregiverTour || showAddPrescription
+    || showEditProfile || showEditAccount || showSendReminder !== null || showScanLink;
+
+  // Closed, but deliberately NOT recorded as seen: the thing Mei raised is
+  // still urgent, so it should be free to re-raise once the overlay is gone.
+  // Swallowing it because a walkthrough happened to start is the opposite
+  // failure to the one being fixed.
+  useEffect(() => {
+    if (caregiverAlertsSuppressed && caregiverAlert) setCaregiverAlert(null);
+  }, [caregiverAlertsSuppressed, caregiverAlert]);
+
+  const handleAgentAlert = (raised: AgentAlert) => {
+    if (caregiverAlertsSuppressed) return;
+    setCaregiverAlert({
+      id: `agent:${raised.title}`,
+      kind: "agent",
+      severity: raised.severity,
+      // PROSE, not keys — the model already wrote these in the reader's own
+      // language. UrgentAlertPopup renders everything through t(), which ends
+      // in `?? key` and echoes anything it doesn't recognise.
+      titleKey: raised.title,
+      bodyKey: raised.body,
+      params: {},
+      medName: raised.medication_name ?? undefined,
+      pref: "doseReminders",
+    });
+  };
   // Set when an ACTIVE elder session asked for the "onboarding" walkthrough:
   // the wizard is a separate stage, so we switch into it and this flag routes
   // the wizard's exit/completion back into the elder app instead of the
@@ -442,13 +491,18 @@ export default function App() {
         d.setDate(d.getDate() + courseDays - 1);
         endDate = isoDate(d);
       }
+      // Dose times the same way: honour what Mei was told, and only fall back
+      // to the patient's breakfast when she was told nothing. This branch used
+      // to hardcode the default, so the caregiver path filed "one at 12 pm" as
+      // 8am just as the elder walkthrough did.
+      const times = parseTimesParam(params.times).map(toDisplayTime);
       void handleAddPrescription({
         name: params.name || "",
         dose: params.dose || "",
         purpose: params.purpose || "",
         colour: MED_COLOURS[0].hex,
-        time: defaultDoseTime({ ...patient.mealTimes, sleepTime: patient.sleepTime }),
-        times: [],
+        time: times[0] ?? defaultDoseTime({ ...patient.mealTimes, sleepTime: patient.sleepTime }),
+        times,
         endDate,
       });
       setScreen("patient");
@@ -593,15 +647,29 @@ export default function App() {
   // Caregiver-shell Reveal: navigate + pulse the real element (minimal mirror
   // of ElderlyApp's handleWalkthroughReveal; no caption tracker here).
   const handleWalkthroughReveal = (reveal: RevealDirective) => {
+    const alreadyThere = reveal.screen.mode !== "caregiver" || screen === reveal.screen.screen;
     if (reveal.screen.mode === "caregiver") setScreen(reveal.screen.screen);
     if (reveal.pulse === false) return;
+    // Zero defer on an unchanged screen + bounded target poll + forced
+    // animation restart — mirrors ElderlyApp's handleWalkthroughReveal (see
+    // its comments for the whys).
     setTimeout(() => {
-      const el = document.querySelector<HTMLElement>(reveal.selector);
-      if (!el) return;
-      el.scrollIntoView({ block: "center", behavior: "smooth" });
-      el.classList.add("walk-reveal-pulse");
-      setTimeout(() => el.classList.remove("walk-reveal-pulse"), PACING.REVEAL_PULSE_MS);
-    }, PACING.NAVIGATE_MS);
+      const deadline = Date.now() + 4000;
+      const attempt = () => {
+        const el = document.querySelector<HTMLElement>(reveal.selector);
+        if (!el) {
+          if (Date.now() < deadline) setTimeout(attempt, 150);
+          else console.error(`[dosewise] reveal target never mounted: ${reveal.selector}`);
+          return;
+        }
+        el.scrollIntoView({ block: "center", behavior: "smooth" });
+        el.classList.remove("walk-reveal-pulse");
+        void el.offsetWidth;
+        el.classList.add("walk-reveal-pulse");
+        setTimeout(() => el.classList.remove("walk-reveal-pulse"), PACING.REVEAL_PULSE_MS);
+      };
+      attempt();
+    }, alreadyThere ? 0 : PACING.NAVIGATE_MS);
   };
 
   // Chat→wizard entry: an ACTIVE elder session received start_walkthrough
@@ -796,9 +864,15 @@ export default function App() {
             )}
             {preAuthStage === "method" && (
               <SetupMethodScreen
+                mode={pendingMode}
                 onBack={() => setPreAuthStage("mode")}
                 onGuided={() => { setWizardPrefill(undefined); setPreAuthStage("wizard"); }}
                 onExtracted={(prefill) => { setWizardPrefill(prefill); setPreAuthStage("wizard"); }}
+                onScanLinked={(elderId, name, relationship) => {
+                  setPendingCareLink({ elderId, name, relationship });
+                  setWizardPrefill(undefined);
+                  setPreAuthStage("wizard");
+                }}
               />
             )}
             {preAuthStage === "wizard" && (
@@ -807,8 +881,9 @@ export default function App() {
                 hasSession={!!session}
                 elderId={elderId}
                 prefill={wizardPrefill}
+                pendingLink={pendingCareLink}
                 onComplete={() => {
-                  setNeedsWizard(false); setWizardPrefill(undefined); setScreen("dashboard");
+                  setNeedsWizard(false); setWizardPrefill(undefined); setPendingCareLink(null); setScreen("dashboard");
                   if (resumeElderAfterWizard) {
                     // Chat-initiated onboarding run: back into the elder app,
                     // without re-triggering the post-setup auto-tour.
@@ -820,6 +895,7 @@ export default function App() {
                   }
                 }}
                 onExit={() => {
+                  setPendingCareLink(null);
                   if (resumeElderAfterWizard) { setResumeElderAfterWizard(false); setAppMode("elderly"); }
                   else setPreAuthStage("method");
                 }}
@@ -892,7 +968,7 @@ export default function App() {
               content" sibling below — later in the DOM, same default stacking
               level — paints on top of the whole header, dropdown included,
               whenever the dropdown is open and overlaps it. */}
-          <div className="relative z-30 px-4 pt-2 pb-3 bg-background/70 backdrop-blur-md border-b border-border/60 shrink-0">
+          <div className="relative z-30 px-4 pt-2 pb-3 bg-background/70 backdrop-blur-md border-b border-border/50 shrink-0">
             {showBack ? (
               <div className="flex items-center gap-2.5 mb-2">
                 <button onClick={() => setScreen("dashboard")} aria-label={t(uiLang, "common.back")} className="w-11 h-11 bg-card border border-border rounded-full flex items-center justify-center active:bg-muted transition-colors">
@@ -951,7 +1027,7 @@ export default function App() {
                 onDismiss={id => setNotifications(prev => prev.filter(n => n.id !== id))}
               />
             )}
-            {screen === "ai" && <AskMeiScreen patient={patient} elderId={elderId} onUpdatePatient={handleUpdatePatient} onNavigate={setScreen} onSendReminder={() => handleSendReminder()} onMedsChanged={refreshMedications} onMedAdded={flagJustAdded} onHighlightChange={setHighlightChange} onWalkthroughStart={handleWalkthroughStart} guidedViewActive={walkthroughTask !== null || showCaregiverTour} openChatView={pendingChatView} onOpenChatViewConsumed={() => setPendingChatView(false)} />}
+            {screen === "ai" && <AskMeiScreen patient={patient} elderId={elderId} onUpdatePatient={handleUpdatePatient} onNavigate={setScreen} onSendReminder={() => handleSendReminder()} onMedsChanged={refreshMedications} onMedAdded={flagJustAdded} onHighlightChange={setHighlightChange} onAgentAlert={handleAgentAlert} onWalkthroughStart={handleWalkthroughStart} guidedViewActive={walkthroughTask !== null || showCaregiverTour} openChatView={pendingChatView} onOpenChatViewConsumed={() => setPendingChatView(false)} />}
             {screen === "messages" && <MessagesScreen elderId={elderId} />}
             {screen === "settings" && <SettingsScreen patient={patient} caregiverAccount={caregiverAccount} onSwitchMode={openModeSwitch} onSignOut={handleSignOut} onEditProfile={() => setShowEditProfile(true)} onEditAccount={() => setShowEditAccount(true)} />}
           </ZoomContent>
@@ -1001,6 +1077,13 @@ export default function App() {
           />
 
           {/* Caregiver proof-of-change layer — mirrors ElderlyApp's wiring. */}
+          {caregiverAlert && (
+            <UrgentAlertPopup
+              alert={caregiverAlert}
+              onDismiss={() => setCaregiverAlert(null)}
+              onTalkToMei={() => { setCaregiverAlert(null); setScreen("ai"); setPendingChatView(true); }}
+            />
+          )}
           <ChangeHighlight
             change={highlightChange}
             mode="caregiver"

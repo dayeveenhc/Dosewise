@@ -53,16 +53,18 @@ export function addConditionAutoSteps(p: WalkthroughParams = {}): WalkthroughSte
       // (the previous step) clears its input the instant it commits the chip,
       // so a ReviewField reading that same selector would always read blank
       // and wrongly force the clarifying-question path on every single run.
-      // Uses walk.confirmSubmit (not the walk.confirmSave every other *_auto
+      // Uses walk.confirmCheck (not the walk.confirmSave every other *_auto
       // sibling uses here) for exactly that reason: confirmSave's copy tells
       // the person to "tap Change" for a Change button that, with no review
-      // card, never renders — a tour must never claim an interaction that
-      // doesn't happen. The condition chip is still visible (dimmed) on the
-      // real form behind the spotlight cutout for the person to check.
+      // card, never renders — and the previous walk.confirmSubmit said "tap
+      // Save yourself" one step early, on a recap whose gate is Next. A tour
+      // must never claim an interaction that doesn't happen. The condition
+      // chip is still visible (dimmed) on the real form behind the spotlight
+      // cutout for the person to check.
       id: "autoCond.confirm",
       screen: ON_SETTINGS,
       selector: '[data-walk="elder-profile-save"]',
-      instructionKey: "walk.confirmSubmit",
+      instructionKey: "walk.confirmCheck",
       confirm: { recap: true },
     },
     {

@@ -115,9 +115,12 @@ test("s02 add-condition: 'Please add high blood pressure to my conditions' -> ad
   // rather than auto-elapsing.
   // Each autonomous step now holds at its commit gate until the person taps
   // Next, so tap through the fills to reach the Confirm recap step.
-  await advanceWalkthroughUntil(page, () => page.getByText("tap Save yourself", { exact: false }).isVisible());
-  await expect(page.getByText("tap Save yourself", { exact: false }), "Confirm (recap) step reached").toBeVisible({ timeout: 20_000 });
+  // The recap's copy is walk.confirmCheck ("…when it looks right, tap Next") —
+  // "tap Save yourself" belongs to the Submit waitFor step AFTER it.
+  await advanceWalkthroughUntil(page, () => page.getByText("when it looks right, tap Next", { exact: false }).isVisible());
+  await expect(page.getByText("when it looks right, tap Next", { exact: false }), "Confirm (recap) step reached").toBeVisible({ timeout: 20_000 });
   await tapWalkthroughNext(page); // onto the real Submit waitFor step
+  await expect(page.getByText("tap Save yourself", { exact: false }), "Submit step reached").toBeVisible({ timeout: 20_000 });
 
   // Arm the verify-callout waiter immediately BEFORE the save, so it can't miss
   // the transient "Checking…" window (VERIFY_MIN_MS floor, ~600ms) between save

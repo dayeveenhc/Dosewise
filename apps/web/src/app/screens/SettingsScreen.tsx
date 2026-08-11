@@ -67,7 +67,7 @@ export function SettingsScreen({ patient, caregiverAccount, onSwitchMode, onSign
         <SectionHeader title={t(language, "settings.account")} />
         <Card>
           <div className="flex items-center gap-3 px-4 py-4">
-            <div className="w-12 h-12 rounded-2xl bg-primary flex items-center justify-center text-primary-foreground font-bold text-lg shrink-0">{caregiverInitials}</div>
+            <div className="w-12 h-12 rounded-2xl bg-secondary flex items-center justify-center text-primary-foreground font-bold text-lg shrink-0">{caregiverInitials}</div>
             <div className="min-w-0 flex-1">
               <p className="text-sm font-semibold text-foreground truncate">{caregiverAccount.name || caregiverAccount.email || "—"}</p>
               {caregiverAccount.name && caregiverAccount.email && (
@@ -77,7 +77,7 @@ export function SettingsScreen({ patient, caregiverAccount, onSwitchMode, onSign
             <button
               onClick={onEditAccount}
               aria-label={t(language, "settings.editAccount")}
-              className="w-9 h-9 rounded-full bg-primary/10 flex items-center justify-center shrink-0 active:bg-primary/20 transition-colors"
+              className="w-9 h-9 rounded-xl bg-secondary flex items-center justify-center shrink-0 active:bg-primary/20 transition-colors"
             >
               <Edit3 size={15} className="text-primary" />
             </button>
@@ -99,7 +99,7 @@ export function SettingsScreen({ patient, caregiverAccount, onSwitchMode, onSign
             <button
               onClick={onEditProfile}
               aria-label={t(language, "settings.editCareRecipientProfile", { name: patient.nickname })}
-              className="w-9 h-9 rounded-full bg-primary/10 flex items-center justify-center shrink-0 active:bg-primary/20 transition-colors"
+              className="w-9 h-9 rounded-xl bg-secondary flex items-center justify-center shrink-0 active:bg-primary/20 transition-colors"
             >
               <Edit3 size={15} className="text-primary" />
             </button>
@@ -279,7 +279,7 @@ export function SettingsScreen({ patient, caregiverAccount, onSwitchMode, onSign
                 <p className="text-sm font-medium text-foreground">{label}</p>
                 <p className="text-xs text-taken-fg font-medium">{sub}</p>
               </div>
-              <CheckCircle2 size={15} className="ml-auto text-taken" />
+              <CheckCircle2 size={15} className="ml-auto text-taken-fg" />
             </div>
           ))}
         </Card>

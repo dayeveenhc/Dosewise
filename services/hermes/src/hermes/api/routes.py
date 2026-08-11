@@ -11,7 +11,7 @@ from fastapi import APIRouter, Depends, Header, HTTPException, Request, Response
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 
-from ..agent.extract import extract_profile_fields
+from ..agent.extract import extract_prescription_fields, extract_profile_fields
 from ..agent.loop import run_agent_turn
 from ..agent.tts import AUDIO_MEDIA_TYPE, synthesize_reply
 from ..agent.tts import available as tts_available
@@ -40,6 +40,12 @@ class AgentTurnRequest(BaseModel):
     jwt: str | None = None
     elder_id: str | None = None
     image_base64: str | None = None
+    # Several photos on ONE turn — the web composer lets someone attach a few
+    # pages of a prescription (or both sides of a box) and ask about them
+    # together. Additive: `image_base64` above still works on its own and is
+    # what the Telegram channel sends, so this is purely the list form for
+    # callers that have more than one. When both arrive the list wins.
+    images_base64: list[str] | None = None
     # Text-based PDF (e.g. a clinic report); extracted server-side and folded into
     # the message, same as the Telegram document path.
     pdf_base64: str | None = None
@@ -140,14 +146,30 @@ def _authenticate_and_check_rate_limit(
     return elder_id, app
 
 
+# Hard ceiling on photos per turn. Each one is a full vision input sent on every
+# iteration of the agent loop, so this bounds both the request body and the
+# per-turn token spend regardless of what a client asks for. The web composer
+# caps itself lower (lib/images.ts MAX_ATTACHMENTS) so a person never watches a
+# photo attach and then silently not arrive.
+_MAX_IMAGES_PER_TURN = 6
+
+
 def _prepare_message(
     body: AgentTurnRequest, elder_id: str
-) -> tuple[str, bytes | None] | AgentTurnResponse:
+) -> tuple[str, list[bytes]] | AgentTurnResponse:
     """Decode any attachment and fold PDF text into the message text. Returns an
     early AgentTurnResponse for the friendly-nudge / decode-failure cases (never
     raises), so both call sites just check the return type."""
     try:
-        image_bytes = base64.b64decode(body.image_base64) if body.image_base64 else None
+        raw_images = body.images_base64 or ([body.image_base64] if body.image_base64 else [])
+        if len(raw_images) > _MAX_IMAGES_PER_TURN:
+            log.warning(
+                "dropping %d image(s) over the per-turn cap for elder_id=%s",
+                len(raw_images) - _MAX_IMAGES_PER_TURN,
+                elder_id,
+            )
+            raw_images = raw_images[:_MAX_IMAGES_PER_TURN]
+        images = [base64.b64decode(raw) for raw in raw_images if raw]
 
         message = body.message
         if body.pdf_base64:
@@ -172,11 +194,11 @@ def _prepare_message(
             reply="Sorry, I'm having trouble right now. Please try again in a moment.",
             tools_used=[],
         )
-    return message, image_bytes
+    return message, images
 
 
 def _build_context(
-    app, elder_id: str, image_bytes: bytes | None, app_role: str | None = None
+    app, elder_id: str, images: list[bytes], app_role: str | None = None
 ) -> tuple[ToolContext, SessionState]:
     """Reuse (or create) this elder's persistent session so pending_proposal and the
     message history carry across requests — otherwise scan-propose-confirm can
@@ -190,8 +212,14 @@ def _build_context(
     # channel). Without this the web path analyses the image for vision but never
     # saves it, so the confirmed medication has no photo. The tool consumes this
     # slot at propose time and binds it to the matched proposal only.
-    if image_bytes is not None:
-        state.pending_image = image_bytes
+    #
+    # Deliberately still a SINGLE image even when several arrive: this slot
+    # exists only so one pill photo can be stored against the medication that
+    # gets confirmed, and a medication row has one pill_photo_path. Every
+    # attachment is still shown to the model for vision — that path is the
+    # `images` list handed to run_agent_turn, not this one.
+    if images:
+        state.pending_image = images[0]
     # Per-TURN on the web. The propose→confirm guards live entirely in the
     # pending_* slots (tools/base.py::match_pending), never in this flag, so
     # clearing it here makes it mean exactly "a tool proposed something during
@@ -220,15 +248,15 @@ async def agent_turn(body: AgentTurnRequest, request: Request) -> AgentTurnRespo
     prepared = _prepare_message(body, elder_id)
     if isinstance(prepared, AgentTurnResponse):
         return prepared
-    message, image_bytes = prepared
+    message, images = prepared
 
-    ctx, state = _build_context(app, elder_id, image_bytes, body.app_role)
+    ctx, state = _build_context(app, elder_id, images, body.app_role)
     try:
         reply, tools_used, state.messages = await run_agent_turn(
             app.llm_client,
             ctx,
             message,
-            image_bytes=image_bytes,
+            images=images,
             history=state.messages,
             reply_language=body.reply_language,
             completed_walkthroughs=body.completed_walkthroughs,
@@ -275,9 +303,9 @@ async def agent_turn_stream(body: AgentTurnRequest, request: Request) -> Streami
             yield _sse({"type": "final", **prepared.model_dump()})
 
         return StreamingResponse(_early_events(), media_type="text/event-stream")
-    message, image_bytes = prepared
+    message, images = prepared
 
-    ctx, state = _build_context(app, elder_id, image_bytes, body.app_role)
+    ctx, state = _build_context(app, elder_id, images, body.app_role)
     queue: asyncio.Queue = asyncio.Queue()
 
     async def on_event(event: dict) -> None:
@@ -289,7 +317,7 @@ async def agent_turn_stream(body: AgentTurnRequest, request: Request) -> Streami
                 app.llm_client,
                 ctx,
                 message,
-                image_bytes=image_bytes,
+                images=images,
                 history=state.messages,
                 reply_language=body.reply_language,
                 completed_walkthroughs=body.completed_walkthroughs,
@@ -420,6 +448,85 @@ async def profile_extract(body: ProfileExtractRequest, request: Request) -> Prof
         return ProfileExtractResponse(fields={}, note="Sorry, I couldn't read that just now.")
 
     return ProfileExtractResponse(fields=fields)
+
+
+class PrescriptionExtractRequest(BaseModel):
+    image_base64: str | None = None
+    pdf_base64: str | None = None
+    # Optional, exactly like /profile/extract: the add-prescription sheet always
+    # has a session, but keeping it optional means the same endpoint can serve a
+    # pre-account flow later, and a jwt-less call must not trip strict-auth.
+    # When present it buys a per-USER rate-limit bucket on top of the per-IP one
+    # main.py applies to every route.
+    jwt: str | None = None
+    elder_id: str | None = None
+
+
+class PrescriptionExtractResponse(BaseModel):
+    fields: dict = {}
+    note: str | None = None
+
+
+@router.post(
+    "/prescription/extract",
+    response_model=PrescriptionExtractResponse,
+    dependencies=[Depends(require_api_key)],
+)
+async def prescription_extract(
+    body: PrescriptionExtractRequest, request: Request
+) -> PrescriptionExtractResponse:
+    """Read a medication label into structured fields the app pre-fills a form with.
+
+    The "pull" sibling of /profile/extract, and deliberately NOT the chat loop:
+    one shot, no tools that write, no DB access. The person confirms by saving
+    the form, which is where the human-in-the-loop rail lives on this path.
+    """
+    app = request.app.state
+    if body.jwt:
+        # Its own bucket: reading a label must not eat the allowance for the
+        # next chat turn, same reasoning as /voice/tts.
+        _authenticate_and_check_rate_limit(body, request, bucket="extract")
+
+    try:
+        image_bytes = base64.b64decode(body.image_base64) if body.image_base64 else None
+        image_media_type = _sniff_image_media_type(image_bytes) if image_bytes else "image/jpeg"
+
+        pdf_text: str | None = None
+        if body.pdf_base64:
+            pdf_text = extract_pdf_text(base64.b64decode(body.pdf_base64))
+            if not pdf_text and image_bytes is None:
+                # Scanned/image-only PDF with no photo to fall back on — nudge
+                # without burning an LLM call, same as /profile/extract.
+                return PrescriptionExtractResponse(
+                    fields={},
+                    note=(
+                        "I couldn't read that PDF (it may be a scan). Could you take a "
+                        "clear photo of the label instead?"
+                    ),
+                )
+    except Exception:
+        log.exception("failed to decode attachment in prescription_extract")
+        return PrescriptionExtractResponse(
+            fields={}, note="Sorry, I couldn't read that just now."
+        )
+
+    if image_bytes is None and not (pdf_text or "").strip():
+        return PrescriptionExtractResponse(fields={}, note="No readable label was provided.")
+
+    try:
+        fields = await extract_prescription_fields(
+            app.llm_client,
+            image_bytes=image_bytes,
+            image_media_type=image_media_type,
+            pdf_text=pdf_text,
+        )
+    except Exception:
+        log.exception("prescription extract failed")
+        return PrescriptionExtractResponse(
+            fields={}, note="Sorry, I couldn't read that just now."
+        )
+
+    return PrescriptionExtractResponse(fields=fields)
 
 
 class VoiceTtsRequest(BaseModel):

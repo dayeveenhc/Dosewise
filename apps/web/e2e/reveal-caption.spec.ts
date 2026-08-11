@@ -1,6 +1,6 @@
 import { expect, test } from "@playwright/test";
 import { mkdirSync } from "node:fs";
-import { createThrowawayElder, signIn, startWalkthroughAuto } from "./helpers";
+import { createThrowawayElder, signIn, startWalkthroughAuto, useAutoWalkthroughNav } from "./helpers";
 
 // The walkthrough Reveal (client-driven writes: profile/allergy, travel — tasks
 // 7 & 8) now shows the SAME changed-fields caption ChangeHighlight uses, derived
@@ -15,6 +15,8 @@ test("walkthrough Reveal shows a changed-fields caption (weight 62)", async ({ p
   mkdirSync(SHOTS, { recursive: true });
   const creds = await createThrowawayElder();
 
+  // This spec asserts on a run driving ITSELF; step-by-step is now the default.
+  await useAutoWalkthroughNav(page);
   await signIn(page, creds);
   await startWalkthroughAuto(page, "edit_profile_auto");
 

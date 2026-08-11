@@ -1,14 +1,14 @@
 import { useEffect, useState } from "react";
-import { MessageSquare, User, ShieldQuestion, Check, X, Loader2, Plus, Trash2, Circle, Brain, AlertTriangle, CornerUpLeft, Send, Stethoscope, RefreshCw } from "lucide-react";
+import { MessageSquare, User, ShieldQuestion, Check, X, Loader2, Plus, Trash2, Circle, Brain, AlertTriangle, CornerUpLeft, Send, Stethoscope, RefreshCw, ArrowRight } from "lucide-react";
 import type { Message } from "../../types";
 import type { DoctorQ } from "./types";
 import { useLanguage } from "../../lib/languageContext";
 import { t } from "../../lib/language";
 import { respondToLinkRequest, type PendingLinkRequest } from "../../lib/careLinks";
-import type { Alert } from "../../lib/alerts";
+import { canViewAlert, canTellCaregiver, type Alert } from "../../lib/alerts";
 import { emitWalkthroughEvent } from "../../lib/walkthrough/bus";
 
-export function ElderlyNotificationsScreen({ careMessages, elderId, doctorQuestions, onAddDoctorQ, onMarkAnswered, onDeleteQuestion, onDismissMessage, onReplyMessage, openQuestionsSignal, walkthroughResetSignal, alerts = [], onAcknowledgeAlert, onRequestRefill, linkRequests, onLinkRequestsChanged }: {
+export function ElderlyNotificationsScreen({ careMessages, elderId, doctorQuestions, onAddDoctorQ, onMarkAnswered, onDeleteQuestion, onDismissMessage, onReplyMessage, openQuestionsSignal, walkthroughResetSignal, alerts = [], onAcknowledgeAlert, onRequestRefill, onAlertNavigate, onTellCaregiver, linkRequests, onLinkRequestsChanged }: {
   careMessages: Message[];
   elderId?: string;
   // Questions for the doctor moved here from the Ask Mei screen: this tab is
@@ -35,6 +35,14 @@ export function ElderlyNotificationsScreen({ careMessages, elderId, doctorQuesti
   alerts?: Alert[];
   onAcknowledgeAlert?: (id: string) => void;
   onRequestRefill?: (medName: string) => void;
+  // Takes the person to the thing the alert is ABOUT — the medicine's card, the
+  // missed dose on the timeline. The host owns the routing (ElderlyApp's
+  // goToAlert → lib/alerts.ts::destinationFor), so this screen only decides
+  // whether to offer it, via the same canViewAlert the popup uses.
+  onAlertNavigate?: (alert: Alert) => void;
+  // The "what do I do next" half: hands the alert to Mei as a ready-to-send
+  // message about telling the caregiver. Prefill, never auto-send.
+  onTellCaregiver?: (alert: Alert) => void;
   // Pending link requests are fetched by the host now (the badge and popup need
   // them while this tab is closed), so this screen renders what it is given.
   linkRequests?: PendingLinkRequest[];
@@ -226,6 +234,42 @@ export function ElderlyNotificationsScreen({ careMessages, elderId, doctorQuesti
               <p className={`text-[calc(15px*var(--dw-text,1))] leading-relaxed mb-3 ${critical ? "text-missed-fg/90" : "text-warn-fg/90"}`}>
                 {t(language, alert.bodyKey, alert.params)}
               </p>
+              {/* Two rows of two rather than one row of four: on a 390px frame
+                  at the largest text size, four flex-1 buttons are unreadable.
+                  Row A is "where do I go / what do I do next" and only renders
+                  when the alert actually offers one of them; row B is the
+                  original acknowledge pair, untouched — notifications_tour
+                  auto-clicks notif-ack-btn inside it.
+
+                  Deliberately buttons, NOT a click handler on the card: the row
+                  already contains controls, and a button cannot live inside a
+                  button (same reason as ElderlyHomeScreen's missed-dose row).
+                  steps/notifications_tour.ts documents the container as
+                  click-less and pulses it instead — keep that true.
+
+                  Both outline, not filled: "Request refill" below is the action
+                  that actually RESOLVES the alert, so it stays the one solid
+                  button on the card. Two competing fills would flatten that. */}
+              {(canViewAlert(alert) || canTellCaregiver(alert)) && (
+                <div className="flex gap-2 mb-2">
+                  {canViewAlert(alert) && (
+                    <button
+                      onClick={() => onAlertNavigate?.(alert)}
+                      className="flex-1 bg-card border border-border text-foreground rounded-xl py-2.5 text-[calc(15px*var(--dw-text,1))] font-bold flex items-center justify-center gap-1.5 active:scale-[0.98] transition-transform"
+                    >
+                      <ArrowRight size={16} />{t(language, "alerts.popupView")}
+                    </button>
+                  )}
+                  {canTellCaregiver(alert) && (
+                    <button
+                      onClick={() => onTellCaregiver?.(alert)}
+                      className="flex-1 bg-card border border-border text-foreground rounded-xl py-2.5 text-[calc(15px*var(--dw-text,1))] font-bold flex items-center justify-center gap-1.5 active:scale-[0.98] transition-transform"
+                    >
+                      <User size={16} />{t(language, "alerts.tellCaregiver")}
+                    </button>
+                  )}
+                </div>
+              )}
               <div className="flex gap-2">
                 <button
                   onClick={() => onAcknowledgeAlert?.(alert.id)}
@@ -343,8 +387,13 @@ export function ElderlyNotificationsScreen({ careMessages, elderId, doctorQuesti
             </div>
           )}
 
-          {manual.map(q => (
-            <div key={q.id} data-testid={`doctor_message-${q.id}`} className="dw-surface p-4">
+          {/* The newest unanswered question (prepends on save — ElderlyApp's
+              handleAddDoctorQ) carries its own anchor so the walkthrough's
+              verify step can spotlight ONE card instead of the whole list —
+              a full-list target is taller than the viewport band and the
+              callout can't clear it. */}
+          {manual.map((q, i) => (
+            <div key={q.id} data-testid={`doctor_message-${q.id}`} {...(i === 0 ? { "data-walk": "elder-doctor-q-latest" } : {})} className="dw-surface p-4">
               <div className="flex items-start gap-3">
                 <div className="w-6 h-6 rounded-full border-2 border-primary/40 flex items-center justify-center shrink-0 mt-0.5">
                   <Circle size={9} className="text-primary fill-primary" />

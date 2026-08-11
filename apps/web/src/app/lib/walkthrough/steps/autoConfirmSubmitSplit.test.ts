@@ -105,6 +105,33 @@ describe("*_auto step builders — Confirm/Submit split (Phase B, all 5 tasks)",
     expect(selectors(without)).not.toContain('[data-walk="rx-duration-summary"]');
   });
 
+  // 2026-08-10: the Save step waits on the WRITE, not the click that starts it.
+  // A click-driven wait ended the step while handleAdd was still awaiting the
+  // insert (so the next step's Verify re-queried too early and stopped the run
+  // at "I couldn't confirm that saved"), and never fired at all when the
+  // dose-safety dialog made handleAdd return early — leaving a step that is
+  // neither autonomous nor stalled, i.e. a callout with no Done at all.
+  it("add_prescription_auto's submit step waits on the medication-saved write, with a timeout", () => {
+    const submit = addPrescriptionAutoSteps().find(s => s.id === "autoRx.submit")!;
+    expect(submit.waitFor).toEqual({
+      type: "write-committed", source: "app-event", event: "medication-saved",
+    });
+    // A bus signal that never arrives (a save that THREW emits nothing) has to
+    // resolve to a stalled state, or the run hangs with no way forward.
+    expect(submit.timeoutMs, "the bus wait cannot hang forever").toBeGreaterThan(0);
+  });
+
+  it("add_prescription_auto's review shows the dose time only when Mei was given one", () => {
+    const timed = addPrescriptionAutoSteps({ times: "12:00" }).find(s => s.confirm)!;
+    const untimed = addPrescriptionAutoSteps({}).find(s => s.confirm)!;
+    const selectors = (step: typeof timed) => (step.review ?? []).map(r => r.selector);
+
+    expect(selectors(timed)).toContain('[data-walk="rx-time-value"]');
+    // Without a time, that row would recap the sheet's own breakfast default
+    // as though it were the person's answer.
+    expect(selectors(untimed)).not.toContain('[data-walk="rx-time-value"]');
+  });
+
   it("the other four *_auto confirm steps DO carry a review of what Mei filled in", () => {
     for (const task of ["add_prescription_auto", "travel_mode_auto", "edit_profile_auto", "add_doctor_question_auto"]) {
       const confirmStep = BUILDERS[task]().find(s => s.confirm)!;

@@ -129,11 +129,13 @@ test("s26 caregiver-elder-consent: the elder's own tap (not Mei) flips care_link
   // own pacing, so it does not by itself guarantee the reveal phase finished.
   await expect(nextBtn, "Next enabled once reveal's own pulse floor elapses").toBeEnabled({ timeout: 5_000 });
   await nextBtn.click();
-  await expect(replayBtn, "dwell ended; the step still holds at its commit gate").toBeHidden({ timeout: 10_000 });
-  // That tap only ended the dwell. The commit gate needs its own tap — which on
-  // the last step reads "Done" and ends the walkthrough.
+  // That tap only ended the dwell. The final gate is TIMED now
+  // (PACING.FINAL_AUTOCLOSE_MS, 2026-08-09): Done still ends it sooner, but
+  // left alone the walkthrough closes itself — finishWalkthrough treats
+  // either as completion. (Replay legitimately stays rendered through this
+  // gate now, so its disappearance is no longer a phase marker here.)
   await finishWalkthrough(page);
-  await expect(nextBtn, "walkthrough completed after the commit tap").toHaveCount(0, { timeout: 10_000 });
+  await expect(nextBtn, "walkthrough completed and the overlay unmounted").toHaveCount(0, { timeout: 10_000 });
 
   // Independent RE-CHECK: the ELDER's own tap — never Mei — flipped the row.
   await expect

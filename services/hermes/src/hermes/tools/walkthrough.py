@@ -159,8 +159,15 @@ _SCHEMA = {
                 "type": "object",
                 "description": (
                     "The real values to fill in for an autonomous walkthrough. "
-                    "add_prescription_auto: {name, dose, purpose, duration_days?} "
-                    "— include duration_days ONLY for a fixed course ('for 2 "
+                    "add_prescription_auto: {name, dose, purpose, times, "
+                    "duration_days?} — `times` is the SAME set of clock times "
+                    "you gave add_prescription, as ONE comma-separated 24h "
+                    "string ('12:00' or '08:00,20:00'); every value here is "
+                    "coerced with str(), so a real list would arrive at the app "
+                    "as the literal \"['12:00']\". Omitting it files the "
+                    "medicine at the person's breakfast time, which is wrong "
+                    "whenever they told you when to take it. Include "
+                    "duration_days ONLY for a fixed course ('for 2 "
                     "weeks', 'a 5-day course'), counted inclusively from today, "
                     "and pass the SAME value you gave add_prescription. "
                     "add_condition_auto: {condition}. "

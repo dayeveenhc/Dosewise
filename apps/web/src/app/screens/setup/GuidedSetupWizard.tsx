@@ -12,10 +12,12 @@ import type { RoutineTimes } from "../../components/TimesPicker";
 import type { PrefillMed, Role, WizardPrefill } from "../../lib/profile";
 import { MeiSuggestButton } from "../../components/MeiSuggestButton";
 import { PhotoSourceSheet } from "../../components/PhotoSourceSheet";
+import { CameraSheet } from "../../components/CameraSheet";
 import { useLanguage } from "../../lib/languageContext";
 import { t } from "../../lib/language";
 import type { AppLanguage } from "../../lib/language";
 import { emitWalkthroughEvent } from "../../lib/walkthrough/bus";
+import { createLinkRequest } from "../../lib/careLinks";
 
 // Maps a {value, labelKey} catalog entry list into the {value, label} pairs
 // TagList/type-aheads render — display localizes, the stored `value` doesn't.
@@ -136,6 +138,7 @@ export function TagList({ label, placeholder, items, suggestions, extractField, 
   const scanCameraRef = useRef<HTMLInputElement>(null);
   const scanLibraryRef = useRef<HTMLInputElement>(null);
   const [showPhotoSource, setShowPhotoSource] = useState(false);
+  const [showCamera, setShowCamera] = useState(false);
   const submit = (pick?: string) => {
     const val = (pick ?? value).trim();
     if (val) { onAdd(val); setValue(""); setOpen(false); }
@@ -143,10 +146,15 @@ export function TagList({ label, placeholder, items, suggestions, extractField, 
   // Real scan: pull structured fields from an uploaded report/label and add the
   // ones for THIS list (conditions / allergies / drug allergies). The person
   // still sees each tag and can remove it before continuing.
-  const onScanFile = async (e: ChangeEvent<HTMLInputElement>) => {
+  const onScanFile = (e: ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     e.target.value = "";
-    if (!file || !extractField) return;
+    if (file) void handleScanFile(file);
+  };
+
+  // Split from the change handler so the in-app camera feeds the same path.
+  const handleScanFile = async (file: File) => {
+    if (!extractField) return;
     setScanning(true);
     try {
       const b64 = await fileToBase64(file);
@@ -211,9 +219,17 @@ export function TagList({ label, placeholder, items, suggestions, extractField, 
           <input ref={scanLibraryRef} type="file" accept="image/*,application/pdf" className="sr-only" onChange={onScanFile} />
           {showPhotoSource && (
             <PhotoSourceSheet
-              onTakePhoto={() => { setShowPhotoSource(false); scanCameraRef.current?.click(); }}
+              onTakePhoto={() => { setShowPhotoSource(false); setShowCamera(true); }}
               onChooseFile={() => { setShowPhotoSource(false); scanLibraryRef.current?.click(); }}
               onClose={() => setShowPhotoSource(false)}
+            />
+          )}
+          {showCamera && (
+            <CameraSheet
+              facing="environment"
+              onCapture={file => { setShowCamera(false); void handleScanFile(file); }}
+              onClose={() => setShowCamera(false)}
+              onFallback={() => { setShowCamera(false); scanCameraRef.current?.click(); }}
             />
           )}
         </div>
@@ -249,6 +265,7 @@ function MedList({ meds, extractKind, routine, onAdd, onRemove, "data-walk": dat
   const cameraRef = useRef<HTMLInputElement>(null);
   const libraryRef = useRef<HTMLInputElement>(null);
   const [showPhotoSource, setShowPhotoSource] = useState(false);
+  const [showCamera, setShowCamera] = useState(false);
 
   const submit = () => {
     if (!name.trim() || !times.length) return;
@@ -264,10 +281,14 @@ function MedList({ meds, extractKind, routine, onAdd, onRemove, "data-walk": dat
   // Real upload: the photo/PDF goes to Hermes's structured /profile/extract
   // endpoint, which returns the medications it read. We add each one to the list
   // (reviewable + removable) rather than guessing from a catalog substring.
-  const onFile = async (e: ChangeEvent<HTMLInputElement>) => {
+  const onFile = (e: ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     e.target.value = "";
-    if (!file) return;
+    if (file) void handlePickedFile(file);
+  };
+
+  // Split from the change handler so the in-app camera feeds the same path.
+  const handlePickedFile = async (file: File) => {
     const isPdf = file.type === "application/pdf";
     setScanning(true);
     setProposal(null);
@@ -301,9 +322,17 @@ function MedList({ meds, extractKind, routine, onAdd, onRemove, "data-walk": dat
       <input ref={libraryRef} type="file" accept="image/*,application/pdf" className="sr-only" onChange={onFile} />
       {showPhotoSource && (
         <PhotoSourceSheet
-          onTakePhoto={() => { setShowPhotoSource(false); cameraRef.current?.click(); }}
+          onTakePhoto={() => { setShowPhotoSource(false); setShowCamera(true); }}
           onChooseFile={() => { setShowPhotoSource(false); libraryRef.current?.click(); }}
           onClose={() => setShowPhotoSource(false)}
+        />
+      )}
+      {showCamera && (
+        <CameraSheet
+          facing="environment"
+          onCapture={file => { setShowCamera(false); void handlePickedFile(file); }}
+          onClose={() => setShowCamera(false)}
+          onFallback={() => { setShowCamera(false); cameraRef.current?.click(); }}
         />
       )}
       {meds.length > 0 && (
@@ -393,13 +422,17 @@ function MedList({ meds, extractKind, routine, onAdd, onRemove, "data-walk": dat
   );
 }
 
-export function GuidedSetupWizard({ mode, hasSession, elderId: initialElderId, prefill, onComplete, onExit }: {
+export function GuidedSetupWizard({ mode, hasSession, elderId: initialElderId, prefill, pendingLink, onComplete, onExit }: {
   mode: "elderly" | "caregiver";
   hasSession: boolean;
   elderId?: string;
   // Fields pulled from an uploaded record on the setup-method screen; seeds the
   // answers so the user reviews + edits instead of typing from scratch.
   prefill?: WizardPrefill;
+  // A loved one scanned on the setup-method screen. The care_links insert can only
+  // run once this caregiver has a session AND a profiles row (caregiver_id is an FK
+  // to profiles.id), so it happens in finish(), after saveProfile.
+  pendingLink?: { elderId: string; name?: string; relationship: string } | null;
   onComplete: () => void;
   onExit: () => void;
 }) {
@@ -439,6 +472,8 @@ export function GuidedSetupWizard({ mode, hasSession, elderId: initialElderId, p
   const [dinner, setDinner] = useState("19:00");
   const [sleepTime, setSleepTime] = useState("22:30");
   const [finishing, setFinishing] = useState(false);
+  const [linkNote, setLinkNote] = useState<string | null>(null);
+  const linkFailedRef = useRef(false);
 
   // The routine step runs before the medication steps, so these are already
   // answered by the time the time picker offers its quick chips.
@@ -518,6 +553,21 @@ export function GuidedSetupWizard({ mode, hasSession, elderId: initialElderId, p
       }
     } else {
       await saveProfile(elderId, role, fullName, {});
+      // Deferred from the setup-method scan: only now does auth.uid() exist and
+      // match a profiles row, which RLS 0005 requires for the pending insert.
+      // Attempted at most once: a failure surfaces a note and stops here so it is
+      // seen, and the next Continue proceeds to the dashboard regardless. The
+      // account is real either way, and the patient switcher offers the same scan —
+      // a failed link must not strand anyone in the wizard.
+      if (pendingLink && !linkFailedRef.current) {
+        const result = await createLinkRequest(pendingLink.elderId, pendingLink.relationship);
+        if (result.status !== "sent" && result.status !== "already_pending") {
+          linkFailedRef.current = true;
+          setLinkNote(t(language, "wizard.caregiverLinkFailed"));
+          setFinishing(false);
+          return;
+        }
+      }
     }
     // Mark this task done so prompts.py's "not yet shown" gate can actually
     // suppress re-offering onboarding once it's genuinely complete — every
@@ -715,7 +765,12 @@ export function GuidedSetupWizard({ mode, hasSession, elderId: initialElderId, p
               <Users size={28} className="text-primary" />
             </div>
             <h1 className="font-['Fraunces'] text-xl font-semibold text-foreground mb-2">{t(language, "wizard.youreSetUp")}</h1>
-            <p className="text-sm text-muted-foreground leading-relaxed max-w-[260px]">{t(language, "wizard.caregiverPlaceholderBody")}</p>
+            <p className="text-sm text-muted-foreground leading-relaxed max-w-[260px]">
+              {pendingLink
+                ? t(language, "wizard.caregiverLinkPendingBody", { name: pendingLink.name?.trim() || t(language, "link.theElder") })
+                : t(language, "wizard.caregiverPlaceholderBody")}
+            </p>
+            {linkNote && <p className="text-xs text-warn leading-relaxed max-w-[260px] mt-3">{linkNote}</p>}
           </div>
           <ContinueButton onClick={finish} loading={finishing}><Check size={16} />{t(language, "wizard.goToDosewise")}</ContinueButton>
         </>

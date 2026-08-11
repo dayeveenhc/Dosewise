@@ -1,6 +1,6 @@
 import { expect, test } from "@playwright/test";
 import { mkdirSync } from "node:fs";
-import { anonClient, createThrowawayElder, signIn, startWalkthroughAuto } from "./helpers";
+import { anonClient, createThrowawayElder, signIn, startWalkthroughAuto, useAutoWalkthroughNav } from "./helpers";
 
 // Guided Auto-Navigation — autonomous profile edit, end to end against REAL
 // Supabase with a throwaway elder. Mei opens Settings → Your Profile, fills the
@@ -14,6 +14,8 @@ test("autonomous edit-profile: fill weight → save → verify persisted", async
   mkdirSync(SHOTS, { recursive: true });
   const creds = await createThrowawayElder();
 
+  // This spec asserts on a run driving ITSELF; step-by-step is now the default.
+  await useAutoWalkthroughNav(page);
   await signIn(page, creds);
   await startWalkthroughAuto(page, "edit_profile_auto");
 
@@ -53,6 +55,8 @@ test("a blocked profile write is CAUGHT by Verify — no false success", async (
     return route.continue();
   });
 
+  // This spec asserts on a run driving ITSELF; step-by-step is now the default.
+  await useAutoWalkthroughNav(page);
   await signIn(page, creds);
   await startWalkthroughAuto(page, "edit_profile_auto");
 

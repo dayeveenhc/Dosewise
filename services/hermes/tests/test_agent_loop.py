@@ -2,6 +2,9 @@
 
 from __future__ import annotations
 
+import base64
+import copy
+
 from fakes import (
     FakeAnthropic,
     FakeDB,
@@ -67,6 +70,62 @@ async def test_image_is_stripped_from_threaded_history(monkeypatch):
     assert user_lists and all(
         any(b.get("type") == "text" for b in content) for content in user_lists
     )
+
+
+def _record_sent_messages(anthropic) -> list[list]:
+    """Snapshot what each create() call actually sent.
+
+    FakeMessages.calls keeps the live list, which the loop goes on to mutate —
+    it appends the assistant reply and then _strip_images() removes the very
+    image blocks these tests are about. A deep copy taken at call time is the
+    only way to see the request as the model saw it.
+    """
+    sent: list[list] = []
+    create = anthropic.messages.create
+
+    async def spy(**kwargs):
+        sent.append(copy.deepcopy(kwargs["messages"]))
+        return await create(**kwargs)
+
+    anthropic.messages.create = spy
+    return sent
+
+
+def _image_data(user_content: list) -> list[str]:
+    return [b["source"]["data"] for b in user_content if b.get("type") == "image"]
+
+
+async def test_several_images_each_become_their_own_block(monkeypatch):
+    """The web composer can stage a few photos on one turn (`images=[...]`), and
+    every one of them must reach the model — not just the first."""
+    use_anthropic(monkeypatch)
+    db = FakeDB({"profiles": [{"dialect": "en"}], "conversation_turns": []})
+    anthropic = FakeAnthropic([response("end_turn", [text_block("Got both photos.")])])
+    sent = _record_sent_messages(anthropic)
+    await run_agent_turn(
+        anthropic, _ctx(db), "here are both sides of the box",
+        images=[b"JPEG-front", b"JPEG-back"],
+    )
+    user_content = sent[0][-1]["content"]
+    assert _image_data(user_content) == [
+        base64.standard_b64encode(b"JPEG-front").decode(),
+        base64.standard_b64encode(b"JPEG-back").decode(),
+    ]
+    # The text still rides along after them, as it does on the single-image path.
+    assert any(b.get("type") == "text" for b in user_content)
+
+
+async def test_single_image_bytes_still_works_alongside_the_list_form(monkeypatch):
+    """`image_bytes` is what Telegram and the CLI pass; adding `images` must not
+    have quietly retired it."""
+    use_anthropic(monkeypatch)
+    db = FakeDB({"profiles": [{"dialect": "en"}], "conversation_turns": []})
+    anthropic = FakeAnthropic([response("end_turn", [text_block("Got your photo.")])])
+    sent = _record_sent_messages(anthropic)
+    await run_agent_turn(anthropic, _ctx(db), "here is my prescription", image_bytes=b"JPEG")
+    assert _image_data(sent[0][-1]["content"]) == [
+        base64.standard_b64encode(b"JPEG").decode()
+    ]
 
 
 async def test_loop_tailors_system_prompt_to_dialect(monkeypatch):

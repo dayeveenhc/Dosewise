@@ -1,35 +1,50 @@
 import { useRef, useState } from "react";
 import type { ChangeEvent } from "react";
-import { ArrowLeft, ClipboardList, Lock, ChevronRight, FileUp, Loader2 } from "lucide-react";
+import { ArrowLeft, ClipboardList, Lock, ChevronRight, FileUp, Loader2, QrCode } from "lucide-react";
 import { useLanguage } from "../../lib/languageContext";
 import { t } from "../../lib/language";
 import { extractProfile, fileToBase64 } from "../../lib/hermes";
 import { buildWizardPrefill, type WizardPrefill } from "../../lib/profile";
 import { PhotoSourceSheet } from "../../components/PhotoSourceSheet";
+import { CameraSheet } from "../../components/CameraSheet";
+import { ScanLinkSheet } from "../../components/ScanLinkSheet";
 
 export function SetupMethodScreen({
+  mode,
   onBack,
   onGuided,
   onExtracted,
+  onScanLinked,
 }: {
+  mode: "caregiver" | "elderly";
   onBack: () => void;
   onGuided: () => void;
   onExtracted: (prefill: WizardPrefill) => void;
+  // Caregiver-only. The scan happens before there is a session, so nothing is
+  // written here — the decoded elder is handed up and the link request is sent
+  // once the wizard's account step has created the caregiver.
+  onScanLinked: (elderId: string, name: string | undefined, relationship: string) => void;
 }) {
   const { language } = useLanguage();
   const cameraRef = useRef<HTMLInputElement>(null);
   const libraryRef = useRef<HTMLInputElement>(null);
   const [showPhotoSource, setShowPhotoSource] = useState(false);
+  const [showCamera, setShowCamera] = useState(false);
+  const [showScanLink, setShowScanLink] = useState(false);
   const [loading, setLoading] = useState(false);
   const [note, setNote] = useState<string | null>(null);
 
   const hasAnything = (p: WizardPrefill) =>
     !!p.fullName || Object.keys(p.details).length > 0 || p.currentMeds.length > 0 || p.pastMeds.length > 0;
 
-  const onFile = async (e: ChangeEvent<HTMLInputElement>) => {
+  const onFile = (e: ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     e.target.value = ""; // allow re-picking the same file
-    if (!file) return;
+    if (file) void handlePickedFile(file);
+  };
+
+  // Split from the change handler so the in-app camera feeds the same path.
+  const handlePickedFile = async (file: File) => {
     setLoading(true);
     setNote(null);
     try {
@@ -108,9 +123,17 @@ export function SetupMethodScreen({
         <input ref={libraryRef} type="file" accept="image/*,application/pdf" className="sr-only" onChange={onFile} />
         {showPhotoSource && (
           <PhotoSourceSheet
-            onTakePhoto={() => { setShowPhotoSource(false); cameraRef.current?.click(); }}
+            onTakePhoto={() => { setShowPhotoSource(false); setShowCamera(true); }}
             onChooseFile={() => { setShowPhotoSource(false); libraryRef.current?.click(); }}
             onClose={() => setShowPhotoSource(false)}
+          />
+        )}
+        {showCamera && (
+          <CameraSheet
+            facing="environment"
+            onCapture={file => { setShowCamera(false); void handlePickedFile(file); }}
+            onClose={() => setShowCamera(false)}
+            onFallback={() => { setShowCamera(false); cameraRef.current?.click(); }}
           />
         )}
         {note && <p className="text-xs text-muted-foreground px-1 -mt-2">{note}</p>}
@@ -129,11 +152,37 @@ export function SetupMethodScreen({
           </div>
           <ChevronRight size={18} className="text-muted-foreground mt-1 shrink-0" />
         </button>
+
+        {/* Scan a loved one's QR code — caregiver-only: links to an existing
+            elder's profile instead of setting a new person up from scratch. */}
+        {mode === "caregiver" && (
+          <button
+            onClick={() => setShowScanLink(true)}
+            data-walk="setup-method-scan-qr"
+            className="w-full text-left rounded-2xl bg-card shadow-sm p-5 flex items-start gap-4 active:scale-[0.98] transition-transform"
+          >
+            <div className="w-11 h-11 rounded-xl bg-accent flex items-center justify-center shrink-0 mt-0.5">
+              <QrCode size={20} className="text-accent-foreground" />
+            </div>
+            <div className="flex-1">
+              <p className="font-semibold text-foreground text-[calc(15px*var(--dw-text,1))] leading-snug">{t(language, "setup.scanLovedOne")}</p>
+              <p className="text-sm text-muted-foreground leading-relaxed">{t(language, "setup.scanLovedOneDesc")}</p>
+            </div>
+            <ChevronRight size={18} className="text-muted-foreground mt-1 shrink-0" />
+          </button>
+        )}
       </div>
 
       <p className="text-center text-[calc(11px*var(--dw-text,1))] text-muted-foreground leading-relaxed px-6 pb-10">
         {t(language, "common.setupMinutes")}
       </p>
+
+      {showScanLink && (
+        <ScanLinkSheet
+          onClose={() => setShowScanLink(false)}
+          onScanned={(elderId, name, relationship) => { setShowScanLink(false); onScanLinked(elderId, name, relationship); }}
+        />
+      )}
     </div>
   );
 }

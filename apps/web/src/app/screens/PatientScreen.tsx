@@ -1,3 +1,4 @@
+import { useState } from "react";
 import { Activity, AlertTriangle, Info, Star, User, Phone, Plus, Trash2, History, Check } from "lucide-react";
 import { slugify } from "../lib/changeHighlight";
 import type { Patient } from "../types";
@@ -5,6 +6,7 @@ import { Card, SectionHeader, MedAvatar, ProfileAvatar } from "../components/sha
 import { MED_FREQUENCY, localizeCatalogValue } from "../data/medications";
 import { cadenceLabel, WEEKDAY_TOKENS } from "../lib/medications";
 import type { Medication } from "../types";
+import { ConfirmDialog } from "../components/ConfirmDialog";
 import { useLanguage } from "../lib/languageContext";
 import { t } from "../lib/language";
 
@@ -29,10 +31,19 @@ interface GroupedMedication {
   intervalDays?: number;
 }
 
+// Keyed on the real medication id, falling back to the name only for demo/seed
+// rows that have none — matching ElderlyPrescriptionScreen::groupByMedication.
+// Keying on the NAME alone collapsed two genuinely different prescriptions of
+// the same drug (a 500mg morning and a 1000mg evening, an ordinary titration)
+// into one row showing only the first one's dose — and the remove button then
+// archived BOTH. It also meant `data-testid="medication-{id}"` only ever
+// carried the first one's uuid, so a ChangeHighlight aimed at the second
+// silently found nothing.
 function groupMedications(medications: Medication[]): GroupedMedication[] {
   const groups = new Map<string, GroupedMedication>();
   for (const m of medications) {
-    const existing = groups.get(m.name);
+    const key = m.medicationId ?? m.name;
+    const existing = groups.get(key);
     if (existing) {
       existing.ids.push(m.id);
       existing.times.push(m.time);
@@ -40,7 +51,7 @@ function groupMedications(medications: Medication[]): GroupedMedication[] {
         existing.refillDaysLeft = m.refillDaysLeft;
       }
     } else {
-      groups.set(m.name, {
+      groups.set(key, {
         ids: [m.id],
         medicationId: m.medicationId,
         name: m.name,
@@ -59,6 +70,7 @@ function groupMedications(medications: Medication[]): GroupedMedication[] {
 
 export function PatientScreen({ patient, justAddedMed, onEditProfile, onAddPrescription, onDeleteMedication }: PatientScreenProps) {
   const { language } = useLanguage();
+  const [confirmRemove, setConfirmRemove] = useState<GroupedMedication | null>(null);
   const groupedMedications = groupMedications(patient.medications);
   // The medicine's real cadence ("Mon, Thu" / "Every 2 days"); MED_FREQUENCY
   // below is the older hardcoded demo copy and only shows when there is none.
@@ -71,9 +83,9 @@ export function PatientScreen({ patient, justAddedMed, onEditProfile, onAddPresc
     <div className="px-4 py-5 space-y-5">
       {/* Header card */}
       <Card className="overflow-hidden">
-        <div className="h-20 bg-gradient-to-br from-primary to-accent" />
+        <div className="h-20 bg-secondary border-b border-primary/20" />
         <div className="px-4 pb-4 -mt-10">
-          <ProfileAvatar photo={patient.photo} size={80} className="rounded-2xl border-4 border-card shadow-md" />
+          <ProfileAvatar photo={patient.photo} size={80} className="rounded-2xl border-4 border-card dw-raised" />
           <h2 className="dw-display text-[calc(20px*var(--dw-text,1))] font-semibold text-foreground mt-2">{patient.name}</h2>
           <p className="text-sm text-muted-foreground">{t(language, "common.relationAge", { relation: patient.relation, age: patient.age })}</p>
           <div className="flex gap-2 mt-3 flex-wrap">
@@ -122,7 +134,7 @@ export function PatientScreen({ patient, justAddedMed, onEditProfile, onAddPresc
           {groupedMedications.map((m) => {
             const justAdded = !!justAddedMed && m.name === justAddedMed;
             return (
-            <div key={m.name} data-testid={m.medicationId ? `medication-${m.medicationId}` : undefined} className={`px-4 py-3 flex items-center gap-3 ${justAdded ? "bg-taken-bg/60 ring-2 ring-taken/40 rounded-xl" : ""}`}>
+            <div key={m.medicationId ?? m.name} data-testid={m.medicationId ? `medication-${m.medicationId}` : undefined} className={`px-4 py-3 flex items-center gap-3 ${justAdded ? "bg-taken-bg/60 ring-2 ring-taken/40 rounded-xl" : ""}`}>
               <MedAvatar name={m.name} size={36} className="rounded-xl shrink-0" />
               <div className="flex-1 min-w-0">
                 <p className="text-sm font-semibold text-foreground flex items-center gap-1.5 flex-wrap">
@@ -141,9 +153,13 @@ export function PatientScreen({ patient, justAddedMed, onEditProfile, onAddPresc
                   <p className="text-[calc(11px*var(--dw-text,1))] text-warn-fg font-medium mt-0.5">{t(language, "common.daysOfSupplyLeft", { count: m.refillDaysLeft })}</p>
                 )}
               </div>
+              {/* Behind a confirm, like every other destructive action in the
+                  app. This was the one that wasn't: a stray tap on a 32px trash
+                  icon removed a medicine with no dialog and no undo. */}
               <button
-                onClick={() => m.ids.forEach(onDeleteMedication)}
+                onClick={() => setConfirmRemove(m)}
                 className="w-8 h-8 rounded-full bg-missed-bg border border-missed-border flex items-center justify-center shrink-0 active:opacity-80 transition-opacity"
+                aria-label={t(language, "common.removeMedication")}
                 title={t(language, "common.removeMedication")}
               >
                 <Trash2 size={13} className="text-missed-fg" />
@@ -155,7 +171,7 @@ export function PatientScreen({ patient, justAddedMed, onEditProfile, onAddPresc
             onClick={onAddPrescription}
             className="w-full flex items-center gap-3 px-4 py-3 text-left hover:bg-muted transition-colors"
           >
-            <div className="w-8 h-8 rounded-full bg-secondary border border-primary/20 flex items-center justify-center shrink-0">
+            <div className="w-8 h-8 rounded-xl bg-secondary border border-primary/20 flex items-center justify-center shrink-0">
               <Plus size={14} className="text-primary" />
             </div>
             <span className="text-sm text-primary font-semibold">{t(language, "common.addPrescription")}</span>
@@ -203,6 +219,16 @@ export function PatientScreen({ patient, justAddedMed, onEditProfile, onAddPresc
           ))}
         </Card>
       </div>
+
+      {confirmRemove && (
+        <ConfirmDialog
+          title={t(language, "prescription.removeConfirmTitle", { name: confirmRemove.name })}
+          body={t(language, "prescription.removeConfirmBody")}
+          confirmLabel={t(language, "prescription.removeConfirmYes")}
+          onConfirm={() => { const med = confirmRemove; setConfirmRemove(null); med.ids.forEach(onDeleteMedication); }}
+          onCancel={() => setConfirmRemove(null)}
+        />
+      )}
     </div>
   );
 }

@@ -38,7 +38,11 @@ interface AccessibilitySettings {
   // ceremony around the same localStorage blob.
   notifications: NotificationPrefs;
   // TrustMode (Item 2): permanent override that forces the walkthrough's
-  // manual tap-gate regardless of walkthroughCompletionCount below.
+  // manual tap-gate regardless of walkthroughCompletionCount below. ON by
+  // default (2026-08-10) — a guided walkthrough now waits for a tap at every
+  // step until the person opts out, rather than driving itself and expecting
+  // them to keep up. That also means requireExplicitAdvance is unconditionally
+  // true out of the box, so the TrustMode auto-advance below is opt-IN.
   walkthroughManualMode: boolean;
   // TrustMode (Item 2): device-local count of COMPLETED walkthroughs, any
   // task (not per-task). Distinct from lib/profile.ts's server-synced
@@ -48,6 +52,9 @@ interface AccessibilitySettings {
   // TRUST_MODE_THRESHOLD (lib/walkthrough/pacing.ts) to decide
   // requireExplicitAdvance.
   walkthroughCompletionCount: number;
+  // Which round of DEFAULTS the saved blob has already been reconciled against.
+  // See SETTINGS_VERSION below for why a plain default change isn't enough.
+  settingsVersion: number;
 }
 
 interface AccessibilityContextValue extends AccessibilitySettings {
@@ -131,6 +138,17 @@ const DEFAULT_NOTIFICATIONS: NotificationPrefs = {
   missedDoseAlerts: true,
 };
 
+// Bumped whenever a DEFAULT changes in a way that must reach people who have
+// ALREADY used the app. Changing DEFAULTS alone never does: the provider's
+// effect writes the whole settings object on mount, so every existing install
+// has an explicit value for every field, and loadInitial's `{...DEFAULTS,
+// ...saved}` always lets the saved one win. The migration below re-applies just
+// the fields this version is about, once, and leaves every other saved
+// preference exactly where the person put it.
+//
+// 1 — walkthroughManualMode defaults to ON (2026-08-10).
+const SETTINGS_VERSION = 1;
+
 const DEFAULTS: AccessibilitySettings = {
   fontSize: "large",
   contrast: "normal",
@@ -138,8 +156,9 @@ const DEFAULTS: AccessibilitySettings = {
   timeFormat: "12h",
   voiceOutput: true,
   notifications: DEFAULT_NOTIFICATIONS,
-  walkthroughManualMode: false,
+  walkthroughManualMode: true,
   walkthroughCompletionCount: 0,
+  settingsVersion: SETTINGS_VERSION,
 };
 
 function loadInitial(): AccessibilitySettings {
@@ -151,12 +170,19 @@ function loadInitial(): AccessibilitySettings {
       highContrast?: boolean;
       colourBlind?: boolean;
     };
+    const savedVersion = saved.settingsVersion ?? 0;
     return {
       ...DEFAULTS,
       ...saved,
       contrast: saved.contrast ?? (saved.highContrast ? "high" : "normal"),
       colourVision: saved.colourVision ?? (saved.colourBlind ? "deuteranopia" : "off"),
       notifications: { ...DEFAULT_NOTIFICATIONS, ...(saved.notifications ?? {}) },
+      // v1: adopt the new manual-by-default walkthrough pacing. Applied once —
+      // stamping the version below means a later deliberate "off" sticks.
+      walkthroughManualMode: savedVersion < 1
+        ? DEFAULTS.walkthroughManualMode
+        : saved.walkthroughManualMode ?? DEFAULTS.walkthroughManualMode,
+      settingsVersion: SETTINGS_VERSION,
     };
   } catch {
     return DEFAULTS;

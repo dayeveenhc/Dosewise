@@ -76,6 +76,56 @@ async def test_unreadable_pdf_gets_nudge_without_burning_a_turn(monkeypatch):
     assert data["tools_used"] == []
 
 
+async def test_images_base64_list_reaches_the_agent_and_stages_the_first(monkeypatch):
+    """The web composer can attach several photos to one turn. All of them go to
+    the model; only the FIRST is staged as the pill photo, because a medication
+    row has exactly one pill_photo_path."""
+    seen: dict = {}
+
+    async def fake_turn(client, ctx, message, *, images=None, history=None, **_):
+        seen["images"] = images
+        seen["pending_image"] = ctx.session.pending_image
+        return "got them", [], history or []
+
+    app = _make_app(monkeypatch, fake_turn)
+
+    body = {
+        "message": "Both sides of the box, please.",
+        "elder_id": ELDER,
+        "images_base64": [
+            base64.b64encode(b"front").decode(),
+            base64.b64encode(b"back").decode(),
+        ],
+    }
+    async with _client(app) as c:
+        resp = await c.post("/agent/turn", json=body)
+    assert resp.status_code == 200
+    assert seen["images"] == [b"front", b"back"]
+    assert seen["pending_image"] == b"front"
+
+
+async def test_single_image_base64_still_accepted(monkeypatch):
+    """Telegram and any older client still send the scalar field — it must keep
+    arriving as a one-element list rather than being dropped."""
+    seen: dict = {}
+
+    async def fake_turn(client, ctx, message, *, images=None, history=None, **_):
+        seen["images"] = images
+        return "got it", [], history or []
+
+    app = _make_app(monkeypatch, fake_turn)
+
+    body = {
+        "message": "What is this?",
+        "elder_id": ELDER,
+        "image_base64": base64.b64encode(b"just-one").decode(),
+    }
+    async with _client(app) as c:
+        resp = await c.post("/agent/turn", json=body)
+    assert resp.status_code == 200
+    assert seen["images"] == [b"just-one"]
+
+
 async def test_reply_language_forwarded_and_committed_actions_returned(monkeypatch):
     seen: dict = {}
 

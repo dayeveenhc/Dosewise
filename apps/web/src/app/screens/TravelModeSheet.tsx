@@ -1,7 +1,7 @@
 import { useState, useEffect } from "react";
 import { X, Plane, Globe, Package, Check, Loader2 } from "lucide-react";
 import type { Patient } from "../types";
-import { fetchProfile, saveProfile } from "../lib/profile";
+import { fetchProfile, fetchProfileRole, saveProfile } from "../lib/profile";
 import { fieldCls } from "./setup/GuidedSetupWizard";
 import { Toggle } from "./elderly/ElderlySettingsScreen";
 import { BottomSheet } from "../components/BottomSheet";
@@ -56,7 +56,16 @@ export function TravelModeSheet({ patient, elderId, onClose, onSaved }: {
     // already there instead of wiping out age/allergies/etc.
     const existing = await fetchProfile(elderId);
     const travelPlan: TravelPlan | undefined = enabled ? { startDate, endDate, timezone } : undefined;
-    await saveProfile(elderId, "elder", patient.name, {
+    // ROLE AND NAME ARE PRESERVED, NOT ASSERTED. saveProfile is a blind upsert
+    // of both, and this sheet is reachable from the CAREGIVER shell too — where
+    // `elderId` is the caregiver's own uid and `patient.name` is the person they
+    // look after. Passing "elder" and that name here rewrote the caregiver's own
+    // profiles row to role='elder' under someone else's name, after which any
+    // browser with no stored app-mode routed them into the elderly shell
+    // (App.tsx's role-based landing). Same fetch-merge-write shape as
+    // markWalkthroughCompleted and handleSaveCaregiverAccount.
+    const role = (await fetchProfileRole(elderId)) ?? "elder";
+    await saveProfile(elderId, role, existing?.fullName ?? "", {
       ...(existing?.details ?? {}),
       travelPlan,
     });

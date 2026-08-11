@@ -36,8 +36,13 @@ export interface EMsg {
   // not a normal agent reply, so the user has a visible cue to slow down.
   isRateLimited?: boolean;
   // Data-URL of an image the user attached (e.g. a prescription photo), rendered
-  // inside their message bubble so they can see what they sent.
+  // inside their message bubble so they can see what they sent. Superseded by
+  // `images` below, but KEPT: conversations saved before multi-attach are
+  // already persisted in this shape and must still render on restore.
   image?: string;
+  // Every image attached to this message, when there may be more than one.
+  // Read `images ?? (image ? [image] : [])` — never one without the other.
+  images?: string[];
   // Tappable answer buttons the agent offered with this reply (offer_choices):
   // {label shown, value sent when tapped}. Only ever on the latest agent message.
   choices?: { label: string; value: string }[];

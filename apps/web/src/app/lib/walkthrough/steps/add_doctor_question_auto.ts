@@ -85,12 +85,15 @@ export function addDoctorQuestionAutoSteps(p: WalkthroughParams = {}): Walkthrou
     },
     {
       // Act-less Verify tail: re-query doctor_questions before claiming success.
+      // Spotlights the newest card (the question just saved — it prepends), not
+      // the whole list: the full list is taller than the viewport band, so the
+      // callout could never clear it (the sweep's callout-could-not-clear).
       id: "autoDoctorQ.verify",
       screen: ON_REMINDERS,
-      selector: '[data-walk="elder-doctor-questions"]',
+      selector: '[data-walk="elder-doctor-q-latest"]',
       instructionKey: "walk.autoDoctorQ.save",
       verify: { kind: "doctor-question-exists", question },
-      reveal: { screen: ON_REMINDERS, selector: '[data-walk="elder-doctor-questions"]' },
+      reveal: { screen: ON_REMINDERS, selector: '[data-walk="elder-doctor-q-latest"]' },
     },
   ];
 }

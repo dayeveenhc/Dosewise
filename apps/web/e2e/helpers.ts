@@ -112,6 +112,36 @@ export async function startWalkthroughAuto(
 //
 // Tolerant of a missing toggle: the spotlight-only tours reach the callout at
 // slightly different times, and a spec that never reaches a gate doesn't need it.
+// Put this browser into "Auto navigation" BEFORE the app boots.
+//
+// Walkthroughs default to step-by-step (accessibility.tsx's
+// walkthroughManualMode, on since 2026-08-10), so a spec that asserts on a run
+// driving ITSELF — the autonomous add_prescription flagship — has to say so.
+// Written through addInitScript rather than by tapping the in-overlay toggle:
+// the toggle applies from the NEXT step, which is already too late for a run
+// whose first steps are the ones being asserted on, and racing a control that
+// has to render first is exactly the flake this avoids.
+//
+// MUST be called before signIn/goto — addInitScript only affects navigations
+// registered after it. `settingsVersion` is stamped deliberately: without it the
+// v1 migration would read this as an un-migrated install and force manual back
+// on, so setting it here also proves the migration leaves a real choice alone.
+export async function useAutoWalkthroughNav(page: Page): Promise<void> {
+  await page.addInitScript(() => {
+    const KEY = "dosewise:accessibility";
+    let saved: Record<string, unknown> = {};
+    try {
+      saved = JSON.parse(window.localStorage.getItem(KEY) ?? "{}");
+    } catch {
+      saved = {};
+    }
+    window.localStorage.setItem(
+      KEY,
+      JSON.stringify({ ...saved, walkthroughManualMode: false, settingsVersion: 1 }),
+    );
+  });
+}
+
 export async function useStepByStepNav(page: Page): Promise<void> {
   const toggle = page.locator('[data-walk="walk-autonav"]');
   try {
@@ -628,8 +658,11 @@ export function assertPhaseMins(
 
 // ── Walkthrough advance helpers ───────────────────────────────────────────
 // Autonomous steps no longer advance by themselves: each finishes its phases
-// and then HOLDS at a terminal commit gate with Next (or Done, on the last
-// step) enabled, until the person taps. These stand in for those taps.
+// and then HOLDS at a terminal commit gate with Next enabled, until the
+// person taps. The FINAL step's gate is timed instead (2026-08-09,
+// PACING.FINAL_AUTOCLOSE_MS): Done still works, but the overlay closes itself
+// once the window elapses — so these helpers treat "the overlay is already
+// gone" at the last step as the product working, not a failed tap.
 const NEXT_RE = /^(Next|Done)$/;
 
 // The callout's "Step X of Y" counter, or null when no overlay is up.
@@ -667,6 +700,9 @@ export async function dismissIdlePopupIfOpen(page: Page): Promise<void> {
 
 export async function tapWalkthroughNext(page: Page, timeout = 30_000): Promise<void> {
   const before = await walkthroughStep(page);
+  // Overlay already gone: the final step's timed gate closed the run on its
+  // own before this stand-in tap landed. Completion, not a failure.
+  if (!before) return;
   await page.getByText(READY_COPY, { exact: false })
     .waitFor({ state: "visible", timeout })
     .catch(() => { /* fall through: assert on the counter below, not on copy */ });
@@ -676,16 +712,28 @@ export async function tapWalkthroughNext(page: Page, timeout = 30_000): Promise<
   // clear it the way a person would — here, at the exact point of contention,
   // rather than with a background poller that could race the tap itself.
   await dismissIdlePopupIfOpen(page);
-  await page.getByRole("button", { name: NEXT_RE }).click({ timeout });
+  // Dispatch the tap from INSIDE the page the moment the gate button is
+  // enabled. Playwright's own click waits for the element to be "stable",
+  // which loses a race on gates that elapse by themselves: the dw-gate-ready
+  // arrival beat (620ms) eats half of an auto-elapsing READY_AUTO_MS window
+  // (a step that started with AutoNav still on — the toggle flip applies from
+  // the NEXT step), and the final step's FINAL_AUTOCLOSE_MS gate can close
+  // the overlay mid-retry. A step that advanced (or a run that closed) on its
+  // own while we waited counts as success — this helper's contract is
+  // "advance one step", not "prove a tap was physically required".
   await page.waitForFunction(
     (prev: number | null) => {
-      const el = [...document.querySelectorAll("p")].find(p => /^Step \d+ of \d+$/.test(p.textContent?.trim() ?? ""));
-      if (!el) return true; // overlay gone — the walkthrough finished
-      const m = el.textContent!.trim().match(/^Step (\d+) of (\d+)$/)!;
-      return Number(m[1]) !== prev;
+      const counterEl = [...document.querySelectorAll("p")].find(p => /^Step \d+ of \d+$/.test(p.textContent?.trim() ?? ""));
+      if (!counterEl) return true; // overlay gone — the walkthrough finished
+      const cur = Number(counterEl.textContent!.trim().match(/^Step (\d+) of (\d+)$/)![1]);
+      if (cur !== prev) return true; // advanced (tap registered, or auto-elapsed)
+      const btn = [...document.querySelectorAll<HTMLButtonElement>("button")]
+        .find(b => /^(Next|Done)$/.test(b.textContent?.trim() ?? "") && !b.disabled);
+      if (btn) btn.click();
+      return false;
     },
-    before?.current ?? null,
-    { timeout },
+    before.current,
+    { timeout, polling: 100 },
   );
 }
 
@@ -724,7 +772,12 @@ export async function advanceWalkthroughToStep(page: Page, n: number, max = 12):
 // — the exact stalled-tour shape this whole pass exists to catch.
 export async function finishWalkthrough(page: Page, max = 12): Promise<void> {
   let last = await walkthroughStep(page);
-  if (!last) throw new Error("finishWalkthrough: no walkthrough overlay is up");
+  // Since the final gate became timed (FINAL_AUTOCLOSE_MS), a fully-completed
+  // run may have closed itself before this helper is even called — that is
+  // success, not a dead tour. A tour that genuinely dies mid-run still fails
+  // the caller's own step-by-step assertions before it ever gets here, and
+  // the mid-loop disappearance check below still catches an early death.
+  if (!last) return;
   for (let i = 0; i < max; i++) {
     const cur = await walkthroughStep(page);
     if (!cur) {

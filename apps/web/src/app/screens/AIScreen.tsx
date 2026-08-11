@@ -111,7 +111,7 @@ export function AIScreen({ patient }: { patient: Patient }) {
     <div className="px-4 py-5 space-y-5">
       {/* Header */}
       <div className="flex items-start gap-3">
-        <div className="w-10 h-10 bg-primary rounded-2xl flex items-center justify-center shrink-0">
+        <div className="w-10 h-10 bg-secondary rounded-xl flex items-center justify-center shrink-0">
           <Brain size={20} className="text-primary-foreground" />
         </div>
         <div>
@@ -161,7 +161,7 @@ export function AIScreen({ patient }: { patient: Patient }) {
           </div>
           <div className="px-4 py-3">
             <div className="flex items-start gap-3">
-              <CheckCircle2 size={15} className="text-taken shrink-0 mt-0.5" />
+              <CheckCircle2 size={15} className="text-taken-fg shrink-0 mt-0.5" />
               <div>
                 <p className="text-sm font-semibold text-foreground">{t(language, "summary.insight2Title")}</p>
                 <p className="text-xs text-muted-foreground mt-0.5 leading-relaxed">{t(language, "summary.insight2Body")}</p>
@@ -170,7 +170,7 @@ export function AIScreen({ patient }: { patient: Patient }) {
           </div>
           <div className="px-4 py-3">
             <div className="flex items-start gap-3">
-              <TrendingDown size={15} className="text-warn shrink-0 mt-0.5" />
+              <TrendingDown size={15} className="text-warn-fg shrink-0 mt-0.5" />
               <div>
                 <p className="text-sm font-semibold text-foreground">{t(language, "summary.insight3Title")}</p>
                 <p className="text-xs text-muted-foreground mt-0.5 leading-relaxed">{t(language, "summary.insight3Body", { nickname: patient.nickname })}</p>

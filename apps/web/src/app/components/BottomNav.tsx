@@ -9,7 +9,7 @@ import { t } from "../lib/language";
 export function BottomNav({ activeTab, onSelect }: { activeTab: string; onSelect: (s: Screen) => void }) {
   const { language } = useLanguage();
   return (
-    <div className="shrink-0 bg-background dw-shadow-up border-t border-border/60 px-3 pt-4 pb-6">
+    <div className="relative z-40 shrink-0 bg-background dw-shadow-up border-t border-border/60 px-3 pt-4 pb-6">
       {/* items-END so every control shares one baseline — see ElderlyApp's nav. */}
       <div className="flex items-end">
         {NAV_ITEMS.map(item => {
@@ -23,7 +23,7 @@ export function BottomNav({ activeTab, onSelect }: { activeTab: string; onSelect
                   data-tour={`nav-${item.id}`}
                   aria-label={label}
                   aria-current={isActive ? "page" : undefined}
-                  className={`w-16 h-16 rounded-full flex items-center justify-center -mt-6 shadow-lg active:scale-95 transition-transform bg-primary ${isActive ? "ring-4 ring-accent/40" : ""}`}
+                  className={`relative z-40 w-16 h-16 rounded-full flex items-center justify-center -mt-6 -top-1 dw-float dw-press bg-gradient-to-br from-primary to-accent ${isActive ? "ring-4 ring-accent/40" : ""}`}
                 >
                   <item.icon size={30} className="text-primary-foreground" />
                 </button>

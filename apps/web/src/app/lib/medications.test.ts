@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { courseDaysLeft, isDueOn, lowSupplyMedications, LOW_SUPPLY_DAYS } from "./medications";
+import { assignTakenSlots, courseDaysLeft, daysOfSupply, forecastFromPills, isDueOn, lowSupplyMedications, LOW_SUPPLY_DAYS } from "./medications";
 import type { Medication } from "../types";
 
 // A day the tests can anchor on: Wednesday 8 July 2026.
@@ -57,6 +57,33 @@ describe("isDueOn — fixed courses", () => {
   });
 });
 
+// The two halves of "I've refilled it". logRefill itself needs a Supabase
+// client and is covered end-to-end by e2e/med-detail-refill.spec.ts — these are
+// the pure helpers it and Hermes both compute from.
+describe("daysOfSupply / forecastFromPills", () => {
+  it("floors, matching log_refill's `pills_remaining // per_day`", () => {
+    // Same arithmetic on both sides of the wire, so the app's preview and the
+    // forecast Hermes would have written can never disagree.
+    expect(daysOfSupply(30, 2)).toBe(15);
+    expect(daysOfSupply(31, 2)).toBe(15);
+    expect(daysOfSupply(5, 3)).toBe(1);
+    expect(daysOfSupply(0, 1)).toBe(0);
+  });
+
+  it("treats a medicine with no parsed doses per day as once daily", () => {
+    // Rather than dividing by zero and reporting Infinity days of supply.
+    expect(daysOfSupply(14, 0)).toBe(14);
+  });
+
+  it("returns a LOCAL calendar day, not a UTC one", () => {
+    // 28 pills twice daily = 14 days from 8 July -> 22 July. The naive
+    // toISOString().slice(0,10) reports the 21st for every evening hour at
+    // UTC+8, which is where this app's users are.
+    expect(forecastFromPills(28, 2, new Date(2026, 6, 8, 23, 30))).toBe("2026-07-22");
+    expect(forecastFromPills(28, 2, new Date(2026, 6, 8, 0, 30))).toBe("2026-07-22");
+  });
+});
+
 describe("lowSupplyMedications", () => {
   const med = (over: Partial<Medication>): Medication => ({
     id: 1, name: "Metformin", dose: "500mg", time: "8:00 AM", status: "upcoming",
@@ -85,5 +112,50 @@ describe("lowSupplyMedications", () => {
 
   it("omits a medicine with no supply data rather than inventing a number", () => {
     expect(lowSupplyMedications([med({ medicationId: "m1" })])).toEqual([]);
+  });
+});
+
+// The per-slot attribution behind fetchElderMedications (2026-08-09): one
+// taken row used to mark EVERY slot of a multi-time medication taken, hiding
+// a genuinely-missed evening slot — the exact case missed-dose alerts exist
+// for. Local timestamps are used so `new Date(...)`'s local reading matches.
+describe("assignTakenSlots", () => {
+  const takenAt = (h: number, m = 0) => {
+    const d = new Date(2026, 6, 8, h, m);
+    return { scheduled_at: d.toISOString(), logged_at: d.toISOString() };
+  };
+
+  it("attributes a dose to the slot its scheduled_at names", () => {
+    const map = assignTakenSlots(["08:00", "20:00"], [takenAt(20)]);
+    expect(map.has("20:00")).toBe(true);
+    expect(map.has("08:00")).toBe(false);
+  });
+
+  it("one taken of two leaves the OTHER slot unclaimed — the alert-feature case", () => {
+    const map = assignTakenSlots(["08:00", "20:00"], [takenAt(8)]);
+    expect(map.has("08:00")).toBe(true);
+    expect(map.has("20:00")).toBe(false);
+  });
+
+  it("falls back to earliest-first for a dose matching no slot (doses.py's rule)", () => {
+    const map = assignTakenSlots(["08:00", "20:00"], [takenAt(13, 30)]);
+    expect(map.has("08:00")).toBe(true);
+    expect(map.has("20:00")).toBe(false);
+  });
+
+  it("two doses fill both slots regardless of match order", () => {
+    const map = assignTakenSlots(["08:00", "20:00"], [takenAt(20), takenAt(11)]);
+    expect(map.has("08:00")).toBe(true);
+    expect(map.has("20:00")).toBe(true);
+  });
+
+  it("single-slot medicines behave exactly as before", () => {
+    expect(assignTakenSlots(["08:00"], [takenAt(9, 15)]).has("08:00")).toBe(true);
+    expect(assignTakenSlots(["08:00"], []).size).toBe(0);
+  });
+
+  it("survives a null scheduled_at (fallback path, no crash)", () => {
+    const map = assignTakenSlots(["08:00"], [{ scheduled_at: null, logged_at: null }]);
+    expect(map.has("08:00")).toBe(true);
   });
 });

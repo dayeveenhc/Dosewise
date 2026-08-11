@@ -222,11 +222,65 @@ describe("createPaceController — awaitNext() (terminal commit gate)", () => {
     expect(entry!.stepId).toBe("t.step");
   });
 
-  it("ignores requestReplay() while the gate is open (Replay is reveal-only)", async () => {
+  it("accepts requestReplay() at the open gate — it wakes the gate for the orchestrator to consume", async () => {
     const c = createPaceController();
-    settledFlag(c.awaitNext("ready"));
+    const gate = settledFlag(c.awaitNext("ready"));
+    c.requestReplay(); // a Replay tap landing just after reveal→ready used to be dropped
+    await vi.advanceTimersByTimeAsync(1);
+    expect(gate.done).toBe(true);
+    expect(c.consumeReplay()).toBe(true); // consumed by the loop → re-runs reveal, never advances
+  });
+
+  it("still ignores requestReplay() outside reveal/ready (e.g. confirm)", async () => {
+    const c = createPaceController();
+    const gate = settledFlag(c.awaitNext("confirm"));
     c.requestReplay();
+    await vi.advanceTimersByTimeAsync(1);
+    expect(gate.done).toBe(false);
     expect(c.consumeReplay()).toBe(false);
     c.cancel();
+  });
+});
+
+// The FINAL step's timed gate (Item 5, 2026-08-09): open immediately like
+// awaitNext, but self-resolving — the run closes itself once the window
+// elapses, and Done/Replay/cancel all still work inside it.
+describe("awaitNextOrTimeout", () => {
+  it("self-resolves once the window elapses, with minMs 0 in the phase log", async () => {
+    const c = createPaceController({ stepId: "t.final" });
+    const gate = settledFlag(c.awaitNextOrTimeout("ready", 4_000));
+    expect(c.state()).toEqual({ phase: "ready", canAdvance: true });
+    await vi.advanceTimersByTimeAsync(3_900);
+    expect(gate.done).toBe(false);
+    await vi.advanceTimersByTimeAsync(200);
+    expect(gate.done).toBe(true);
+    const entry = readPhaseLog().find(e => e.phase === "ready");
+    expect(entry!.minMs).toBe(0);
+    expect(entry!.stepId).toBe("t.final");
+  });
+
+  it("requestNext() resolves it early — Done works from t=0", async () => {
+    const c = createPaceController();
+    const gate = settledFlag(c.awaitNextOrTimeout("ready", 60_000));
+    c.requestNext();
+    await vi.advanceTimersByTimeAsync(1);
+    expect(gate.done).toBe(true);
+  });
+
+  it("requestReplay() wakes it, leaving the flag for the orchestrator", async () => {
+    const c = createPaceController();
+    const gate = settledFlag(c.awaitNextOrTimeout("ready", 60_000));
+    c.requestReplay();
+    await vi.advanceTimersByTimeAsync(1);
+    expect(gate.done).toBe(true);
+    expect(c.consumeReplay()).toBe(true);
+  });
+
+  it("cancel() resolves it", async () => {
+    const c = createPaceController();
+    const gate = settledFlag(c.awaitNextOrTimeout("ready", 60_000));
+    c.cancel();
+    await vi.advanceTimersByTimeAsync(1);
+    expect(gate.done).toBe(true);
   });
 });
